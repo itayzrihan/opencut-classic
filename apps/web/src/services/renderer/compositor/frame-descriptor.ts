@@ -28,12 +28,14 @@ import type {
 } from "./types";
 import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
 
+type RendererSize = Pick<CanvasRenderer, "width" | "height">;
+
 export async function buildFrameDescriptor({
 	node,
 	renderer,
 }: {
 	node: AnyBaseNode;
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 }): Promise<{
 	frame: FrameDescriptor;
 	textures: TextureUploadDescriptor[];
@@ -73,7 +75,7 @@ async function collectNode({
 	textures,
 }: {
 	node: AnyBaseNode;
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 	path: string;
 	items: FrameItemDescriptor[];
 	textures: Map<string, TextureUploadDescriptor>;
@@ -128,7 +130,7 @@ async function collectNode({
 		if (node.resolved.passes.length > 0) {
 			items.push({
 				type: "sceneEffect",
-				effectPassGroups: [node.resolved.passes],
+				effect_pass_groups: [node.resolved.passes],
 			});
 		}
 		if (node.resolved.overlay) {
@@ -225,7 +227,7 @@ function collectAiEffectOverlay({
 	textures,
 }: {
 	overlay: EffectLayerOverlay;
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 	path: string;
 	items: FrameItemDescriptor[];
 	textures: Map<string, TextureUploadDescriptor>;
@@ -333,7 +335,7 @@ async function collectVisualSourceNode({
 	textures,
 }: {
 	node: VideoNode | ImageNode | StickerNode | GraphicNode;
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 	path: string;
 	items: FrameItemDescriptor[];
 	textures: Map<string, TextureUploadDescriptor>;
@@ -404,7 +406,7 @@ function collectTextNode({
 	textures,
 }: {
 	node: TextNode;
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 	path: string;
 	items: FrameItemDescriptor[];
 	textures: Map<string, TextureUploadDescriptor>;
@@ -450,7 +452,7 @@ function computeVisualTransform({
 	sourceWidth,
 	sourceHeight,
 }: {
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 	resolved: ResolvedVisualSourceNodeState | ResolvedGraphicNodeState;
 	sourceWidth: number;
 	sourceHeight: number;
@@ -476,7 +478,7 @@ function computeVisualTransform({
 }
 
 function fullCanvasTransform(
-	renderer: CanvasRenderer,
+	renderer: RendererSize,
 ): QuadTransformDescriptor {
 	return {
 		centerX: renderer.width / 2,
@@ -497,7 +499,7 @@ function buildMaskArtifacts({
 	textures,
 }: {
 	node: VideoNode | ImageNode | StickerNode | GraphicNode;
-	renderer: CanvasRenderer;
+	renderer: RendererSize;
 	path: string;
 	transform: QuadTransformDescriptor;
 	textures: Map<string, TextureUploadDescriptor>;

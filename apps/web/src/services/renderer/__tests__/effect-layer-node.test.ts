@@ -3,6 +3,7 @@ import {
 	buildCustomAiEffectParams,
 	CUSTOM_AI_EFFECT_TYPE,
 } from "@/effects/custom-ai-effect";
+import { buildFrameDescriptor } from "@/services/renderer/compositor/frame-descriptor";
 import { EffectLayerNode } from "@/services/renderer/nodes/effect-layer-node";
 import { resolveRenderTree } from "@/services/renderer/resolve";
 
@@ -50,5 +51,23 @@ describe("effect layer node resolution", () => {
 
 		expect(node.resolved?.passes.length).toBeGreaterThan(0);
 		expect(node.resolved?.overlay).toBeNull();
+	});
+
+	test("serializes scene effect pass groups with the WASM field name", async () => {
+		const node = new EffectLayerNode({
+			effectType: "blur",
+			effectParams: { intensity: 15 },
+			timeOffset: 0,
+			duration: 100,
+		});
+
+		await resolveRenderTree({ node, renderer, time: 50 });
+		const { frame } = await buildFrameDescriptor({ node, renderer });
+
+		expect(frame.items[0]).toMatchObject({
+			type: "sceneEffect",
+			effect_pass_groups: expect.any(Array),
+		});
+		expect("effectPassGroups" in (frame.items[0] ?? {})).toBe(false);
 	});
 });
