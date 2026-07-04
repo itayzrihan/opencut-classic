@@ -88,6 +88,13 @@ const apiResponseSchema = z.object({
 	minRating: z.number().optional(),
 });
 
+function isMissingFreesoundKey() {
+	return (
+		!webEnv.FREESOUND_API_KEY ||
+		webEnv.FREESOUND_API_KEY === "your_api_key_here"
+	);
+}
+
 function buildSortParameter({ query, sort }: { query?: string; sort: string }) {
 	if (!query) return `${sort}_desc`;
 	return sort === "score" ? "score" : `${sort}_desc`;
@@ -194,6 +201,21 @@ export async function GET(request: NextRequest) {
 				},
 				{ status: 501 },
 			);
+		}
+
+		if (isMissingFreesoundKey()) {
+			return NextResponse.json({
+				count: 0,
+				next: null,
+				previous: null,
+				results: [],
+				query: query || "",
+				type: type || "effects",
+				page,
+				pageSize,
+				sort,
+				minRating: min_rating,
+			});
 		}
 
 		const baseUrl = "https://freesound.org/apiv2/search/text/";

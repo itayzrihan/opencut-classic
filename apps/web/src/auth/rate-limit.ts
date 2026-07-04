@@ -16,6 +16,14 @@ export const baseRateLimit = new Ratelimit({
 
 export async function checkRateLimit({ request }: { request: Request }) {
 	const ip = request.headers.get("x-forwarded-for") ?? "anonymous";
-	const { success } = await baseRateLimit.limit(ip);
-	return { success, limited: !success };
+	try {
+		const { success } = await baseRateLimit.limit(ip);
+		return { success, limited: !success };
+	} catch (error) {
+		if (webEnv.NODE_ENV === "development") {
+			console.warn("Rate limit check skipped:", error);
+			return { success: true, limited: false };
+		}
+		throw error;
+	}
 }

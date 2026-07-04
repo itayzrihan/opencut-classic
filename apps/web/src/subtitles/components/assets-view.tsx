@@ -11,15 +11,12 @@ import { useReducer, useRef, useState } from "react";
 import { extractTimelineAudio } from "@/media/mediabunny";
 import { useEditor } from "@/editor/use-editor";
 import { TRANSCRIPTION_DIAGNOSTICS_SCOPE } from "@/transcription/diagnostics";
-import { DEFAULT_TRANSCRIPTION_SAMPLE_RATE } from "@/transcription/audio";
 import { TRANSCRIPTION_LANGUAGES } from "@/transcription/supported-languages";
 import type {
 	CaptionChunk,
 	TranscriptionLanguage,
-	TranscriptionProgress,
+	TranscriptionResult,
 } from "@/transcription/types";
-import { transcriptionService } from "@/services/transcription/service";
-import { decodeAudioToFloat32 } from "@/media/audio";
 import { buildCaptionChunks } from "@/transcription/caption";
 import { insertCaptionChunksAsTextTrack } from "@/subtitles/insert";
 import { parseSubtitleFile } from "@/subtitles/parse";
@@ -39,6 +36,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { DiagnosticSeverity } from "@/diagnostics/types";
+import { z } from "zod";
 
 const DIAGNOSTIC_BUTTON_VARIANT: Record<
 	DiagnosticSeverity,
@@ -64,6 +62,18 @@ const IDLE_STATE: ProcessingState = {
 	warnings: [],
 };
 
+const transcriptionResultSchema = z.object({
+	text: z.string(),
+	segments: z.array(
+		z.object({
+			text: z.string(),
+			start: z.number(),
+			end: z.number(),
+		}),
+	),
+	language: z.string(),
+});
+
 /* eslint-disable opencut/prefer-object-params -- React reducers must accept (state, action). */
 function processingReducer(
 	state: ProcessingState,
@@ -85,7 +95,7 @@ function processingReducer(
 
 export function Captions() {
 	const [selectedLanguage, setSelectedLanguage] =
-		useState<TranscriptionLanguage>("auto");
+		useState<TranscriptionLanguage>("he");
 	const [processing, dispatch] = useReducer(processingReducer, IDLE_STATE);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -96,17 +106,6 @@ export function Captions() {
 	const activeDiagnostics = useEditor((e) =>
 		e.diagnostics.getActive({ scope: TRANSCRIPTION_DIAGNOSTICS_SCOPE }),
 	);
-
-	const handleProgress = (progress: TranscriptionProgress) => {
-		if (progress.status === "loading-model") {
-			dispatch({
-				type: "update_step",
-				step: `Loading model ${Math.round(progress.progress)}%`,
-			});
-		} else if (progress.status === "transcribing") {
-			dispatch({ type: "update_step", step: "Transcribing..." });
-		}
-	};
 
 	const insertCaptions = ({
 		captions,
@@ -126,17 +125,25 @@ export function Captions() {
 				totalDuration: editor.timeline.getTotalDuration(),
 			});
 
-			dispatch({ type: "update_step", step: "Preparing audio..." });
-			const { samples } = await decodeAudioToFloat32({
-				audioBlob,
-				sampleRate: DEFAULT_TRANSCRIPTION_SAMPLE_RATE,
-			});
+			dispatch({ type: "update_step", step: "Transcribing locally..." });
+			const formData = new FormData();
+			formData.append("audio", audioBlob, "timeline.webm");
+			formData.append(
+				"language",
+				selectedLanguage === "auto" ? "he" : selectedLanguage,
+			);
 
-			const result = await transcriptionService.transcribe({
-				audioData: samples,
-				language: selectedLanguage === "auto" ? undefined : selectedLanguage,
-				onProgress: handleProgress,
+			const response = await fetch("/api/transcription/whisper-cpp", {
+				method: "POST",
+				body: formData,
 			});
+			if (!response.ok) {
+				const error = await response.json().catch(() => null);
+				throw new Error(error?.error || `Transcription failed: ${response.status}`);
+			}
+			const result: TranscriptionResult = transcriptionResultSchema.parse(
+				await response.json(),
+			);
 
 			dispatch({ type: "update_step", step: "Generating captions..." });
 			const captionChunks = buildCaptionChunks({ segments: result.segments });

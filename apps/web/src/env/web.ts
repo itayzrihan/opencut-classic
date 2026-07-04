@@ -23,6 +23,9 @@ const webEnvSchema = z.object({
 	MARBLE_WORKSPACE_KEY: z.string(),
 	FREESOUND_CLIENT_ID: z.string(),
 	FREESOUND_API_KEY: z.string(),
+	WHISPER_CPP_BINARY_PATH: z.string().optional(),
+	WHISPER_CPP_MODEL_PATH: z.string().optional(),
+	WHISPER_CPP_FFMPEG_PATH: z.string().optional(),
 });
 
 export type WebEnv = z.infer<typeof webEnvSchema>;
