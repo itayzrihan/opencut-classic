@@ -12,6 +12,11 @@ import {
 	type ServerResponse,
 } from "node:http";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+	getCodexModelCandidates,
+	isUnsupportedCodexModelError,
+	normalizeCodexModelId,
+} from "@/ai/codex-models";
 import { webEnv } from "@/env/web";
 
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
@@ -305,56 +310,84 @@ export async function forwardCodexResponsesRequest({
 	credentials: OpenAICodexCredentials;
 	body: Record<string, unknown>;
 }): Promise<unknown> {
-	const requestBody = buildCodexResponsesRequestBody({ body });
-	const response = await fetch(
-		`${webEnv.OPENAI_CODEX_RESPONSES_BASE_URL}/responses`,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "text/event-stream",
-				Authorization: `Bearer ${credentials.access}`,
-				...(credentials.accountId
-					? { "chatgpt-account-id": credentials.accountId }
-					: {}),
-				originator: CODEX_ORIGINATOR,
-			},
-			body: JSON.stringify(requestBody),
-		},
+	const modelCandidates = getCodexModelCandidates(
+		typeof body.model === "string" ? body.model : webEnv.OPENAI_CODEX_MODEL,
 	);
+	let lastUnsupportedModelMessage = "";
 
-	if (!response.ok) {
-		const message = await readCodexErrorMessage({ response });
-		throw new Error(
-			`OpenAI Codex request failed (${response.status}): ${message}`,
+	for (const [modelIndex, model] of modelCandidates.entries()) {
+		const requestBody = buildCodexResponsesRequestBody({ body, model });
+		const response = await fetch(
+			`${webEnv.OPENAI_CODEX_RESPONSES_BASE_URL}/responses`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "text/event-stream",
+					Authorization: `Bearer ${credentials.access}`,
+					...(credentials.accountId
+						? { "chatgpt-account-id": credentials.accountId }
+						: {}),
+					originator: CODEX_ORIGINATOR,
+				},
+				body: JSON.stringify(requestBody),
+			},
 		);
+
+		if (!response.ok) {
+			const message = await readCodexErrorMessage({ response });
+			if (
+				modelIndex < modelCandidates.length - 1 &&
+				isUnsupportedCodexModelError({
+					status: response.status,
+					message,
+				})
+			) {
+				lastUnsupportedModelMessage = `${model}: ${message}`;
+				continue;
+			}
+			throw new Error(
+				`OpenAI Codex request failed (${response.status}) with ${model}: ${message}`,
+			);
+		}
+
+		if (isEventStreamResponse(response)) {
+			return parseCodexResponsesStream({ response });
+		}
+
+		const responseText = await response.text();
+		const responseBody = parseJsonObject(responseText);
+		if (!responseBody) {
+			throw new Error("OpenAI Codex response was not JSON.");
+		}
+		return responseBody;
 	}
 
-	if (isEventStreamResponse(response)) {
-		return parseCodexResponsesStream({ response });
-	}
-
-	const responseText = await response.text();
-	const responseBody = parseJsonObject(responseText);
-	if (!responseBody) {
-		throw new Error("OpenAI Codex response was not JSON.");
-	}
-	return responseBody;
+	throw new Error(
+		`OpenAI Codex request failed because no ChatGPT Codex model was accepted.${
+			lastUnsupportedModelMessage ? ` Last error: ${lastUnsupportedModelMessage}` : ""
+		}`,
+	);
 }
 
 function buildCodexResponsesRequestBody({
 	body,
+	model,
 }: {
 	body: Record<string, unknown>;
+	model?: string;
 }): Record<string, unknown> {
 	const { instructions, input } = normalizeResponsesInput(body.input);
 	const tools = normalizeResponsesTools(body.tools);
+	const selectedModel = normalizeCodexModelId(
+		model ??
+			(typeof body.model === "string" && body.model.trim()
+				? body.model
+				: webEnv.OPENAI_CODEX_MODEL),
+	);
 
 	return {
-		model:
-			typeof body.model === "string" && body.model.trim()
-				? body.model
-				: webEnv.OPENAI_CODEX_MODEL,
+		model: selectedModel,
 		store: false,
 		stream: true,
 		...(instructions ? { instructions } : {}),

@@ -132,6 +132,7 @@ describe("OpenAI Codex OAuth helpers", () => {
 			},
 		});
 
+		expect(body.model).toBe("gpt-5.5");
 		expect(body.instructions).toBe("System instructions");
 		expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
 		expect(body.store).toBe(false);
