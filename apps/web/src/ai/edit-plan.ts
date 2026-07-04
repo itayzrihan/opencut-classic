@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { EditorCore } from "@/core";
-import type { SceneTracks } from "@/timeline";
+import type { CreateTextElement, SceneTracks } from "@/timeline";
+import { DEFAULTS } from "@/timeline/defaults";
 import type { AnimationPath } from "@/animation/types";
-import type { MediaTime } from "@/wasm";
+import { ZERO_MEDIA_TIME, type MediaTime } from "@/wasm";
 import type { ParamValue } from "@/params";
 import type { AiEditOperation, AiEditPlan, AiTimelineRange } from "./types";
 import { buildTimelineContextIndex, rangesOverlap } from "./timeline-context";
@@ -10,6 +11,10 @@ import { buildTimelineContextIndex, rangesOverlap } from "./timeline-context";
 const mediaTimeSchema = z.custom<MediaTime>(
 	(value) => typeof value === "number" && Number.isInteger(value) && value >= 0,
 	"Expected a non-negative integer media time",
+);
+const positiveMediaTimeSchema = z.custom<MediaTime>(
+	(value) => typeof value === "number" && Number.isInteger(value) && value > 0,
+	"Expected a positive integer media time",
 );
 const paramValueSchema = z.union([z.string(), z.number(), z.boolean()]);
 const paramsSchema = z.record(z.string(), paramValueSchema);
@@ -20,6 +25,16 @@ const operationSchema = z.discriminatedUnion("type", [
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
 		patch: z.record(z.string(), z.unknown()),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("insert_text_element"),
+		trackId: z.string().min(1).optional(),
+		name: z.string().min(1).optional(),
+		content: z.string().min(1),
+		startTime: mediaTimeSchema,
+		duration: positiveMediaTimeSchema,
+		params: paramsSchema.optional(),
 		reason: z.string().optional(),
 	}),
 	z.object({
@@ -191,14 +206,38 @@ function getRangeGuardErrors({
 	tracks: SceneTracks;
 	range?: AiTimelineRange | null;
 }): string[] {
-	if (!range) {
-		return [];
-	}
-
 	const index = buildTimelineContextIndex({ tracks });
 	const errors: string[] = [];
 
 	for (const operation of operations) {
+		if (operation.type === "insert_text_element") {
+			if (operation.trackId) {
+				const layer = index.layersById.get(operation.trackId);
+				if (!layer) {
+					errors.push(
+						`insert_text_element references a missing track ${operation.trackId}`,
+					);
+				} else if (layer.type !== "text") {
+					errors.push(
+						`insert_text_element target track ${operation.trackId} is not a text track`,
+					);
+				}
+			}
+
+			if (range) {
+				const endTime = operation.startTime + operation.duration;
+				if (operation.startTime < range.startTime || endTime > range.endTime) {
+					errors.push("insert_text_element is outside the selected range");
+				}
+			}
+
+			continue;
+		}
+
+		if (!range) {
+			continue;
+		}
+
 		const refs = getOperationElementRefs(operation);
 		for (const ref of refs) {
 			const element = index.elementsById.get(`${ref.trackId}:${ref.elementId}`);
@@ -244,6 +283,8 @@ function getOperationElementRefs(
 	operation: AiEditOperation,
 ): Array<{ trackId: string; elementId: string }> {
 	switch (operation.type) {
+		case "insert_text_element":
+			return [];
 		case "move_element":
 			return [
 				{ trackId: operation.sourceTrackId, elementId: operation.elementId },
@@ -261,6 +302,14 @@ function applyOperation({
 	operation: AiEditOperation;
 }): void {
 	switch (operation.type) {
+		case "insert_text_element":
+			editor.timeline.insertElement({
+				element: buildInsertedTextElement({ operation }),
+				placement: operation.trackId
+					? { mode: "explicit", trackId: operation.trackId }
+					: { mode: "auto", trackType: "text" },
+			});
+			return;
 		case "update_element":
 			editor.timeline.updateElements({
 				updates: [
@@ -365,4 +414,26 @@ function applyOperation({
 			return exhaustive;
 		}
 	}
+}
+
+function buildInsertedTextElement({
+	operation,
+}: {
+	operation: Extract<AiEditOperation, { type: "insert_text_element" }>;
+}): CreateTextElement {
+	const fallbackName = operation.content.trim().slice(0, 40) || "AI text";
+
+	return {
+		...DEFAULTS.text.element,
+		name: operation.name?.trim() || fallbackName,
+		startTime: operation.startTime,
+		duration: operation.duration,
+		trimStart: ZERO_MEDIA_TIME,
+		trimEnd: ZERO_MEDIA_TIME,
+		params: {
+			...DEFAULTS.text.element.params,
+			content: operation.content,
+			...(operation.params ?? {}),
+		},
+	};
 }

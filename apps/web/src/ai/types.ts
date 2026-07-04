@@ -59,6 +59,16 @@ export type AiEditOperation =
 			reason?: string;
 	  }
 	| {
+			type: "insert_text_element";
+			trackId?: string;
+			name?: string;
+			content: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+			params?: Record<string, string | number | boolean>;
+			reason?: string;
+	  }
+	| {
 			type: "trim_element";
 			trackId: string;
 			elementId: string;

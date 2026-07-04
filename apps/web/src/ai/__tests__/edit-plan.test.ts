@@ -93,4 +93,71 @@ describe("AI edit plan validation", () => {
 		expect(result.success).toBe(false);
 		expect(result.errors[0]).toContain("outside the selected range");
 	});
+
+	test("accepts inserted text fully inside active range", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Add caption",
+				summary: "",
+				operations: [
+					{
+						type: "insert_text_element",
+						content: "New caption",
+						startTime: t(100),
+						duration: t(40),
+					},
+				],
+			},
+			tracks,
+			range: { startTime: t(90), endTime: t(220) },
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.plan?.operations).toHaveLength(1);
+	});
+
+	test("rejects inserted text outside active range", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Add late caption",
+				summary: "",
+				operations: [
+					{
+						type: "insert_text_element",
+						content: "Late caption",
+						startTime: t(200),
+						duration: t(40),
+					},
+				],
+			},
+			tracks,
+			range: { startTime: t(90), endTime: t(220) },
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("outside the selected range");
+	});
+
+	test("rejects inserted text on non-text tracks", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Add caption to main",
+				summary: "",
+				operations: [
+					{
+						type: "insert_text_element",
+						trackId: "main",
+						content: "Wrong track",
+						startTime: t(100),
+						duration: t(40),
+					},
+				],
+			},
+			tracks,
+			range: { startTime: t(90), endTime: t(220) },
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("not a text track");
+	});
 });

@@ -217,6 +217,8 @@ export function buildAiSystemPrompt(): string {
 		"Use tools to inspect timeline layers instead of asking for the whole project.",
 		"Never invent trackId, elementId, effectId, or keyframeId values. Look them up first.",
 		"Keep edits inside the selected range when a range is active.",
+		"Supported operations: update_element, insert_text_element, trim_element, move_element, split_element, delete_element, add_clip_effect, update_clip_effect_params, upsert_keyframe, remove_keyframe.",
+		"For insert_text_element, provide content, startTime, duration, and optional trackId, name, params, and reason.",
 		"Before the final answer, validate your proposed plan with timeline.propose_edit_plan.",
 		'Your final answer must be JSON only and match this shape: {"title":"...","summary":"...","operations":[],"notes":[]}.',
 		"Return an empty operations array when no edit is needed.",
@@ -437,9 +439,7 @@ function isTrackType(value: unknown): value is TrackType {
 	);
 }
 
-function isGeneratedCaptionTrack(
-	track: OverlayTrack,
-): track is TextTrack & {
+function isGeneratedCaptionTrack(track: OverlayTrack): track is TextTrack & {
 	captionSource: NonNullable<TextTrack["captionSource"]>;
 } {
 	return track.type === "text" && track.captionSource !== undefined;
