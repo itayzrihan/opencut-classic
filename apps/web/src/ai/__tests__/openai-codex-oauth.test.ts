@@ -1,6 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
+
+const oauthSessionDir = mkdtempSync(join(tmpdir(), "opencut-oauth-test-"));
+
+afterAll(() => {
+	rmSync(oauthSessionDir, { recursive: true, force: true });
+});
 
 function fakeJwt(payload: Record<string, unknown>): string {
 	return [
@@ -70,9 +79,9 @@ describe("OpenAI Codex OAuth helpers", () => {
 		);
 	});
 
-	test("keeps large OAuth tokens server-side behind a small session cookie", async () => {
+	test("keeps large OAuth tokens server-side and survives runtime reset", async () => {
 		setRequiredEnv();
-		const { getOpenAIOAuthStatus, setCredentialsCookie } = await import(
+		const { getOpenAIOAuthStatus, setCredentialsCookie, testing } = await import(
 			"@/ai/server/openai-codex-oauth"
 		);
 		const sessionBinding = createHash("sha256")
@@ -100,6 +109,7 @@ describe("OpenAI Codex OAuth helpers", () => {
 			response.cookies.get("opencut_openai_oauth_token")?.value ?? "",
 		).toBe("");
 
+		testing.resetOAuthRuntimeForTests();
 		const request = new NextRequest("http://localhost:3000/api/ai/oauth/status", {
 			headers: {
 				cookie: `opencut_openai_oauth_session=${sessionCookie}`,
@@ -253,4 +263,5 @@ function setRequiredEnv() {
 	process.env.FREESOUND_CLIENT_ID ??= "test-client";
 	process.env.FREESOUND_API_KEY ??= "test-api-key";
 	process.env.OPENAI_CODEX_OAUTH_CALLBACK_HOST ??= "localhost";
+	process.env.OPENCUT_OPENAI_OAUTH_SESSION_DIR ??= oauthSessionDir;
 }

@@ -6,11 +6,20 @@ import {
 	randomUUID,
 } from "node:crypto";
 import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import {
 	createServer,
 	type IncomingMessage,
 	type Server,
 	type ServerResponse,
 } from "node:http";
+import { join } from "node:path";
 import { NextResponse, type NextRequest } from "next/server";
 import {
 	getCodexModelCandidates,
@@ -31,6 +40,7 @@ const OAUTH_FLOW_MAX_AGE_MS = 10 * 60 * 1000;
 const OAUTH_HANDOFF_MAX_AGE_MS = 2 * 60 * 1000;
 const TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const REFRESH_SKEW_MS = 60_000;
+const PERSISTED_SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface OpenAICodexCredentials {
 	access: string;
@@ -297,6 +307,7 @@ export function clearOpenAICredentials({
 		const sessionCookie = readSessionCookie({ request });
 		if (sessionCookie) {
 			getOAuthRuntime().credentialSessions.delete(sessionCookie.sessionId);
+			deletePersistedCredentialSession(sessionCookie.sessionId);
 		}
 	}
 	clearCookie({ response, name: OAUTH_SESSION_COOKIE });
@@ -979,12 +990,14 @@ function storeCredentialSession({
 	cleanupOAuthRuntime(runtime);
 	const sessionId = randomUUID();
 	const now = Date.now();
-	runtime.credentialSessions.set(sessionId, {
+	const session: OAuthCredentialSession = {
 		credentials,
 		sessionBinding: credentials.sessionBinding,
 		createdAt: now,
 		updatedAt: now,
-	});
+	};
+	runtime.credentialSessions.set(sessionId, session);
+	persistCredentialSession({ sessionId, session });
 	return sessionId;
 }
 
@@ -997,13 +1010,15 @@ function updateCredentialSession({
 }): void {
 	const runtime = getOAuthRuntime();
 	const previous = runtime.credentialSessions.get(sessionId);
-	if (!previous) return;
-	runtime.credentialSessions.set(sessionId, {
-		...previous,
+	const now = Date.now();
+	const session: OAuthCredentialSession = {
 		credentials,
 		sessionBinding: credentials.sessionBinding,
-		updatedAt: Date.now(),
-	});
+		createdAt: previous?.createdAt ?? now,
+		updatedAt: now,
+	};
+	runtime.credentialSessions.set(sessionId, session);
+	persistCredentialSession({ sessionId, session });
 }
 
 async function ensureOAuthCallbackServer(
@@ -1153,8 +1168,93 @@ function cleanupOAuthRuntime(runtime: OAuthRuntimeState): void {
 	for (const [sessionId, session] of runtime.credentialSessions) {
 		if (now - session.updatedAt > TOKEN_MAX_AGE_SECONDS * 1000) {
 			runtime.credentialSessions.delete(sessionId);
+			deletePersistedCredentialSession(sessionId);
 		}
 	}
+	cleanupPersistedCredentialSessions({ now });
+}
+
+function persistCredentialSession({
+	sessionId,
+	session,
+}: {
+	sessionId: string;
+	session: OAuthCredentialSession;
+}): void {
+	const path = getPersistedCredentialSessionPath(sessionId);
+	mkdirSync(getPersistedCredentialSessionDir(), { recursive: true });
+	writeFileSync(path, sealJson(session), {
+		encoding: "utf8",
+		mode: 0o600,
+	});
+}
+
+function readPersistedCredentialSession(
+	sessionId: string,
+): OAuthCredentialSession | null {
+	try {
+		const value = unsealJson(
+			readFileSync(getPersistedCredentialSessionPath(sessionId), "utf8"),
+		);
+		if (!isOAuthCredentialSession(value)) {
+			deletePersistedCredentialSession(sessionId);
+			return null;
+		}
+		if (Date.now() - value.updatedAt > TOKEN_MAX_AGE_SECONDS * 1000) {
+			deletePersistedCredentialSession(sessionId);
+			return null;
+		}
+		return value;
+	} catch {
+		return null;
+	}
+}
+
+function deletePersistedCredentialSession(sessionId: string): void {
+	try {
+		rmSync(getPersistedCredentialSessionPath(sessionId), { force: true });
+	} catch {
+		// Best effort cleanup only.
+	}
+}
+
+function cleanupPersistedCredentialSessions({ now }: { now: number }): void {
+	const dir = getPersistedCredentialSessionDir();
+	if (!existsSync(dir)) return;
+
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+		const sessionId = entry.name.slice(0, -".json".length);
+		if (!isCredentialSessionId(sessionId)) {
+			rmSync(join(dir, entry.name), { force: true });
+			continue;
+		}
+		try {
+			const value = unsealJson(readFileSync(join(dir, entry.name), "utf8"));
+			if (
+				!isOAuthCredentialSession(value) ||
+				now - value.updatedAt > TOKEN_MAX_AGE_SECONDS * 1000
+			) {
+				rmSync(join(dir, entry.name), { force: true });
+			}
+		} catch {
+			rmSync(join(dir, entry.name), { force: true });
+		}
+	}
+}
+
+function getPersistedCredentialSessionDir(): string {
+	return (
+		process.env.OPENCUT_OPENAI_OAUTH_SESSION_DIR ??
+		join(process.cwd(), ".next", "cache", "openai-oauth-sessions")
+	);
+}
+
+function getPersistedCredentialSessionPath(sessionId: string): string {
+	if (!isCredentialSessionId(sessionId)) {
+		throw new Error("Invalid OpenAI OAuth session id.");
+	}
+	return join(getPersistedCredentialSessionDir(), `${sessionId}.json`);
 }
 
 function createHandoffUrl({
@@ -1366,12 +1466,20 @@ function readCredentialSession({
 
 	const runtime = getOAuthRuntime();
 	cleanupOAuthRuntime(runtime);
-	const session = runtime.credentialSessions.get(sessionCookie.sessionId);
+	const session =
+		runtime.credentialSessions.get(sessionCookie.sessionId) ??
+		readPersistedCredentialSession(sessionCookie.sessionId);
 	if (!session || session.sessionBinding !== sessionBinding) {
 		return null;
 	}
 
-	session.updatedAt = Date.now();
+	const now = Date.now();
+	const previousUpdatedAt = session.updatedAt;
+	session.updatedAt = now;
+	runtime.credentialSessions.set(sessionCookie.sessionId, session);
+	if (now - previousUpdatedAt > PERSISTED_SESSION_TOUCH_INTERVAL_MS) {
+		persistCredentialSession({ sessionId: sessionCookie.sessionId, session });
+	}
 	return {
 		sessionId: sessionCookie.sessionId,
 		credentials: session.credentials,
@@ -1544,6 +1652,44 @@ function isOAuthSessionCookie(value: unknown): value is OAuthSessionCookie {
 	);
 }
 
+function isOAuthCredentialSession(
+	value: unknown,
+): value is OAuthCredentialSession {
+	return (
+		isRecord(value) &&
+		isOpenAICodexCredentials(value.credentials) &&
+		typeof value.sessionBinding === "string" &&
+		typeof value.createdAt === "number" &&
+		Number.isFinite(value.createdAt) &&
+		typeof value.updatedAt === "number" &&
+		Number.isFinite(value.updatedAt)
+	);
+}
+
+function isOpenAICodexCredentials(
+	value: unknown,
+): value is OpenAICodexCredentials {
+	return (
+		isRecord(value) &&
+		typeof value.access === "string" &&
+		typeof value.refresh === "string" &&
+		typeof value.expires === "number" &&
+		Number.isFinite(value.expires) &&
+		typeof value.sessionBinding === "string" &&
+		(value.accountId === undefined || typeof value.accountId === "string") &&
+		(value.email === undefined || typeof value.email === "string") &&
+		(value.chatgptPlanType === undefined ||
+			typeof value.chatgptPlanType === "string") &&
+		(value.profileName === undefined || typeof value.profileName === "string")
+	);
+}
+
+function isCredentialSessionId(value: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+		value,
+	);
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
 	return isRecord(value) ? value : undefined;
 }
@@ -1577,6 +1723,10 @@ function escapeHtml(value: string): string {
 	});
 }
 
+function resetOAuthRuntimeForTests(): void {
+	globalThis.__opencutOpenAIOAuthRuntime = undefined;
+}
+
 export const testing = {
 	createPkcePair,
 	createAuthorizationUrl,
@@ -1585,6 +1735,7 @@ export const testing = {
 	normalizeReturnTo,
 	storeCredentialSession,
 	readSessionCookie,
+	resetOAuthRuntimeForTests,
 	buildCodexResponsesRequestBody,
 	parseCodexResponsesStream,
 	parseCodexResponseText,
