@@ -3,6 +3,7 @@ import type { SceneTracks } from "@/timeline";
 import type { MediaTime } from "@/wasm";
 import {
 	buildTimelineContextIndex,
+	buildTimelineDocument,
 	getElementsInRange,
 	getLayersInRange,
 	rangesOverlap,
@@ -115,7 +116,32 @@ describe("timeline context index", () => {
 		);
 	});
 
-	test("keeps active range prompt compact and points the agent to tools", () => {
+	test("builds a prioritized timeline document", () => {
+		const document = buildTimelineDocument({
+			tracks,
+			range: { startTime: t(250), endTime: t(360) },
+			selectedElements: [{ trackId: "text-track", elementId: "word-1" }],
+			maxElements: 2,
+		});
+		const parsed = JSON.parse(document) as {
+			elements: Array<{
+				elementId: string;
+				selected?: boolean;
+				inActiveRange?: boolean;
+			}>;
+			totals: { truncated: boolean };
+		};
+
+		expect(parsed.totals.truncated).toBe(true);
+		expect(parsed.elements.map((element) => element.elementId)).toEqual([
+			"video-1",
+			"word-1",
+		]);
+		expect(parsed.elements[1]?.selected).toBe(true);
+		expect(parsed.elements[0]?.inActiveRange).toBe(true);
+	});
+
+	test("includes a timeline document in the prompt", () => {
 		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- test fixture only implements the editor APIs this prompt builder reads.
 		const editor = {
 			scenes: {
@@ -145,8 +171,8 @@ describe("timeline context index", () => {
 
 		expect(prompt).toContain("Timeline summary:");
 		expect(prompt).toContain("Active range summary: 2 layers and 2 elements");
-		expect(prompt).toContain("Use timeline.search_elements");
-		expect(prompt).not.toContain("Range elements:");
-		expect(prompt).not.toContain('"elementId":"word-2"');
+		expect(prompt).toContain("OPENCUT_TIMELINE_DOCUMENT:");
+		expect(prompt).toContain('"format":"opencut_timeline_document"');
+		expect(prompt).toContain('"elementId":"word-2"');
 	});
 });

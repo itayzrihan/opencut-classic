@@ -52,7 +52,7 @@ describe("AI client agent", () => {
 					description: "",
 					parameters: { type: "object", properties: {} },
 				},
-				],
+			],
 			executeTool: async (toolCall) => {
 				executedToolName = toolCall.name;
 				return { ok: true };
@@ -63,9 +63,8 @@ describe("AI client agent", () => {
 		expect(result.iterations).toBe(2);
 		expect(result.editPlan?.title).toBe("No edits");
 		expect(
-			(
-				(firstRequestBody?.tools as Array<{ name: string }> | undefined)?.[0]
-			)?.name,
+			(firstRequestBody?.tools as Array<{ name: string }> | undefined)?.[0]
+				?.name,
 		).toBe("timeline_get_visible_state");
 		expect(executedToolName).toBe("timeline.get_visible_state");
 	});
@@ -105,6 +104,53 @@ describe("AI client agent", () => {
 
 		expect(result.status).toBe("max_iterations");
 		expect(result.iterations).toBe(2);
+		expect(result.error).toContain("2 step limit");
+	});
+
+	test("returns immediately when the edit-plan validation tool succeeds", async () => {
+		let callCount = 0;
+		globalThis.fetch = async () => {
+			callCount += 1;
+			return new Response(
+				JSON.stringify({
+					response: {
+						id: "resp-plan-tool",
+						output: [
+							{
+								type: "function_call",
+								call_id: "call-plan",
+								name: "timeline_propose_edit_plan",
+								arguments:
+									'{"plan":{"title":"Fast plan","summary":"Done","operations":[]}}',
+							},
+						],
+					},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		};
+
+		const result = await runAiAgent({
+			messages: [{ role: "user", content: "validate this" }],
+			tools: [
+				{
+					type: "function",
+					name: "timeline.propose_edit_plan",
+					description: "",
+					parameters: { type: "object", properties: {} },
+				},
+			],
+			executeTool: async () => ({
+				success: true,
+				plan: { title: "Fast plan", summary: "Done", operations: [] },
+				errors: [],
+			}),
+		});
+
+		expect(callCount).toBe(1);
+		expect(result.status).toBe("completed");
+		expect(result.iterations).toBe(1);
+		expect(result.editPlan?.title).toBe("Fast plan");
 	});
 
 	test("bounds large tool outputs before sending the next turn", async () => {

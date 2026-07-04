@@ -61,7 +61,7 @@ export async function runAiAgent({
 			};
 		}
 
-		onStep?.(`Thinking ${iteration}/${maxIterations}`);
+		onStep?.(`Planning ${iteration}/${maxIterations}`);
 		const response = await callAiChatRoute({
 			input,
 			tools: toWireToolDefinitions(tools),
@@ -86,6 +86,17 @@ export async function runAiAgent({
 			try {
 				onStep?.(`Running ${toolCall.name}`);
 				const output = await executeTool(toolCall);
+				if (toolCall.name === "timeline.propose_edit_plan") {
+					const plan = readSuccessfulValidationPlan(output);
+					if (plan) {
+						return {
+							status: "completed",
+							text: JSON.stringify(plan),
+							editPlan: plan,
+							iterations: iteration,
+						};
+					}
+				}
 				toolOutputs.push({
 					type: "function_call_output",
 					call_id: toolCall.id,
@@ -102,7 +113,11 @@ export async function runAiAgent({
 				});
 			}
 		}
-		input = [...input, ...getResponseContinuationItems(response), ...toolOutputs];
+		input = [
+			...input,
+			...getResponseContinuationItems(response),
+			...toolOutputs,
+		];
 	}
 
 	return {
@@ -110,8 +125,7 @@ export async function runAiAgent({
 		text: lastText,
 		editPlan: null,
 		iterations: maxIterations,
-		error:
-			"The AI agent reached the 12 step limit before returning an edit plan.",
+		error: `The AI agent reached the ${maxIterations} step limit before returning an edit plan.`,
 	};
 }
 
@@ -174,8 +188,12 @@ function getResponseToolCalls(response: ResponsesApiResult): AiToolCall[] {
 		.filter((toolCall) => toolCall.name.length > 0);
 }
 
-function getResponseContinuationItems(response: ResponsesApiResult): ResponsesOutputItem[] {
-	return (response.output ?? []).filter((item) => item.type === "function_call");
+function getResponseContinuationItems(
+	response: ResponsesApiResult,
+): ResponsesOutputItem[] {
+	return (response.output ?? []).filter(
+		(item) => item.type === "function_call",
+	);
 }
 
 const TOOL_WIRE_NAMES = new Map<string, string>([
@@ -272,6 +290,14 @@ function isAiEditPlan(value: unknown): value is AiEditPlan {
 		typeof value.summary === "string" &&
 		Array.isArray(value.operations)
 	);
+}
+
+function readSuccessfulValidationPlan(value: unknown): AiEditPlan | null {
+	if (!isRecord(value) || value.success !== true) {
+		return null;
+	}
+	const plan = value.plan;
+	return isAiEditPlan(plan) ? plan : null;
 }
 
 function isResponsesApiResult(value: unknown): value is ResponsesApiResult {

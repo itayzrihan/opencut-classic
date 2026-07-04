@@ -8,6 +8,7 @@ import type {
 } from "@/timeline";
 import type { AiTimelineRange, AiToolCall, AiToolDefinition } from "./types";
 import {
+	buildTimelineDocument,
 	buildTimelineContextIndex,
 	getElementsInRange,
 	getLayersInRange,
@@ -36,17 +37,15 @@ export function createTimelineToolRuntime({
 	options?: TimelineToolContextOptions;
 }): TimelineToolRuntime {
 	const includeLayerAccess = options.includeLayerAccess ?? true;
-	const tools = createTimelineToolDefinitions().filter(
-		(tool) => {
-			if (tool.name === "preview.capture_frame") {
-				return options.includePreviewImage === true;
-			}
-			if (tool.name === "timeline.propose_edit_plan") {
-				return true;
-			}
-			return includeLayerAccess;
-		},
-	);
+	const tools = createTimelineToolDefinitions().filter((tool) => {
+		if (tool.name === "preview.capture_frame") {
+			return options.includePreviewImage === true;
+		}
+		if (tool.name === "timeline.propose_edit_plan") {
+			return true;
+		}
+		return includeLayerAccess;
+	});
 	const executeTool = async (toolCall: AiToolCall) => {
 		const scene = editor.scenes.getActiveSceneOrNull();
 		if (!scene) {
@@ -226,12 +225,14 @@ export function createTimelineToolDefinitions(): AiToolDefinition[] {
 export function buildAiSystemPrompt(): string {
 	return [
 		"You are an in-app video editing agent for OpenCut.",
-		"Use tools to inspect timeline layers instead of asking for the whole project.",
-		"Never invent trackId, elementId, effectId, or keyframeId values. Look them up first.",
+		"The user message includes OPENCUT_TIMELINE_DOCUMENT, a code-like JSON snapshot of the current timeline.",
+		"Prefer producing a complete AiEditPlan directly from that document in one model turn.",
+		"Use timeline tools only when the timeline document is truncated, an element is missing, or visual preview context is needed.",
+		"Never invent trackId, elementId, effectId, or keyframeId values. Use ids from the timeline document or fetch them with tools first.",
 		"Keep edits inside the selected range when a range is active.",
 		"Supported operations: update_element, insert_text_element, trim_element, move_element, split_element, delete_element, add_clip_effect, update_clip_effect_params, upsert_keyframe, remove_keyframe.",
 		"For insert_text_element, provide content, startTime, duration, and optional trackId, name, params, and reason.",
-		"Before the final answer, validate your proposed plan with the edit-plan validation tool.",
+		"You may call timeline.propose_edit_plan to validate uncertain plans, but do not call tools just to restate information already in OPENCUT_TIMELINE_DOCUMENT.",
 		'Your final answer must be JSON only and match this shape: {"title":"...","summary":"...","operations":[],"notes":[]}.',
 		"Return an empty operations array when no edit is needed.",
 	].join("\n");
@@ -265,6 +266,11 @@ export function buildTimelineContextPrompt({
 	}
 
 	const parts: string[] = [`Project: ${project.metadata.name}`];
+	const mediaAssets = editor.media.getAssets();
+	const documentRange = includeActiveRange ? range : null;
+	const documentSelectedElements = includeSelectedElements
+		? selectedElements
+		: [];
 	const displayTracks = [
 		...scene.tracks.overlay,
 		scene.tracks.main,
@@ -280,16 +286,18 @@ export function buildTimelineContextPrompt({
 	if (includePlayheadTime) {
 		parts.push(`Playhead time ticks: ${editor.playback.getCurrentTime()}`);
 	}
-	if (includeActiveRange && range) {
-		parts.push(`Active range ticks: ${range.startTime} to ${range.endTime}`);
+	if (documentRange) {
+		parts.push(
+			`Active range ticks: ${documentRange.startTime} to ${documentRange.endTime}`,
+		);
 		const index = buildTimelineContextIndex({
 			tracks: scene.tracks,
-			mediaAssets: editor.media.getAssets(),
+			mediaAssets,
 		});
-		const rangeLayers = getLayersInRange({ index, range });
-		const rangeElements = getElementsInRange({ index, range });
+		const rangeLayers = getLayersInRange({ index, range: documentRange });
+		const rangeElements = getElementsInRange({ index, range: documentRange });
 		parts.push(
-			`Active range summary: ${rangeLayers.length} layers and ${rangeElements.length} elements overlap this range. Use timeline.search_elements with inActiveRange=true and timeline.get_element for details.`,
+			`Active range summary: ${rangeLayers.length} layers and ${rangeElements.length} elements overlap this range. Their ids are included in OPENCUT_TIMELINE_DOCUMENT when within the document budget.`,
 		);
 	}
 	if (includeSelectedElements) {
@@ -301,7 +309,7 @@ export function buildTimelineContextPrompt({
 	if (includeMediaSummary) {
 		parts.push(
 			`Media assets: ${JSON.stringify(
-				editor.media.getAssets().map((asset) => ({
+				mediaAssets.map((asset) => ({
 					id: asset.id,
 					name: asset.name,
 					type: asset.type,
@@ -324,6 +332,26 @@ export function buildTimelineContextPrompt({
 			)}`,
 		);
 	}
+	parts.push(
+		[
+			"OPENCUT_TIMELINE_DOCUMENT:",
+			"```json",
+			buildTimelineDocument({
+				tracks: scene.tracks,
+				projectName: project.metadata.name,
+				mediaAssets,
+				range: documentRange,
+				selectedElements: documentSelectedElements,
+				currentTime: includePlayheadTime
+					? editor.playback.getCurrentTime()
+					: undefined,
+				bookmarks: includeBookmarks ? scene.bookmarks : [],
+				includeMediaSummary,
+				includeCaptions,
+			}),
+			"```",
+		].join("\n"),
+	);
 
 	return parts.join("\n");
 }

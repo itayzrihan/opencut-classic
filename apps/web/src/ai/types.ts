@@ -32,6 +32,20 @@ export interface AiElementSummary extends ElementRef {
 	mediaId?: string;
 	sourceUrl?: string;
 	text?: string;
+	effects?: Array<{
+		id: string;
+		type: string;
+		enabled: boolean;
+		params: Record<string, string | number | boolean>;
+	}>;
+	keyframes?: Array<{
+		propertyPath: string;
+		keyframeId: string;
+		time: number;
+		value: string | number | boolean;
+		interpolation?: string;
+		componentKey?: string;
+	}>;
 	hidden?: boolean;
 	muted?: boolean;
 }

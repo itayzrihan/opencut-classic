@@ -4,6 +4,12 @@ export interface ChatGptCodexModel {
 	description: string;
 	recommended?: boolean;
 	requiresPlan?: "pro";
+	source?: "static" | "live";
+	inputModalities?: string[];
+	reasoningEfforts?: string[];
+	contextWindow?: number;
+	contextTokens?: number;
+	maxOutputTokens?: number;
 }
 
 export const DEFAULT_CHATGPT_CODEX_MODEL = "gpt-5.5";
@@ -91,6 +97,15 @@ export function isUnsupportedCodexModelError({
 	);
 }
 
+export function buildChatGptCodexModelsFromDiscovery(
+	value: unknown,
+): ChatGptCodexModel[] {
+	const rows = readCodexDiscoveryRows(value);
+	return rows
+		.map(buildChatGptCodexModelFromDiscoveryRow)
+		.filter((model): model is ChatGptCodexModel => model !== null);
+}
+
 function uniqueStrings(values: readonly string[]): string[] {
 	const seen = new Set<string>();
 	const unique: string[] = [];
@@ -100,4 +115,181 @@ function uniqueStrings(values: readonly string[]): string[] {
 		unique.push(value);
 	}
 	return unique;
+}
+
+function buildChatGptCodexModelFromDiscoveryRow(
+	row: unknown,
+): ChatGptCodexModel | null {
+	if (!shouldIncludeCodexDiscoveryRow(row)) {
+		return null;
+	}
+
+	const id = readString({ row, key: "slug" }) ?? readString({ row, key: "id" });
+	if (!id) {
+		return null;
+	}
+
+	const fallback = CHATGPT_CODEX_MODELS.find(
+		(model) => model.id.toLowerCase() === id.toLowerCase(),
+	);
+	const reasoningEfforts = readReasoningEfforts(row);
+	const inputModalities = readStringArray({
+		row,
+		keys: ["input_modalities", "inputModalities"],
+	});
+	const contextTokens = readPositiveInteger({
+		row,
+		keys: ["context_window", "contextWindow"],
+	});
+	const contextWindow = readPositiveInteger({
+		row,
+		keys: ["max_context_window", "maxContextWindow"],
+	});
+	const maxOutputTokens = readPositiveInteger({
+		row,
+		keys: [
+			"max_output_tokens",
+			"maxOutputTokens",
+			"max_completion_tokens",
+			"maxCompletionTokens",
+		],
+	});
+	const resolvedContextWindow = contextWindow ?? fallback?.contextWindow;
+	const resolvedMaxOutputTokens = maxOutputTokens ?? fallback?.maxOutputTokens;
+
+	return {
+		id,
+		label: readString({ row, key: "display_name" }) ?? fallback?.label ?? id,
+		description:
+			fallback?.description ?? "Available in your ChatGPT Codex account.",
+		...((fallback?.recommended ?? id === DEFAULT_CHATGPT_CODEX_MODEL)
+			? { recommended: true }
+			: {}),
+		...(fallback?.requiresPlan ? { requiresPlan: fallback.requiresPlan } : {}),
+		source: "live",
+		...(inputModalities.length > 0 ? { inputModalities } : {}),
+		...(reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
+		...(contextTokens ? { contextTokens } : {}),
+		...(resolvedContextWindow ? { contextWindow: resolvedContextWindow } : {}),
+		...(resolvedMaxOutputTokens
+			? { maxOutputTokens: resolvedMaxOutputTokens }
+			: {}),
+	};
+}
+
+function readCodexDiscoveryRows(value: unknown): unknown[] {
+	if (!isRecord(value)) {
+		return [];
+	}
+	return Array.isArray(value.models) ? value.models : [];
+}
+
+function shouldIncludeCodexDiscoveryRow(row: unknown): boolean {
+	const visibility = (
+		readString({ row, key: "visibility" }) ?? ""
+	).toLowerCase();
+	if (visibility && visibility !== "list") {
+		return false;
+	}
+	const showInPicker =
+		readBoolean({ row, key: "show_in_picker" }) ??
+		readBoolean({ row, key: "showInPicker" });
+	return showInPicker !== false;
+}
+
+function readReasoningEfforts(row: unknown): string[] {
+	if (!isRecord(row)) {
+		return [];
+	}
+	const value = row.supported_reasoning_levels ?? row.supportedReasoningLevels;
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	return uniqueStrings(
+		value.flatMap((entry) => {
+			if (typeof entry === "string" && entry.trim()) {
+				return [entry.trim()];
+			}
+			if (isRecord(entry)) {
+				const effort = entry.effort;
+				return typeof effort === "string" && effort.trim()
+					? [effort.trim()]
+					: [];
+			}
+			return [];
+		}),
+	);
+}
+
+function readPositiveInteger({
+	row,
+	keys,
+}: {
+	row: unknown;
+	keys: readonly string[];
+}): number | undefined {
+	if (!isRecord(row)) {
+		return undefined;
+	}
+	for (const key of keys) {
+		const value = row[key];
+		if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+function readStringArray({
+	row,
+	keys,
+}: {
+	row: unknown;
+	keys: readonly string[];
+}): string[] {
+	if (!isRecord(row)) {
+		return [];
+	}
+	for (const key of keys) {
+		const value = row[key];
+		if (Array.isArray(value)) {
+			return value.filter(
+				(entry): entry is string => typeof entry === "string" && !!entry.trim(),
+			);
+		}
+	}
+	return [];
+}
+
+function readString({
+	row,
+	key,
+}: {
+	row: unknown;
+	key: string;
+}): string | undefined {
+	if (!isRecord(row)) {
+		return undefined;
+	}
+	const value = row[key];
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readBoolean({
+	row,
+	key,
+}: {
+	row: unknown;
+	key: string;
+}): boolean | undefined {
+	if (!isRecord(row)) {
+		return undefined;
+	}
+	const value = row[key];
+	return typeof value === "boolean" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

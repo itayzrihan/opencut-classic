@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_CHATGPT_CODEX_MODEL,
+	buildChatGptCodexModelsFromDiscovery,
 	getCodexModelCandidates,
 	isUnsupportedCodexModelError,
 	normalizeCodexModelId,
@@ -43,5 +44,57 @@ describe("Codex model helpers", () => {
 				message: "Unauthorized",
 			}),
 		).toBe(false);
+	});
+
+	test("maps live ChatGPT Codex discovery rows", () => {
+		const models = buildChatGptCodexModelsFromDiscovery({
+			models: [
+				{
+					slug: "gpt-5.6",
+					display_name: "GPT-5.6",
+					visibility: "list",
+					show_in_picker: true,
+					supported_reasoning_levels: [
+						{ effort: "low", description: "low" },
+						{ effort: "xhigh", description: "xhigh" },
+					],
+					input_modalities: ["text", "image"],
+					context_window: 372_000,
+					max_context_window: 1_000_000,
+					max_output_tokens: 128_000,
+				},
+				{
+					slug: "hidden-review-model",
+					display_name: "Hidden Review Model",
+					visibility: "hide",
+				},
+				{
+					id: "picker-disabled",
+					display_name: "Picker Disabled",
+					showInPicker: false,
+				},
+				{
+					id: "gpt-5.5",
+					display_name: "GPT-5.5",
+					supportedReasoningLevels: ["low", "medium"],
+				},
+			],
+		});
+
+		expect(models.map((model) => model.id)).toEqual(["gpt-5.6", "gpt-5.5"]);
+		expect(models[0]).toMatchObject({
+			label: "GPT-5.6",
+			source: "live",
+			inputModalities: ["text", "image"],
+			reasoningEfforts: ["low", "xhigh"],
+			contextTokens: 372_000,
+			contextWindow: 1_000_000,
+			maxOutputTokens: 128_000,
+		});
+		expect(models[1]).toMatchObject({
+			id: DEFAULT_CHATGPT_CODEX_MODEL,
+			recommended: true,
+			reasoningEfforts: ["low", "medium"],
+		});
 	});
 });
