@@ -11,6 +11,12 @@ export type EffectLayerNodeParams = {
 
 export type ResolvedEffectLayerNodeState = {
 	passes: EffectPass[];
+	overlay: EffectLayerOverlay | null;
+};
+
+export type EffectLayerOverlay = {
+	label: string;
+	intent?: string;
 };
 
 export class EffectLayerNode extends BaseNode<

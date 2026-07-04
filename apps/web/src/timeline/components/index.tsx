@@ -31,10 +31,7 @@ import {
 } from "react";
 import { useContainerSize } from "@/hooks/use-container-size";
 import type { MediaTime } from "@/wasm";
-import type {
-	ElementDragView,
-	DropTarget,
-} from "@/timeline";
+import type { ElementDragView, DropTarget } from "@/timeline";
 import { TimelineTrackContent } from "./timeline-track";
 import { TimelinePlayhead } from "./timeline-playhead";
 import { SelectionBox } from "@/selection/selection-box";
@@ -90,6 +87,9 @@ import { DragLine } from "./drag-line";
 import { invokeAction } from "@/actions";
 import { resolveTimelineElementIntersections } from "./selection-hit-testing";
 import { cn } from "@/utils/ui";
+import { getMouseTimeFromClientX } from "@/timeline/drag-utils";
+import { getSelectedTimelineRange } from "@/timeline/range-selection";
+import { AiRangeDialog } from "@/ai/components/ai-range-dialog";
 
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
@@ -119,6 +119,12 @@ const TRACK_ICONS: Record<TimelineTrack["type"], ReactNode> = {
 
 export function Timeline() {
 	const snappingEnabled = useTimelineStore((s) => s.snappingEnabled);
+	const aiRangeSelection = useTimelineStore((s) => s.aiRangeSelection);
+	const startRangeSelection = useTimelineStore((s) => s.startRangeSelection);
+	const updateRangeSelection = useTimelineStore((s) => s.updateRangeSelection);
+	const completeRangeSelection = useTimelineStore(
+		(s) => s.completeRangeSelection,
+	);
 	const {
 		selectedElements,
 		clearElementSelection,
@@ -149,6 +155,7 @@ export function Timeline() {
 	const trackLabelsRef = useRef<HTMLDivElement>(null);
 	const playheadRef = useRef<HTMLDivElement>(null);
 	const trackLabelsScrollRef = useRef<HTMLDivElement>(null);
+	const rangeLastMouseXRef = useRef(0);
 
 	const [currentSnapPoint, setCurrentSnapPoint] = useState<SnapPoint | null>(
 		null,
@@ -192,6 +199,8 @@ export function Timeline() {
 	});
 
 	const expandedElementIds = useTimelineStore((s) => s.expandedElementIds);
+	const isRangeSelectionLocked = aiRangeSelection.isTimelineLocked;
+	const selectedAiRange = getSelectedTimelineRange(aiRangeSelection);
 
 	const getTrackExpansionHeight = useCallback(
 		(trackIndex: number) => {
@@ -305,12 +314,12 @@ export function Timeline() {
 
 	const { dragView, handleElementMouseDown, handleElementClick } =
 		useElementInteraction({
-		zoomLevel,
-		tracksContainerRef,
-		tracksScrollRef,
-		snappingEnabled,
-		onSnapPointChange: handleSnapPointChange,
-	});
+			zoomLevel,
+			tracksContainerRef,
+			tracksScrollRef,
+			snappingEnabled,
+			onSnapPointChange: handleSnapPointChange,
+		});
 	const isElementDragging = dragView.kind === "dragging";
 
 	const {
@@ -371,6 +380,7 @@ export function Timeline() {
 				setElementSelection({ elements: intersectedIds });
 			}
 		},
+		isEnabled: !isRangeSelectionLocked,
 	});
 
 	const contentWidth = timelineTimeToPixels({
@@ -406,6 +416,14 @@ export function Timeline() {
 		contentWidth: dynamicTimelineWidth,
 	});
 
+	useEdgeAutoScroll({
+		isActive: aiRangeSelection.mode === "selecting",
+		getMouseClientX: () => rangeLastMouseXRef.current,
+		rulerScrollRef,
+		tracksScrollRef,
+		contentWidth: dynamicTimelineWidth,
+	});
+
 	const showSnapIndicator =
 		snappingEnabled &&
 		currentSnapPoint !== null &&
@@ -430,6 +448,83 @@ export function Timeline() {
 
 	const timelineHeaderHeight =
 		timelineHeaderHeightValue + TIMELINE_CONTENT_TOP_PADDING_PX;
+	const tracksAreaHeight =
+		Math.max(
+			TRACKS_CONTAINER_HEIGHT.min,
+			Math.min(
+				TRACKS_CONTAINER_HEIGHT.max,
+				getTotalTracksHeight({
+					tracks,
+					getExtraHeight: getTrackExpansionHeight,
+				}),
+			),
+		) + TIMELINE_CONTENT_TOP_PADDING_PX;
+
+	const getRangeTimeFromClientX = useCallback(
+		(clientX: number) => {
+			const container = tracksContainerRef.current;
+			if (!container) {
+				return null;
+			}
+			return getMouseTimeFromClientX({
+				clientX,
+				containerRect: container.getBoundingClientRect(),
+				zoomLevel,
+				scrollLeft:
+					tracksScrollRef.current?.scrollLeft ??
+					rulerScrollRef.current?.scrollLeft ??
+					0,
+			});
+		},
+		[zoomLevel],
+	);
+
+	const handleRangeSelectionMouseDown = useCallback(
+		(event: React.MouseEvent) => {
+			const state = useTimelineStore.getState().aiRangeSelection;
+			if (!state.isTimelineLocked) {
+				return false;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+			if (event.button !== 0) {
+				return true;
+			}
+
+			const startTime = getRangeTimeFromClientX(event.clientX);
+			if (startTime === null) {
+				return true;
+			}
+
+			rangeLastMouseXRef.current = event.clientX;
+			startRangeSelection(startTime);
+
+			const handleMouseMove = (moveEvent: MouseEvent) => {
+				const nextTime = getRangeTimeFromClientX(moveEvent.clientX);
+				if (nextTime === null) return;
+				rangeLastMouseXRef.current = moveEvent.clientX;
+				updateRangeSelection(nextTime);
+			};
+			const handleMouseUp = (upEvent: MouseEvent) => {
+				const nextTime = getRangeTimeFromClientX(upEvent.clientX);
+				if (nextTime !== null) {
+					completeRangeSelection(nextTime);
+				}
+				window.removeEventListener("mousemove", handleMouseMove);
+				window.removeEventListener("mouseup", handleMouseUp);
+			};
+
+			window.addEventListener("mousemove", handleMouseMove);
+			window.addEventListener("mouseup", handleMouseUp);
+			return true;
+		},
+		[
+			completeRangeSelection,
+			getRangeTimeFromClientX,
+			startRangeSelection,
+			updateRangeSelection,
+		],
+	);
 
 	return (
 		<section
@@ -455,11 +550,16 @@ export function Timeline() {
 				/>
 
 				<div
-					className="relative isolate flex flex-1 flex-col overflow-hidden"
+					className={cn(
+						"relative isolate flex flex-1 flex-col overflow-hidden",
+						isRangeSelectionLocked && "cursor-crosshair",
+					)}
 					ref={tracksContainerRef}
 				>
 					<SelectionBox
-						bounds={selectionBox?.bounds ?? null}
+						bounds={
+							!isRangeSelectionLocked ? (selectionBox?.bounds ?? null) : null
+						}
 					/>
 					<DragLine
 						dropTarget={dropTarget}
@@ -486,9 +586,22 @@ export function Timeline() {
 								rulerRef={rulerRef}
 								tracksScrollRef={rulerScrollRef}
 								handleWheel={handleWheel}
-								handleTimelineContentClick={handleRulerClick}
-								handleRulerTrackingMouseDown={handleRulerMouseDown}
-								handleRulerMouseDown={handlePlayheadRulerMouseDown}
+								handleTimelineContentClick={(event) => {
+									if (isRangeSelectionLocked) return;
+									handleRulerClick(event);
+								}}
+								handleRulerTrackingMouseDown={(event) => {
+									if (handleRangeSelectionMouseDown(event)) return;
+									handleRulerMouseDown(event);
+								}}
+								handleRulerMouseDown={(event) => {
+									if (isRangeSelectionLocked) {
+										event.preventDefault();
+										event.stopPropagation();
+										return;
+									}
+									handlePlayheadRulerMouseDown(event);
+								}}
 							/>
 							<TimelineBookmarksRow
 								zoomLevel={zoomLevel}
@@ -496,9 +609,22 @@ export function Timeline() {
 								dragState={bookmarkDragState}
 								onBookmarkMouseDown={handleBookmarkMouseDown}
 								handleWheel={handleWheel}
-								handleTimelineContentClick={handleRulerClick}
-								handleRulerTrackingMouseDown={handleRulerMouseDown}
-								handleRulerMouseDown={handlePlayheadRulerMouseDown}
+								handleTimelineContentClick={(event) => {
+									if (isRangeSelectionLocked) return;
+									handleRulerClick(event);
+								}}
+								handleRulerTrackingMouseDown={(event) => {
+									if (handleRangeSelectionMouseDown(event)) return;
+									handleRulerMouseDown(event);
+								}}
+								handleRulerMouseDown={(event) => {
+									if (isRangeSelectionLocked) {
+										event.preventDefault();
+										event.stopPropagation();
+										return;
+									}
+									handlePlayheadRulerMouseDown(event);
+								}}
 							/>
 						</div>
 					</div>
@@ -519,23 +645,13 @@ export function Timeline() {
 							<div
 								className="relative shrink-0"
 								style={{
-									height: `${
-										Math.max(
-											TRACKS_CONTAINER_HEIGHT.min,
-											Math.min(
-												TRACKS_CONTAINER_HEIGHT.max,
-												getTotalTracksHeight({
-													tracks,
-													getExtraHeight: getTrackExpansionHeight,
-												}),
-											),
-										) + TIMELINE_CONTENT_TOP_PADDING_PX
-									}px`,
+									height: `${tracksAreaHeight}px`,
 								}}
 								onMouseDown={(event) => {
 									const isDirectTarget = event.target === event.currentTarget;
 									if (!isDirectTarget) return;
 									event.stopPropagation();
+									if (handleRangeSelectionMouseDown(event)) return;
 									handleTracksMouseDown(event);
 									handleSelectionMouseDown(event);
 								}}
@@ -543,22 +659,46 @@ export function Timeline() {
 									const isDirectTarget = event.target === event.currentTarget;
 									if (!isDirectTarget) return;
 									event.stopPropagation();
+									if (isRangeSelectionLocked) return;
 									handleTracksClick(event);
 								}}
 							>
+								<TimelineRangeOverlay
+									range={selectedAiRange}
+									zoomLevel={zoomLevel}
+									height={tracksAreaHeight}
+									mode={aiRangeSelection.mode}
+								/>
 								{tracks.length > 0 && (
 									<TimelineTrackRows
 										mainTrackId={mainTrackId}
 										zoomLevel={zoomLevel}
 										dragView={dragView}
-										onResizeStart={handleResizeStart}
-										onElementMouseDown={handleElementMouseDown}
-										onElementClick={handleElementClick}
+										onResizeStart={(params) => {
+											if (handleRangeSelectionMouseDown(params.event)) return;
+											handleResizeStart(params);
+										}}
+										onElementMouseDown={(params) => {
+											if (handleRangeSelectionMouseDown(params.event)) return;
+											handleElementMouseDown(params);
+										}}
+										onElementClick={(params) => {
+											if (isRangeSelectionLocked) {
+												params.event.preventDefault();
+												params.event.stopPropagation();
+												return;
+											}
+											handleElementClick(params);
+										}}
 										onTrackMouseDown={(event) => {
+											if (handleRangeSelectionMouseDown(event)) return;
 											handleSelectionMouseDown(event);
 											handleTracksMouseDown(event);
 										}}
-										onTrackMouseUp={handleTracksClick}
+										onTrackMouseUp={(event) => {
+											if (isRangeSelectionLocked) return;
+											handleTracksClick(event);
+										}}
 										shouldIgnoreClick={shouldIgnoreClick}
 										isDragOver={isDragOver}
 										dropTarget={dropTarget}
@@ -567,10 +707,14 @@ export function Timeline() {
 							</div>
 							<TimelineGutter
 								onMouseDown={(event) => {
+									if (handleRangeSelectionMouseDown(event)) return;
 									handleTracksMouseDown(event);
 									handleSelectionMouseDown(event);
 								}}
-								onClick={handleTracksClick}
+								onClick={(event) => {
+									if (isRangeSelectionLocked) return;
+									handleTracksClick(event);
+								}}
 							/>
 						</div>
 					</ScrollArea>
@@ -596,7 +740,43 @@ export function Timeline() {
 					isVisible={showSnapIndicator}
 				/>
 			</div>
+			<AiRangeDialog />
 		</section>
+	);
+}
+
+function TimelineRangeOverlay({
+	range,
+	zoomLevel,
+	height,
+	mode,
+}: {
+	range: ReturnType<typeof getSelectedTimelineRange>;
+	zoomLevel: number;
+	height: number;
+	mode: string;
+}) {
+	if (!range) {
+		return null;
+	}
+
+	const left = timelineTimeToPixels({ time: range.startTime, zoomLevel });
+	const right = timelineTimeToPixels({ time: range.endTime, zoomLevel });
+	const width = Math.max(1, right - left);
+
+	return (
+		<div
+			className="pointer-events-none absolute top-0 z-40 border-x border-primary/80 bg-primary/12"
+			style={{
+				left,
+				width,
+				height,
+			}}
+			data-ai-range-mode={mode}
+		>
+			<div className="absolute inset-x-0 top-0 h-0.5 bg-primary" />
+			<div className="absolute inset-x-0 bottom-0 h-0.5 bg-primary/60" />
+		</div>
 	);
 }
 
@@ -783,8 +963,8 @@ function TimelineTrackRows({
 	const draggingElementIds = useMemo(
 		() =>
 			dragView.kind === "dragging"
-			? dragView.memberTimeOffsets
-			: (null as ReadonlyMap<string, MediaTime> | null),
+				? dragView.memberTimeOffsets
+				: (null as ReadonlyMap<string, MediaTime> | null),
 		[dragView],
 	);
 	const sortedTracks = useMemo(() => {
@@ -901,7 +1081,6 @@ function TimelineGutter({
 		<div className="flex-1" onMouseDown={onMouseDown} onClick={onClick} />
 	);
 }
-
 
 function TrackIcon({ track }: { track: TimelineTrack }) {
 	return <>{TRACK_ICONS[track.type]}</>;

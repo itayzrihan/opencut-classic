@@ -9,7 +9,7 @@ import {
 import {
 	parseGraphicParamPath,
 } from "@/animation/graphic-param-channel";
-import { effectsRegistry, registerDefaultEffects } from "@/effects";
+import { getEffectDefinition, registerDefaultEffects } from "@/effects";
 import { getGraphicDefinition } from "@/graphics";
 import {
 	coerceParamValue,
@@ -150,7 +150,7 @@ function buildEffectParamDescriptor({
 	}
 
 	registerDefaultEffects();
-	const definition = effectsRegistry.get(effect.type);
+	const definition = getEffectDefinition(effect.type);
 	const param = definition.params.find((candidate) => candidate.key === paramKey);
 	if (!param) {
 		return null;

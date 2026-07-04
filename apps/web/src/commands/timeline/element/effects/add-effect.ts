@@ -3,15 +3,18 @@ import { EditorCore } from "@/core";
 import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
 import type { SceneTracks, VisualElement } from "@/timeline";
 import { buildDefaultEffectInstance } from "@/effects";
+import type { ParamValues } from "@/params";
 
 function addEffectToElement({
 	element,
 	effectType,
+	params,
 }: {
 	element: VisualElement;
 	effectType: string;
+	params?: Partial<ParamValues>;
 }): VisualElement {
-	const instance = buildDefaultEffectInstance({ effectType });
+	const instance = buildDefaultEffectInstance({ effectType, params });
 	const currentEffects = element.effects ?? [];
 	return { ...element, effects: [...currentEffects, instance] };
 }
@@ -22,20 +25,24 @@ export class AddClipEffectCommand extends Command {
 	private readonly trackId: string;
 	private readonly elementId: string;
 	private readonly effectType: string;
+	private readonly params?: Partial<ParamValues>;
 
 	constructor({
 		trackId,
 		elementId,
 		effectType,
+		params,
 	}: {
 		trackId: string;
 		elementId: string;
 		effectType: string;
+		params?: Partial<ParamValues>;
 	}) {
 		super();
 		this.trackId = trackId;
 		this.elementId = elementId;
 		this.effectType = effectType;
+		this.params = params;
 	}
 
 	execute(): CommandResult | undefined {
@@ -47,11 +54,12 @@ export class AddClipEffectCommand extends Command {
 			trackId: this.trackId,
 			elementId: this.elementId,
 			elementPredicate: isVisualElement,
-		update: (element) => {
-			const updated = addEffectToElement({
-				element: element as VisualElement,
-				effectType: this.effectType,
-			});
+			update: (element) => {
+				const updated = addEffectToElement({
+					element: element as VisualElement,
+					effectType: this.effectType,
+					params: this.params,
+				});
 				const effects = updated.effects ?? [];
 				this.effectId = effects[effects.length - 1]?.id ?? null;
 				return updated;

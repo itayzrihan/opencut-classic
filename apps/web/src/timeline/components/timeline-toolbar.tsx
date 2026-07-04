@@ -43,6 +43,7 @@ import {
 	Layers01Icon,
 	Chart03Icon,
 	Unlink02Icon,
+	CursorRectangleSelection01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { OcRippleIcon } from "@/components/icons";
@@ -92,6 +93,8 @@ function ToolbarLeftSection() {
 	);
 	const { selectedElements } = useElementSelection();
 	const graphEditor = useGraphEditorController();
+	const aiRangeSelection = useTimelineStore((s) => s.aiRangeSelection);
+	const armRangeSelection = useTimelineStore((s) => s.armRangeSelection);
 	const isCurrentlyBookmarked = useEditor((e) =>
 		e.scenes.isBookmarked({ time: e.playback.getCurrentTime() }),
 	);
@@ -210,6 +213,22 @@ function ToolbarLeftSection() {
 						}
 					/>
 				</Tooltip>
+
+				<ToolbarButton
+					icon={<HugeiconsIcon icon={CursorRectangleSelection01Icon} />}
+					isActive={aiRangeSelection.mode !== "idle"}
+					tooltip={
+						aiRangeSelection.mode === "idle"
+							? "Select AI range"
+							: aiRangeSelection.mode === "selected"
+								? "Clear AI range"
+								: "Cancel AI range"
+					}
+					onClick={({ event }) => {
+						event.stopPropagation();
+						armRangeSelection();
+					}}
+				/>
 
 				<GraphEditorPopover
 					open={graphEditor.open}

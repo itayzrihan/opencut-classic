@@ -1,5 +1,5 @@
 import { createCanvasSurface } from "./canvas-utils";
-import { effectsRegistry, resolveEffectPasses } from "@/effects";
+import { getEffectDefinition, resolveEffectPasses } from "@/effects";
 import { buildDefaultParamValues } from "@/params/registry";
 import type { ParamValues } from "@/params";
 import { gpuRenderer } from "./gpu-renderer";
@@ -52,7 +52,7 @@ class EffectPreviewService {
 		}
 
 		try {
-			const definition = effectsRegistry.get(effectType);
+			const definition = getEffectDefinition(effectType);
 			const resolvedParams =
 				Object.keys(params).length > 0
 					? params

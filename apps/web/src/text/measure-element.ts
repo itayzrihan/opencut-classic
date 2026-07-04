@@ -3,9 +3,7 @@ import { DEFAULTS } from "@/timeline/defaults";
 import type { TextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
-import {
-	getTextVisualRect,
-} from "./layout";
+import { getTextVisualRect, type TextLayoutMeasurementContext } from "./layout";
 import {
 	measureTextLayout,
 	type MeasuredTextLayout,
@@ -29,14 +27,52 @@ export interface MeasuredTextElement extends MeasuredTextLayout {
 	visualRect: { left: number; top: number; width: number; height: number };
 }
 
-let textMeasurementContext:
-	| CanvasRenderingContext2D
-	| OffscreenCanvasRenderingContext2D
-	| null = null;
+let textMeasurementContext: TextLayoutMeasurementContext | null = null;
 
-export function getTextMeasurementContext():
-	| CanvasRenderingContext2D
-	| OffscreenCanvasRenderingContext2D {
+class FallbackTextMetrics implements TextMetrics {
+	width: number;
+	actualBoundingBoxLeft = 0;
+	actualBoundingBoxRight: number;
+	fontBoundingBoxAscent: number;
+	fontBoundingBoxDescent: number;
+	actualBoundingBoxAscent: number;
+	actualBoundingBoxDescent: number;
+	emHeightAscent: number;
+	emHeightDescent: number;
+	hangingBaseline = 0;
+	alphabeticBaseline = 0;
+	ideographicBaseline = 0;
+
+	constructor({ text, fontSize }: { text: string; fontSize: number }) {
+		this.width = text.length * fontSize * 0.6;
+		this.actualBoundingBoxRight = this.width;
+		this.fontBoundingBoxAscent = fontSize * 0.8;
+		this.fontBoundingBoxDescent = fontSize * 0.2;
+		this.actualBoundingBoxAscent = fontSize * 0.8;
+		this.actualBoundingBoxDescent = fontSize * 0.2;
+		this.emHeightAscent = fontSize * 0.8;
+		this.emHeightDescent = fontSize * 0.2;
+	}
+}
+
+function createFallbackTextMeasurementContext(): TextLayoutMeasurementContext {
+	const context: TextLayoutMeasurementContext = {
+		font: "15px sans-serif",
+		textBaseline: "middle",
+		save() {},
+		restore() {},
+		measureText(text: string): TextMetrics {
+			const fontSize = Number.parseFloat(
+				this.font.match(/(\d+(?:\.\d+)?)px/)?.[1] ?? "15",
+			);
+			return new FallbackTextMetrics({ text, fontSize });
+		},
+	};
+
+	return context;
+}
+
+export function getTextMeasurementContext(): TextLayoutMeasurementContext {
 	if (textMeasurementContext) {
 		return textMeasurementContext;
 	}
@@ -59,7 +95,8 @@ export function getTextMeasurementContext():
 		}
 	}
 
-	throw new Error("Failed to create text measurement context");
+	textMeasurementContext = createFallbackTextMeasurementContext();
+	return textMeasurementContext;
 }
 
 export function measureTextElement({
@@ -71,7 +108,7 @@ export function measureTextElement({
 	element: TextElement;
 	canvasHeight: number;
 	localTime: number;
-	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+	ctx: TextLayoutMeasurementContext;
 }): MeasuredTextElement {
 	const text = buildTextLayoutParamsFromElement({ element });
 	const measuredLayout = measureTextLayout({

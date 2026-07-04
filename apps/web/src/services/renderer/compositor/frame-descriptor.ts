@@ -7,6 +7,7 @@ import { createCanvasSurface } from "../canvas-utils";
 import { BlurBackgroundNode } from "../nodes/blur-background-node";
 import { ColorNode } from "../nodes/color-node";
 import { EffectLayerNode } from "../nodes/effect-layer-node";
+import type { EffectLayerOverlay } from "../nodes/effect-layer-node";
 import {
 	GraphicNode,
 	type ResolvedGraphicNodeState,
@@ -121,13 +122,24 @@ async function collectNode({
 	}
 
 	if (node instanceof EffectLayerNode) {
-		if (!node.resolved || node.resolved.passes.length === 0) {
+		if (!node.resolved) {
 			return;
 		}
-		items.push({
-			type: "sceneEffect",
-			effectPassGroups: [node.resolved.passes],
-		});
+		if (node.resolved.passes.length > 0) {
+			items.push({
+				type: "sceneEffect",
+				effectPassGroups: [node.resolved.passes],
+			});
+		}
+		if (node.resolved.overlay) {
+			collectAiEffectOverlay({
+				overlay: node.resolved.overlay,
+				renderer,
+				path,
+				items,
+				textures,
+			});
+		}
 		return;
 	}
 
@@ -203,6 +215,114 @@ async function collectNode({
 			textures,
 		});
 	}
+}
+
+function collectAiEffectOverlay({
+	overlay,
+	renderer,
+	path,
+	items,
+	textures,
+}: {
+	overlay: EffectLayerOverlay;
+	renderer: CanvasRenderer;
+	path: string;
+	items: FrameItemDescriptor[];
+	textures: Map<string, TextureUploadDescriptor>;
+}) {
+	const textureId = `${path}:ai-effect-overlay`;
+	const { width, height } = renderer;
+	textures.set(textureId, {
+		kind: "rendered",
+		id: textureId,
+		contentHash: `ai-effect-overlay:${width}x${height}:${overlay.label}:${overlay.intent ?? ""}`,
+		width,
+		height,
+		draw: (ctx) => {
+			drawAiEffectOverlay({ ctx, overlay, width, height });
+		},
+	});
+	items.push({
+		type: "layer",
+		textureId,
+		transform: fullCanvasTransform(renderer),
+		opacity: 1,
+		blendMode: "normal",
+		effectPassGroups: [],
+		mask: null,
+	});
+}
+
+function drawAiEffectOverlay({
+	ctx,
+	overlay,
+	width,
+	height,
+}: {
+	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+	overlay: EffectLayerOverlay;
+	width: number;
+	height: number;
+}) {
+	const scale = Math.max(0.75, Math.min(width / 1280, 1.4));
+	const paddingX = 14 * scale;
+	const paddingY = 10 * scale;
+	const x = 24 * scale;
+	const y = height - 78 * scale;
+	const maxTextWidth = Math.min(width * 0.58, 520 * scale);
+	const title = truncateText({
+		text: `AI edit: ${overlay.label}`,
+		maxCharacters: 64,
+	});
+	const subtitle = overlay.intent
+		? truncateText({ text: overlay.intent, maxCharacters: 82 })
+		: "";
+	const titleSize = 15 * scale;
+	const subtitleSize = 11 * scale;
+	const boxWidth = Math.min(
+		width - x * 2,
+		maxTextWidth + paddingX * 2,
+	);
+	const boxHeight =
+		paddingY * 2 + titleSize + (subtitle ? subtitleSize + 7 * scale : 0);
+
+	ctx.save();
+	ctx.font = `600 ${titleSize}px Inter, Arial, sans-serif`;
+	ctx.textBaseline = "top";
+	ctx.fillStyle = "rgba(17, 17, 29, 0.76)";
+	ctx.strokeStyle = "rgba(154, 119, 255, 0.88)";
+	ctx.lineWidth = Math.max(1, 1.5 * scale);
+	ctx.beginPath();
+	ctx.roundRect(x, y, boxWidth, boxHeight, 8 * scale);
+	ctx.fill();
+	ctx.stroke();
+	ctx.fillStyle = "#f4f0ff";
+	ctx.fillText(title, x + paddingX, y + paddingY, maxTextWidth);
+	if (subtitle) {
+		ctx.font = `400 ${subtitleSize}px Inter, Arial, sans-serif`;
+		ctx.fillStyle = "rgba(244, 240, 255, 0.72)";
+		ctx.fillText(
+			subtitle,
+			x + paddingX,
+			y + paddingY + titleSize + 7 * scale,
+			maxTextWidth,
+		);
+	}
+	ctx.restore();
+}
+
+function truncateText({
+	text,
+	maxCharacters,
+}: {
+	text: string;
+	maxCharacters: number;
+}): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (normalized.length <= maxCharacters) {
+		return normalized;
+	}
+	return `${normalized.slice(0, Math.max(0, maxCharacters - 3)).trimEnd()}...`;
 }
 
 async function collectVisualSourceNode({
