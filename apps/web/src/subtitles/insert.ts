@@ -1,54 +1,87 @@
 import type { EditorCore } from "@/core";
-import {
-	AddTrackCommand,
-	BatchCommand,
-	InsertElementCommand,
-} from "@/commands";
+import { TracksSnapshotCommand } from "@/commands";
 import { buildSubtitleTextElement } from "./build-subtitle-text-element";
 import type { SubtitleCue } from "./types";
 import type { TextTrack } from "@/timeline";
+import { splitCaptionCuesByLayer } from "./caption-layout";
+import { buildEmptyTrack } from "@/timeline/placement";
+import { generateUUID } from "@/utils/id";
+
+export function buildCaptionTextTracks({
+	captions,
+	captionSource,
+	layerCount = 1,
+	canvasSize,
+	name = "Captions",
+}: {
+	captions: SubtitleCue[];
+	captionSource?: TextTrack["captionSource"];
+	layerCount?: number;
+	canvasSize: { width: number; height: number };
+	name?: string;
+}): TextTrack[] {
+	const layers = splitCaptionCuesByLayer({ captions, layerCount });
+
+	return layers.map((layerCaptions, layerIndex) => {
+		const track = buildEmptyTrack({
+			id: generateUUID(),
+			type: "text",
+			name: layers.length > 1 ? `${name} ${layerIndex + 1}` : name,
+		});
+		return {
+			...track,
+			elements: layerCaptions.map((caption, index) => ({
+				...buildSubtitleTextElement({
+					index,
+					caption,
+					canvasSize,
+				}),
+				id: generateUUID(),
+			})),
+			captionSource: captionSource
+				? {
+						...captionSource,
+						layerIndex,
+						layerCount: layers.length,
+					}
+				: undefined,
+		};
+	});
+}
 
 export function insertCaptionChunksAsTextTrack({
 	editor,
 	captions,
 	captionSource,
+	layerCount = 1,
 }: {
 	editor: EditorCore;
 	captions: SubtitleCue[];
 	captionSource?: TextTrack["captionSource"];
-}): string | null {
+	layerCount?: number;
+}): string[] {
 	if (captions.length === 0) {
-		return null;
+		return [];
 	}
 
-	const addTrackCommand = new AddTrackCommand({ type: "text", index: 0 });
-	const trackId = addTrackCommand.getTrackId();
 	const canvasSize = editor.project.getActive().settings.canvasSize;
-	const insertCommands = captions.map(
-		(caption, index) =>
-			new InsertElementCommand({
-				placement: { mode: "explicit", trackId },
-				element: buildSubtitleTextElement({
-					index,
-					caption,
-					canvasSize,
-				}),
-			}),
-	);
-	editor.command.execute({
-		command: new BatchCommand([addTrackCommand, ...insertCommands]),
+	const activeScene = editor.scenes.getActiveScene();
+	const before = activeScene.tracks;
+	const captionTracks = buildCaptionTextTracks({
+		captions,
+		captionSource,
+		layerCount,
+		canvasSize,
 	});
-	if (captionSource) {
-		const activeScene = editor.scenes.getActiveScene();
-		editor.timeline.updateTracks({
-			...activeScene.tracks,
-			overlay: activeScene.tracks.overlay.map((track) =>
-				track.id === trackId && track.type === "text"
-					? { ...track, captionSource }
-					: track,
-			),
-		});
-	}
+	editor.command.execute({
+		command: new TracksSnapshotCommand({
+			before,
+			after: {
+				...before,
+				overlay: [...captionTracks, ...before.overlay],
+			},
+		}),
+	});
 
-	return trackId;
+	return captionTracks.map((track) => track.id);
 }

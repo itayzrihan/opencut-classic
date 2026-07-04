@@ -7,6 +7,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { useReducer, useRef, useState } from "react";
 import { extractTimelineAudio } from "@/media/mediabunny";
 import { useEditor } from "@/editor/use-editor";
@@ -21,8 +22,15 @@ import {
 	DEFAULT_CAPTION_LAYOUT,
 	buildCaptionChunksFromSegments,
 	buildCaptionChunksFromWords,
+	buildSubtitleCuesFromWords,
+	normalizeCaptionLayoutSettings,
+	splitCaptionCuesByLayer,
+	type CaptionLayoutSettings,
 } from "@/subtitles/caption-layout";
-import { insertCaptionChunksAsTextTrack } from "@/subtitles/insert";
+import {
+	buildCaptionTextTracks,
+	insertCaptionChunksAsTextTrack,
+} from "@/subtitles/insert";
 import { parseSubtitleFile } from "@/subtitles/parse";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -40,6 +48,11 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { DiagnosticSeverity } from "@/diagnostics/types";
+import { TracksSnapshotCommand } from "@/commands";
+import type { SceneTracks, TextElement, TextTrack } from "@/timeline";
+import { buildEmptyTrack } from "@/timeline/placement";
+import { generateUUID } from "@/utils/id";
+import { mediaTimeToSeconds } from "@/wasm";
 import { z } from "zod";
 
 const DIAGNOSTIC_BUTTON_VARIANT: Record<
@@ -65,6 +78,139 @@ const IDLE_STATE: ProcessingState = {
 	error: null,
 	warnings: [],
 };
+
+const CAPTION_LAYER_COUNT = 2;
+const TIMING_EPSILON_SECONDS = 0.002;
+
+function hasSameCaptionSource({
+	track,
+	source,
+}: {
+	track: TextTrack;
+	source: NonNullable<TextTrack["captionSource"]>;
+}) {
+	const candidate = track.captionSource;
+	if (!candidate) return false;
+	if (candidate.words.length !== source.words.length) return false;
+	const firstCandidate = candidate.words[0];
+	const firstSource = source.words[0];
+	const lastCandidate = candidate.words[candidate.words.length - 1];
+	const lastSource = source.words[source.words.length - 1];
+	return (
+		firstCandidate?.text === firstSource?.text &&
+		firstCandidate?.start === firstSource?.start &&
+		lastCandidate?.text === lastSource?.text &&
+		lastCandidate?.end === lastSource?.end
+	);
+}
+
+function textElementContent(element: TextElement) {
+	return typeof element.params.content === "string" ? element.params.content : "";
+}
+
+function isPristineGeneratedCaption({
+	element,
+	expected,
+}: {
+	element: TextElement;
+	expected: { text: string; startTime: number; duration: number } | undefined;
+}) {
+	if (!expected) return false;
+	return (
+		textElementContent(element) === expected.text &&
+		Math.abs(mediaTimeToSeconds({ time: element.startTime }) - expected.startTime) <=
+			TIMING_EPSILON_SECONDS &&
+		Math.abs(mediaTimeToSeconds({ time: element.duration }) - expected.duration) <=
+			TIMING_EPSILON_SECONDS &&
+		mediaTimeToSeconds({ time: element.trimStart }) === 0 &&
+		mediaTimeToSeconds({ time: element.trimEnd }) === 0
+	);
+}
+
+function buildEditedCaptionTracks({
+	sourceTracks,
+}: {
+	sourceTracks: TextTrack[];
+}) {
+	return sourceTracks.flatMap((track) => {
+		const source = track.captionSource;
+		if (!source) return [];
+
+		const previousCaptions = buildSubtitleCuesFromWords({
+			words: source.words,
+			settings: source.settings,
+		});
+		const previousLayers = splitCaptionCuesByLayer({
+			captions: previousCaptions,
+			layerCount: source.layerCount ?? 1,
+		});
+		const expectedLayer = previousLayers[source.layerIndex ?? 0] ?? [];
+		const editedElements = track.elements.filter(
+			(element, index) =>
+				!isPristineGeneratedCaption({
+					element,
+					expected: expectedLayer[index],
+				}),
+		);
+
+		if (editedElements.length === 0) return [];
+
+		return [{
+			...buildEmptyTrack({
+				id: generateUUID(),
+				type: "text",
+				name: `Edited ${track.name}`,
+			}),
+			hidden: track.hidden,
+			elements: editedElements,
+		}];
+	});
+}
+
+function rebuildCaptionTracksWithSettings({
+	tracks,
+	settings,
+	canvasSize,
+}: {
+	tracks: SceneTracks;
+	settings: CaptionLayoutSettings;
+	canvasSize: { width: number; height: number };
+}) {
+	const firstSourceTrack = tracks.overlay.find(
+		(track): track is TextTrack => track.type === "text" && !!track.captionSource,
+	);
+	const source = firstSourceTrack?.captionSource;
+	if (!source) return null;
+
+	const sourceTracks = tracks.overlay.filter(
+		(track): track is TextTrack =>
+			track.type === "text" && hasSameCaptionSource({ track, source }),
+	);
+	const sourceTrackIds = new Set(sourceTracks.map((track) => track.id));
+	const editedTracks = buildEditedCaptionTracks({ sourceTracks });
+	const captions = buildSubtitleCuesFromWords({
+		words: source.words,
+		settings,
+	});
+	const regeneratedTracks = buildCaptionTextTracks({
+		captions,
+		captionSource: {
+			...source,
+			settings,
+		},
+		layerCount: CAPTION_LAYER_COUNT,
+		canvasSize,
+	});
+
+	return {
+		...tracks,
+		overlay: [
+			...regeneratedTracks,
+			...editedTracks,
+			...tracks.overlay.filter((track) => !sourceTrackIds.has(track.id)),
+		],
+	};
+}
 
 const transcriptionResultSchema = z.object({
 	text: z.string(),
@@ -109,6 +255,9 @@ function processingReducer(
 export function Captions() {
 	const [selectedLanguage, setSelectedLanguage] =
 		useState<TranscriptionLanguage>("he");
+	const [captionSettings, setCaptionSettings] = useState<CaptionLayoutSettings>({
+		...DEFAULT_CAPTION_LAYOUT,
+	});
 	const [processing, dispatch] = useReducer(processingReducer, IDLE_STATE);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +267,13 @@ export function Captions() {
 
 	const activeDiagnostics = useEditor((e) =>
 		e.diagnostics.getActive({ scope: TRANSCRIPTION_DIAGNOSTICS_SCOPE }),
+	);
+	const hasGeneratedCaptions = useEditor((e) =>
+		e.scenes
+			.getActiveSceneOrNull()
+			?.tracks.overlay.some(
+				(track) => track.type === "text" && !!track.captionSource,
+			) ?? false,
 	);
 
 	const insertCaptions = ({
@@ -133,8 +289,47 @@ export function Captions() {
 			editor,
 			captions,
 			captionSource,
+			layerCount: captionSource ? CAPTION_LAYER_COUNT : 1,
 		});
-		return trackId !== null;
+		return trackId.length > 0;
+	};
+
+	const updateCaptionSetting = ({
+		key,
+		value,
+	}: {
+		key: keyof CaptionLayoutSettings;
+		value: string;
+	}) => {
+		setCaptionSettings((current) =>
+			normalizeCaptionLayoutSettings({
+				settings: {
+					...current,
+					[key]: Number(value),
+				},
+			}),
+		);
+	};
+
+	const applyCaptionSettings = () => {
+		const activeScene = editor.scenes.getActiveSceneOrNull();
+		if (!activeScene) return;
+		const settings = normalizeCaptionLayoutSettings({
+			settings: captionSettings,
+		});
+		const after = rebuildCaptionTracksWithSettings({
+			tracks: activeScene.tracks,
+			settings,
+			canvasSize: editor.project.getActive().settings.canvasSize,
+		});
+		if (!after) return;
+		editor.command.execute({
+			command: new TracksSnapshotCommand({
+				before: activeScene.tracks,
+				after,
+			}),
+		});
+		setCaptionSettings(settings);
 	};
 
 	const handleGenerateTranscript = async () => {
@@ -167,7 +362,6 @@ export function Captions() {
 			);
 
 			dispatch({ type: "update_step", step: "Generating captions..." });
-			const captionSettings = { ...DEFAULT_CAPTION_LAYOUT };
 			const captionChunks = result.words?.length
 				? buildCaptionChunksFromWords({
 						words: result.words,
@@ -351,8 +545,47 @@ export function Captions() {
 								</SelectContent>
 							</Select>
 						</SectionField>
+						<SectionField label="Words per row">
+							<Input
+								type="number"
+								min={1}
+								max={12}
+								size="sm"
+								value={captionSettings.wordsPerRow}
+								onChange={(event) =>
+									updateCaptionSetting({
+										key: "wordsPerRow",
+										value: event.target.value,
+									})
+								}
+							/>
+						</SectionField>
+						<SectionField label="Rows">
+							<Input
+								type="number"
+								min={1}
+								max={4}
+								size="sm"
+								value={captionSettings.rows}
+								onChange={(event) =>
+									updateCaptionSetting({
+										key: "rows",
+										value: event.target.value,
+									})
+								}
+							/>
+						</SectionField>
 					</SectionFields>
 
+					<Button
+						type="button"
+						variant="outline"
+						className="w-full"
+						onClick={applyCaptionSettings}
+						disabled={isProcessing || !hasGeneratedCaptions}
+					>
+						Apply caption layout
+					</Button>
 					<Button
 						type="button"
 						className="mt-auto w-full"

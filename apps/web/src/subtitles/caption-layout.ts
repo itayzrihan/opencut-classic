@@ -114,3 +114,20 @@ export function buildSubtitleCuesFromWords({
 }): SubtitleCue[] {
 	return buildCaptionChunksFromWords({ words, settings });
 }
+
+export function splitCaptionCuesByLayer({
+	captions,
+	layerCount,
+}: {
+	captions: SubtitleCue[];
+	layerCount: number;
+}): SubtitleCue[][] {
+	const safeLayerCount = clampInteger({ value: layerCount, min: 1, max: 8 });
+	const layers = Array.from({ length: safeLayerCount }, () => [] as SubtitleCue[]);
+
+	captions.forEach((caption, index) => {
+		layers[index % safeLayerCount].push(caption);
+	});
+
+	return layers;
+}

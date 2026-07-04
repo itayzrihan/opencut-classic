@@ -49,6 +49,8 @@ export interface TextTrack extends BaseTrack {
 	captionSource?: {
 		words: TranscriptionWord[];
 		settings: CaptionLayoutSettings;
+		layerIndex?: number;
+		layerCount?: number;
 	};
 }
 
