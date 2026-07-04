@@ -575,8 +575,9 @@ function ElementInner({
 						isExpanded && "bg-background",
 					)}
 				>
-					<button
-						type="button"
+					{/* eslint-disable-next-line jsx-a11y/click-events-have-key-events -- timeline clips are pointer gesture surfaces; nested clip controls must remain valid interactive elements. */}
+					<div
+						role="button"
 						tabIndex={-1}
 						className="absolute inset-0 size-full flex flex-col"
 						onClick={(event) => onElementClick({ event, element })}
@@ -599,7 +600,7 @@ function ElementInner({
 							</div>
 						</div>
 						{expandedContent}
-					</button>
+					</div>
 				</div>
 			</div>
 
