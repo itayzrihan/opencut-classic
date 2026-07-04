@@ -21,6 +21,7 @@ import {
 	MusicNote03Icon,
 	MagicWand05Icon,
 	DashboardSpeed02Icon,
+	TransitionTopIcon,
 } from "@hugeicons/core-free-icons";
 import { ElementParamsTab } from "./components/element-params-tab";
 import type { ElementWithTrackForParams } from "./components/element-params-tab";
@@ -29,6 +30,7 @@ import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
+import { TextTransitionsTab } from "./components/text-transitions-tab";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -198,6 +200,25 @@ function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 	};
 }
 
+function buildTextTransitionsTab({
+	element,
+}: {
+	element: TextElement;
+}): PropertiesTabDef {
+	return {
+		id: "transitions",
+		label: "Transitions",
+		icon: <HugeiconsIcon icon={TransitionTopIcon} size={16} />,
+		content: ({ trackId, elementsWithTracks }) => (
+			<TextTransitionsTab
+				element={element}
+				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
+			/>
+		),
+	};
+}
+
 function buildGraphicTab({
 	element,
 }: {
@@ -235,6 +256,7 @@ function getTextConfig({
 		defaultTab: "text",
 		tabs: [
 			buildTextTab({ element }),
+			buildTextTransitionsTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 		],

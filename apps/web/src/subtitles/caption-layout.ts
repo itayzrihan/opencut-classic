@@ -179,9 +179,18 @@ export function splitCaptionCuesByLayer({
 	const layers = Array.from({ length: safeLayerCount }, () => [] as SubtitleCue[]);
 	const layerEnds = Array.from({ length: safeLayerCount }, () => 0);
 
-	captions.forEach((caption) => {
+	captions.forEach((caption, index) => {
 		const captionEnd = caption.startTime + caption.duration;
-		let layerIndex = layerEnds.findIndex((end) => end <= caption.startTime);
+		const preferredLayerIndex = index % safeLayerCount;
+		let layerIndex = preferredLayerIndex;
+
+		if (layerEnds[layerIndex] > caption.startTime) {
+			layerIndex = layerEnds.findIndex(
+				(end, candidateIndex) =>
+					candidateIndex >= safeLayerCount && end <= caption.startTime,
+			);
+		}
+
 		if (layerIndex === -1) {
 			layerIndex = layers.length;
 			layers.push([]);
