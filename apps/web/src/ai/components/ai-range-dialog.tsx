@@ -229,6 +229,12 @@ export function AiRangeDialog() {
 						</TabsContent>
 					</Tabs>
 
+					{status.error && !status.authenticated && (
+						<div className="border-destructive/30 bg-destructive/10 text-destructive rounded-sm border p-3 text-xs">
+							{status.error}
+						</div>
+					)}
+
 					{agentStatus && (
 						<div className="text-muted-foreground text-xs">{agentStatus}</div>
 					)}

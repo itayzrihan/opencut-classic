@@ -44,6 +44,29 @@ describe("OpenAI Codex OAuth helpers", () => {
 			}),
 		).toBe("http://localhost:3000/editor/project");
 	});
+
+	test("uses the registered Codex loopback redirect URI", async () => {
+		setRequiredEnv();
+		const { testing } = await import("@/ai/server/openai-codex-oauth");
+		const redirectUri = testing.resolveLoopbackRedirectUri();
+		const authorizeUrl = testing.createAuthorizationUrl({
+			challenge: "challenge",
+			redirectUri,
+			state: "state",
+		});
+
+		expect(redirectUri).toBe("http://localhost:1455/auth/callback");
+		expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(redirectUri);
+		expect(authorizeUrl.searchParams.get("client_id")).toBe(
+			"app_EMoamEEZ73f0CkXaXp7hrann",
+		);
+		expect(authorizeUrl.searchParams.get("codex_cli_simplified_flow")).toBe(
+			"true",
+		);
+		expect(authorizeUrl.searchParams.get("scope")).toBe(
+			"openid profile email offline_access",
+		);
+	});
 });
 
 function setRequiredEnv() {
@@ -57,4 +80,5 @@ function setRequiredEnv() {
 	process.env.MARBLE_WORKSPACE_KEY ??= "test-workspace";
 	process.env.FREESOUND_CLIENT_ID ??= "test-client";
 	process.env.FREESOUND_API_KEY ??= "test-api-key";
+	process.env.OPENAI_CODEX_OAUTH_CALLBACK_HOST ??= "localhost";
 }

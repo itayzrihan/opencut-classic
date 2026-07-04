@@ -18,6 +18,7 @@ export function useAiOAuthStatus() {
 		authenticated: false,
 		identity: null,
 	});
+	const [redirectError, setRedirectError] = useState<string | undefined>();
 	const [isLoading, setIsLoading] = useState(true);
 
 	const refresh = useCallback(async () => {
@@ -25,7 +26,11 @@ export function useAiOAuthStatus() {
 		try {
 			const response = await fetch("/api/ai/oauth/status");
 			const data: unknown = await response.json();
-			setStatus(normalizeAiOAuthStatus(data));
+			const nextStatus = normalizeAiOAuthStatus(data);
+			if (nextStatus.authenticated) {
+				setRedirectError(undefined);
+			}
+			setStatus(nextStatus);
 		} catch (error) {
 			setStatus({
 				authenticated: false,
@@ -42,6 +47,7 @@ export function useAiOAuthStatus() {
 
 	useEffect(() => {
 		const timeoutId = window.setTimeout(() => {
+			setRedirectError(readAndClearOAuthRedirectError());
 			void refresh();
 		}, 0);
 		return () => window.clearTimeout(timeoutId);
@@ -57,7 +63,16 @@ export function useAiOAuthStatus() {
 		await refresh();
 	}, [refresh]);
 
-	return { status, isLoading, refresh, login, logout };
+	return {
+		status:
+			redirectError && !status.authenticated
+				? { ...status, error: redirectError }
+				: status,
+		isLoading,
+		refresh,
+		login,
+		logout,
+	};
 }
 
 function normalizeAiOAuthStatus(value: unknown): AiOAuthStatus {
@@ -92,4 +107,22 @@ function normalizeAiOAuthStatus(value: unknown): AiOAuthStatus {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function readAndClearOAuthRedirectError(): string | undefined {
+	const url = new URL(window.location.href);
+	const status = url.searchParams.get("ai_oauth");
+	const error = url.searchParams.get("ai_oauth_error");
+	if (!status && !error) return undefined;
+
+	url.searchParams.delete("ai_oauth");
+	url.searchParams.delete("ai_oauth_error");
+	window.history.replaceState(
+		window.history.state,
+		"",
+		`${url.pathname}${url.search}${url.hash}`,
+	);
+	return status === "error"
+		? error || "OpenAI login failed. Please try again."
+		: undefined;
 }

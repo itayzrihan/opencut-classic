@@ -30,6 +30,9 @@ const webEnvSchema = z.object({
 	OPENAI_CODEX_OAUTH_CLIENT_ID: z
 		.string()
 		.default("app_EMoamEEZ73f0CkXaXp7hrann"),
+	OPENAI_CODEX_OAUTH_CALLBACK_HOST: z
+		.enum(["localhost", "127.0.0.1", "::1"])
+		.default("localhost"),
 	OPENAI_CODEX_RESPONSES_BASE_URL: z
 		.url()
 		.default("https://chatgpt.com/backend-api/codex"),
