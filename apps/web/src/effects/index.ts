@@ -4,9 +4,25 @@ import { effectsRegistry } from "./registry";
 import type { ParamValues } from "@/params";
 import type { Effect, EffectDefinition, EffectPass } from "@/effects/types";
 import { VISUAL_ELEMENT_TYPES } from "@/timeline";
+import { registerDefaultEffects } from "./definitions";
+import {
+	buildCustomAiEffectParams,
+	CUSTOM_AI_EFFECT_TYPE,
+	normalizeEffectType,
+} from "./custom-ai-effect";
 
 export { effectsRegistry } from "./registry";
 export { registerDefaultEffects } from "./definitions";
+export { CUSTOM_AI_EFFECT_TYPE, normalizeEffectType } from "./custom-ai-effect";
+
+export function getEffectDefinition(effectType: string): EffectDefinition {
+	registerDefaultEffects();
+	const normalizedType = normalizeEffectType(effectType);
+	if (effectsRegistry.has(normalizedType)) {
+		return effectsRegistry.get(normalizedType);
+	}
+	return effectsRegistry.get(CUSTOM_AI_EFFECT_TYPE);
+}
 
 export function resolveEffectPasses({
 	definition,
@@ -35,12 +51,19 @@ export function buildDefaultEffectInstance({
 }: {
 	effectType: string;
 }): Effect {
-	const definition = effectsRegistry.get(effectType);
-	const params: ParamValues = buildDefaultParamValues(definition.params);
+	registerDefaultEffects();
+	const normalizedType = normalizeEffectType(effectType);
+	const isKnownEffect = effectsRegistry.has(normalizedType);
+	const definition = isKnownEffect
+		? effectsRegistry.get(normalizedType)
+		: effectsRegistry.get(CUSTOM_AI_EFFECT_TYPE);
+	const params: ParamValues = isKnownEffect
+		? buildDefaultParamValues(definition.params)
+		: buildCustomAiEffectParams({ requestedType: effectType });
 
 	return {
 		id: generateUUID(),
-		type: effectType,
+		type: definition.type,
 		params,
 		enabled: true,
 	};

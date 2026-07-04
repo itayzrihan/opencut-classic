@@ -68,6 +68,7 @@ export function AiRangeDialog() {
 		setRangePromptOpen(false);
 		setPendingPlan(null);
 		setPlanErrors([]);
+		setAgentStatus("");
 	};
 
 	const handleSubmit = async () => {
@@ -150,6 +151,9 @@ export function AiRangeDialog() {
 			applyAiEditPlan({ editor, plan: pendingPlan });
 			toast.success("AI range edit applied");
 			cancelRangeSelection();
+			setPendingPlan(null);
+			setPlanErrors([]);
+			setAgentStatus("");
 			setFreePrompt("");
 			setLayerPrompts({});
 		} catch (error) {
@@ -163,14 +167,14 @@ export function AiRangeDialog() {
 
 	return (
 		<Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && close()}>
-			<DialogContent className="max-h-[86vh] max-w-3xl overflow-hidden p-0">
-				<DialogHeader>
+			<DialogContent className="flex max-h-[86vh] max-w-3xl grid-rows-none flex-col overflow-hidden p-0">
+				<DialogHeader className="shrink-0">
 					<DialogTitle>AI range edit</DialogTitle>
 					<DialogDescription>
 						{range ? `${range.startTime} - ${range.endTime} ticks` : ""}
 					</DialogDescription>
 				</DialogHeader>
-				<DialogBody className="overflow-y-auto">
+				<DialogBody className="min-h-0 flex-1 overflow-y-auto">
 					<Tabs
 						value={mode}
 						onValueChange={(value) => {
@@ -247,7 +251,7 @@ export function AiRangeDialog() {
 						onDiscard={() => setPendingPlan(null)}
 					/>
 				</DialogBody>
-				<DialogFooter>
+				<DialogFooter className="shrink-0">
 					<Button variant="outline" onClick={close}>
 						Close
 					</Button>

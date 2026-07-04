@@ -5,7 +5,7 @@ import {
 	buildGaussianBlurPasses,
 	intensityToSigma,
 } from "@/effects/definitions/blur";
-import { effectsRegistry, resolveEffectPasses } from "@/effects";
+import { getEffectDefinition, resolveEffectPasses } from "@/effects";
 import type { Effect, EffectPass } from "@/effects/types";
 import { getSourceTimeAtClipTime } from "@/retime";
 import {
@@ -118,14 +118,15 @@ function resolveEffectPassGroups({
 				animations,
 				localTime,
 			});
-			const definition = effectsRegistry.get(effect.type);
+			const definition = getEffectDefinition(effect.type);
 			return resolveEffectPasses({
 				definition,
 				effectParams: resolvedParams,
 				width,
 				height,
 			});
-		});
+		})
+		.filter((passes) => passes.length > 0);
 }
 
 function resolveVisualState({
@@ -462,7 +463,7 @@ function resolveEffectLayerNode({
 		return null;
 	}
 
-	const definition = effectsRegistry.get(node.params.effectType);
+	const definition = getEffectDefinition(node.params.effectType);
 	const passes = resolveEffectPasses({
 		definition,
 		effectParams: node.params.effectParams,

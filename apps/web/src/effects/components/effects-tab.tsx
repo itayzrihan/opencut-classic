@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { ParamValues } from "@/params";
 import type { Effect } from "@/effects/types";
 import type { EffectElement, VisualElement } from "@/timeline";
-import { effectsRegistry } from "@/effects";
+import { getEffectDefinition } from "@/effects";
 import { useEditor } from "@/editor/use-editor";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import {
@@ -245,7 +245,7 @@ function EffectSection({
 	onToggle?: () => void;
 	onRemove?: () => void;
 }) {
-	const definition = effectsRegistry.get(effect.type);
+	const definition = getEffectDefinition(effect.type);
 
 	return (
 		<Section
