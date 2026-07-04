@@ -31,6 +31,7 @@ import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
 import { TextTransitionsTab } from "./components/text-transitions-tab";
+import { TextWordsTab } from "./components/text-words-tab";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -219,6 +220,25 @@ function buildTextTransitionsTab({
 	};
 }
 
+function buildTextWordsTab({
+	element,
+}: {
+	element: TextElement;
+}): PropertiesTabDef {
+	return {
+		id: "words",
+		label: "Words",
+		icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+		content: ({ trackId, elementsWithTracks }) => (
+			<TextWordsTab
+				element={element}
+				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
+			/>
+		),
+	};
+}
+
 function buildGraphicTab({
 	element,
 }: {
@@ -256,6 +276,7 @@ function getTextConfig({
 		defaultTab: "text",
 		tabs: [
 			buildTextTab({ element }),
+			buildTextWordsTab({ element }),
 			buildTextTransitionsTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),

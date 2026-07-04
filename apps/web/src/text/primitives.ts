@@ -45,6 +45,37 @@ export interface MeasuredTextLayout extends ResolvedTextLayout {
 	lines: string[];
 	lineMetrics: TextMetrics[];
 	block: TextBlockMeasurement;
+	wordLines?: MeasuredWordLine[];
+}
+
+export interface MeasuredWordGlyph {
+	id: string;
+	text: string;
+	drawText: string;
+	x: number;
+	y: number;
+	width: number;
+	metrics: TextMetrics;
+	fontString: string;
+	scaledFontSize: number;
+	letterSpacing: number;
+	color: string;
+	opacity: number;
+	scale: number;
+	rotate: number;
+	blur: number;
+	shadowBlur: number;
+	shadowColor: string;
+	offsetX: number;
+	offsetY: number;
+	direction: CanvasDirection;
+	textDecoration: TextDecoration;
+}
+
+export interface MeasuredWordLine {
+	y: number;
+	width: number;
+	words: MeasuredWordGlyph[];
 }
 
 export interface ResolvedTextBackgroundLike {
@@ -203,6 +234,49 @@ export function drawMeasuredTextLayout({
 			ctx.fill();
 			ctx.fillStyle = textColor;
 		}
+	}
+
+	if (layout.wordLines) {
+		for (const line of layout.wordLines) {
+			for (const word of line.words) {
+				if (word.opacity <= 0) continue;
+				ctx.save();
+				ctx.font = word.fontString;
+				ctx.textAlign = "left";
+				ctx.textBaseline = textBaseline;
+				ctx.direction = word.direction;
+				ctx.fillStyle = word.color;
+				ctx.globalAlpha *= word.opacity;
+				if (word.blur > 0) {
+					ctx.filter = `blur(${word.blur}px)`;
+				}
+				if (word.shadowBlur > 0) {
+					ctx.shadowBlur = word.shadowBlur;
+					ctx.shadowColor = word.shadowColor;
+				}
+				setCanvasLetterSpacing({ ctx, letterSpacingPx: word.letterSpacing });
+				const x = word.x + word.offsetX + word.width / 2;
+				const y = word.y + word.offsetY;
+				ctx.translate(x, y);
+				if (word.rotate) {
+					ctx.rotate((word.rotate * Math.PI) / 180);
+				}
+				ctx.scale(word.scale, word.scale);
+				ctx.translate(-word.width / 2, 0);
+				ctx.fillText(word.drawText, 0, 0);
+				drawTextDecoration({
+					ctx,
+					textDecoration: word.textDecoration,
+					lineWidth: word.width,
+					lineY: 0,
+					metrics: word.metrics,
+					scaledFontSize: word.scaledFontSize,
+					textAlign: "left",
+				});
+				ctx.restore();
+			}
+		}
+		return;
 	}
 
 	for (let index = 0; index < layout.lines.length; index++) {

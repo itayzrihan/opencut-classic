@@ -4,12 +4,17 @@ import type {
 	TranscriptionWord,
 } from "@/transcription/types";
 import type { SubtitleCue } from "./types";
+import type { TextCaptionRevealMode, TextWordDirection } from "@/timeline";
 
 export const DEFAULT_CAPTION_LAYOUT = {
 	wordsPerRow: 4,
 	rows: 2,
 	inPaddingPercent: 0,
 	outPaddingPercent: 0,
+	revealMode: "emphasize-spoken" as TextCaptionRevealMode,
+	presetId: "kinetic-slam-1",
+	accentColor: "#c8ff4d",
+	wordDirection: "auto" as TextWordDirection,
 };
 
 export interface CaptionLayoutSettings {
@@ -17,6 +22,10 @@ export interface CaptionLayoutSettings {
 	rows: number;
 	inPaddingPercent: number;
 	outPaddingPercent: number;
+	revealMode: TextCaptionRevealMode;
+	presetId: string;
+	accentColor: string;
+	wordDirection: TextWordDirection;
 }
 
 function clampInteger({
@@ -50,6 +59,21 @@ export function normalizeCaptionLayoutSettings({
 }: {
 	settings: Partial<CaptionLayoutSettings> | undefined;
 }): CaptionLayoutSettings {
+	const revealMode =
+		settings?.revealMode === "row" ||
+		settings?.revealMode === "spoken-word" ||
+		settings?.revealMode === "spoken-word-keep" ||
+		settings?.revealMode === "emphasize-spoken" ||
+		settings?.revealMode === "emphasize-spoken-keep" ||
+		settings?.revealMode === "growing-row"
+			? settings.revealMode
+			: DEFAULT_CAPTION_LAYOUT.revealMode;
+	const wordDirection =
+		settings?.wordDirection === "ltr" ||
+		settings?.wordDirection === "rtl" ||
+		settings?.wordDirection === "auto"
+			? settings.wordDirection
+			: DEFAULT_CAPTION_LAYOUT.wordDirection;
 	return {
 		wordsPerRow: clampInteger({
 			value: settings?.wordsPerRow ?? DEFAULT_CAPTION_LAYOUT.wordsPerRow,
@@ -71,6 +95,16 @@ export function normalizeCaptionLayoutSettings({
 			min: 0,
 			max: 100,
 		}),
+		revealMode,
+		presetId:
+			typeof settings?.presetId === "string" && settings.presetId.trim()
+				? settings.presetId
+				: DEFAULT_CAPTION_LAYOUT.presetId,
+		accentColor:
+			typeof settings?.accentColor === "string" && settings.accentColor.trim()
+				? settings.accentColor
+				: DEFAULT_CAPTION_LAYOUT.accentColor,
+		wordDirection,
 	};
 }
 
@@ -131,6 +165,7 @@ export function buildCaptionChunksFromWords({
 			text: lines.join("\n"),
 			startTime,
 			duration: endTime - startTime,
+			words: group,
 		});
 	}
 
@@ -187,7 +222,7 @@ export function splitCaptionCuesByLayer({
 		if (layerEnds[layerIndex] > caption.startTime) {
 			layerIndex = layerEnds.findIndex(
 				(end, candidateIndex) =>
-					candidateIndex >= safeLayerCount && end <= caption.startTime,
+					candidateIndex < safeLayerCount && end <= caption.startTime,
 			);
 		}
 

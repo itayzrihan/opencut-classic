@@ -5,6 +5,12 @@ import type { ParamValues } from "@/params";
 import type { CaptionLayoutSettings } from "@/subtitles/caption-layout";
 import type { TranscriptionWord } from "@/transcription/types";
 import type { MediaTime } from "@/wasm";
+import type {
+	TextAlign,
+	TextDecoration,
+	TextFontStyle,
+	TextFontWeight,
+} from "@/text/primitives";
 
 export type ElementRef = {
 	trackId: string;
@@ -144,6 +150,51 @@ export interface TextElement extends BaseTimelineElement {
 	type: "text";
 	hidden?: boolean;
 	effects?: Effect[];
+	wordRuns?: TextWordRun[];
+	captionPresetId?: string;
+	captionRevealMode?: TextCaptionRevealMode;
+	captionAccentColor?: string;
+	captionWordDirection?: TextWordDirection;
+}
+
+export type TextCaptionRevealMode =
+	| "row"
+	| "spoken-word"
+	| "spoken-word-keep"
+	| "emphasize-spoken"
+	| "emphasize-spoken-keep"
+	| "growing-row";
+
+export type TextWordDirection = "auto" | "ltr" | "rtl";
+
+export interface TextWordStyle {
+	fontSize?: number;
+	fontFamily?: string;
+	color?: string;
+	textAlign?: TextAlign;
+	fontWeight?: TextFontWeight;
+	fontStyle?: TextFontStyle;
+	textDecoration?: TextDecoration;
+	letterSpacing?: number;
+	lineHeight?: number;
+	opacity?: number;
+	scale?: number;
+	rotate?: number;
+	blur?: number;
+	shadowBlur?: number;
+	shadowColor?: string;
+	characterReveal?: boolean;
+	offsetX?: number;
+	offsetY?: number;
+}
+
+export interface TextWordRun {
+	id: string;
+	text: string;
+	lineIndex: number;
+	startTime?: MediaTime;
+	endTime?: MediaTime;
+	style?: TextWordStyle;
 }
 
 export interface StickerElement extends BaseTimelineElement {

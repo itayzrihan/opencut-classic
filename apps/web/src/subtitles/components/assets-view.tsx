@@ -50,10 +50,15 @@ import {
 import type { DiagnosticSeverity } from "@/diagnostics/types";
 import { TracksSnapshotCommand } from "@/commands";
 import type { SceneTracks, TextElement, TextTrack } from "@/timeline";
+import type { TextCaptionRevealMode } from "@/timeline";
 import { buildEmptyTrack } from "@/timeline/placement";
 import { generateUUID } from "@/utils/id";
 import { mediaTimeToSeconds } from "@/wasm";
 import { z } from "zod";
+import {
+	CAPTION_ACCENT_COLORS,
+	CAPTION_WORD_PRESETS,
+} from "@/text/caption-presets";
 
 const DIAGNOSTIC_BUTTON_VARIANT: Record<
 	DiagnosticSeverity,
@@ -81,6 +86,17 @@ const IDLE_STATE: ProcessingState = {
 
 const CAPTION_LAYER_COUNT = 2;
 const TIMING_EPSILON_SECONDS = 0.002;
+const CAPTION_REVEAL_MODES: Array<{
+	value: TextCaptionRevealMode;
+	label: string;
+}> = [
+	{ value: "row", label: "Whole row together" },
+	{ value: "spoken-word", label: "Show word when spoken" },
+	{ value: "spoken-word-keep", label: "Show word and keep previous" },
+	{ value: "emphasize-spoken", label: "Emphasize spoken word" },
+	{ value: "emphasize-spoken-keep", label: "Keep words emphasized" },
+	{ value: "growing-row", label: "Growing row" },
+];
 
 function hasSameCaptionSource({
 	track,
@@ -305,7 +321,13 @@ export function Captions() {
 			normalizeCaptionLayoutSettings({
 				settings: {
 					...current,
-					[key]: Number(value),
+					[key]:
+						key === "revealMode" ||
+						key === "presetId" ||
+						key === "accentColor" ||
+						key === "wordDirection"
+							? value
+							: Number(value),
 				},
 			}),
 		);
@@ -606,6 +628,92 @@ export function Captions() {
 									})
 								}
 							/>
+						</SectionField>
+						<SectionField label="Timing">
+							<Select
+								value={captionSettings.revealMode}
+								onValueChange={(value) =>
+									updateCaptionSetting({
+										key: "revealMode",
+										value,
+									})
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{CAPTION_REVEAL_MODES.map((mode) => (
+										<SelectItem key={mode.value} value={mode.value}>
+											{mode.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SectionField>
+						<SectionField label="Preset">
+							<Select
+								value={captionSettings.presetId}
+								onValueChange={(value) =>
+									updateCaptionSetting({
+										key: "presetId",
+										value,
+									})
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{CAPTION_WORD_PRESETS.map((preset) => (
+										<SelectItem key={preset.id} value={preset.id}>
+											{preset.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SectionField>
+						<SectionField label="Accent">
+							<Select
+								value={captionSettings.accentColor}
+								onValueChange={(value) =>
+									updateCaptionSetting({
+										key: "accentColor",
+										value,
+									})
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{CAPTION_ACCENT_COLORS.map((color) => (
+										<SelectItem key={color.value} value={color.value}>
+											{color.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SectionField>
+						<SectionField label="Direction">
+							<Select
+								value={captionSettings.wordDirection}
+								onValueChange={(value) =>
+									updateCaptionSetting({
+										key: "wordDirection",
+										value,
+									})
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="auto">Auto</SelectItem>
+									<SelectItem value="rtl">Right to left</SelectItem>
+									<SelectItem value="ltr">Left to right</SelectItem>
+								</SelectContent>
+							</Select>
 						</SectionField>
 					</SectionFields>
 

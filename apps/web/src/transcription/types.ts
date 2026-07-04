@@ -51,4 +51,5 @@ export interface CaptionChunk {
 	text: string;
 	startTime: number;
 	duration: number;
+	words?: TranscriptionWord[];
 }

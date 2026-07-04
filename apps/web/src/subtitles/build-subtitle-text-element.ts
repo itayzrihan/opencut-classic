@@ -7,6 +7,7 @@ import {
 import { DEFAULTS } from "@/timeline/defaults";
 import { mediaTimeFromSeconds } from "@/wasm";
 import type { CreateTextElement } from "@/timeline";
+import type { TextWordRun } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import type {
 	TextAlign,
@@ -256,10 +257,18 @@ export function buildSubtitleTextElement({
 	index,
 	caption,
 	canvasSize,
+	revealMode,
+	presetId,
+	accentColor,
+	wordDirection,
 }: {
 	index: number;
 	caption: SubtitleCue;
 	canvasSize: { width: number; height: number };
+	revealMode?: CreateTextElement["captionRevealMode"];
+	presetId?: string;
+	accentColor?: string;
+	wordDirection?: CreateTextElement["captionWordDirection"];
 }): CreateTextElement {
 	const ctx = createMeasurementContext();
 	const style = resolveSubtitleStyle({
@@ -311,10 +320,19 @@ export function buildSubtitleTextElement({
 			visualRect: measurement.visualRect,
 		});
 	}
+	const wordRuns = buildWordRunsFromCaption({
+		caption,
+		content,
+	});
 
 	return {
 		...DEFAULTS.text.element,
 		name: `Caption ${index + 1}`,
+		wordRuns,
+		captionRevealMode: revealMode,
+		captionPresetId: presetId,
+		captionAccentColor: accentColor,
+		captionWordDirection: wordDirection,
 		duration: mediaTimeFromSeconds({ seconds: caption.duration }),
 		startTime: mediaTimeFromSeconds({ seconds: caption.startTime }),
 		params: {
@@ -345,4 +363,57 @@ export function buildSubtitleTextElement({
 			"transform.positionY": positionY,
 		},
 	};
+}
+
+function buildWordRunsFromCaption({
+	caption,
+	content,
+}: {
+	caption: SubtitleCue;
+	content: string;
+}): TextWordRun[] | undefined {
+	const sourceWords = caption.words?.length
+		? caption.words
+		: caption.text
+				.trim()
+				.split(/\s+/)
+				.filter(Boolean)
+				.map((text, index, words) => {
+					const duration = Math.max(0.001, caption.duration);
+					const wordDuration = duration / Math.max(1, words.length);
+					return {
+						text,
+						start: caption.startTime + index * wordDuration,
+						end: caption.startTime + (index + 1) * wordDuration,
+					};
+				});
+
+	if (!sourceWords.length) {
+		return undefined;
+	}
+
+	const lineIndexes: number[] = [];
+	const lineWordCounts = content.split("\n").map((line) =>
+		line
+			.trim()
+			.split(/\s+/)
+			.filter(Boolean).length,
+	);
+	for (let lineIndex = 0; lineIndex < lineWordCounts.length; lineIndex++) {
+		for (let i = 0; i < lineWordCounts[lineIndex]; i++) {
+			lineIndexes.push(lineIndex);
+		}
+	}
+
+	return sourceWords.map((word, index) => ({
+		id: `word-${index}`,
+		text: word.text,
+		lineIndex: lineIndexes[index] ?? 0,
+		startTime: mediaTimeFromSeconds({
+			seconds: Math.max(0, word.start - caption.startTime),
+		}),
+		endTime: mediaTimeFromSeconds({
+			seconds: Math.max(word.start + 0.001, word.end) - caption.startTime,
+		}),
+	}));
 }
