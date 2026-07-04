@@ -4,7 +4,11 @@ import type {
 	TranscriptionWord,
 } from "@/transcription/types";
 import type { SubtitleCue } from "./types";
-import type { TextCaptionRevealMode, TextWordDirection } from "@/timeline";
+import type {
+	TextCaptionRevealMode,
+	TextWordDirection,
+	TextWordTransitionIn,
+} from "@/timeline";
 
 export const DEFAULT_CAPTION_LAYOUT = {
 	wordsPerRow: 4,
@@ -12,6 +16,7 @@ export const DEFAULT_CAPTION_LAYOUT = {
 	inPaddingPercent: 0,
 	outPaddingPercent: 0,
 	revealMode: "emphasize-spoken" as TextCaptionRevealMode,
+	transitionIn: "blur-zoom" as TextWordTransitionIn,
 	presetId: "kinetic-slam-1",
 	accentColor: "#c8ff4d",
 	wordDirection: "auto" as TextWordDirection,
@@ -23,6 +28,7 @@ export interface CaptionLayoutSettings {
 	inPaddingPercent: number;
 	outPaddingPercent: number;
 	revealMode: TextCaptionRevealMode;
+	transitionIn: TextWordTransitionIn;
 	presetId: string;
 	accentColor: string;
 	wordDirection: TextWordDirection;
@@ -60,6 +66,7 @@ export function normalizeCaptionLayoutSettings({
 	settings: Partial<CaptionLayoutSettings> | undefined;
 }): CaptionLayoutSettings {
 	const revealMode =
+		settings?.revealMode === "determined-by-preset" ||
 		settings?.revealMode === "row" ||
 		settings?.revealMode === "spoken-word" ||
 		settings?.revealMode === "spoken-word-keep" ||
@@ -68,6 +75,18 @@ export function normalizeCaptionLayoutSettings({
 		settings?.revealMode === "growing-row"
 			? settings.revealMode
 			: DEFAULT_CAPTION_LAYOUT.revealMode;
+	const transitionIn =
+		settings?.transitionIn === "none" ||
+		settings?.transitionIn === "fade" ||
+		settings?.transitionIn === "blur" ||
+		settings?.transitionIn === "zoom" ||
+		settings?.transitionIn === "blur-zoom" ||
+		settings?.transitionIn === "rise" ||
+		settings?.transitionIn === "slide" ||
+		settings?.transitionIn === "typewriter" ||
+		settings?.transitionIn === "glow-dissolve"
+			? settings.transitionIn
+			: DEFAULT_CAPTION_LAYOUT.transitionIn;
 	const wordDirection =
 		settings?.wordDirection === "ltr" ||
 		settings?.wordDirection === "rtl" ||
@@ -96,6 +115,7 @@ export function normalizeCaptionLayoutSettings({
 			max: 100,
 		}),
 		revealMode,
+		transitionIn,
 		presetId:
 			typeof settings?.presetId === "string" && settings.presetId.trim()
 				? settings.presetId

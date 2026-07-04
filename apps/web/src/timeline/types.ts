@@ -91,6 +91,7 @@ export interface SceneTracks {
 	overlay: OverlayTrack[];
 	main: VideoTrack;
 	audio: AudioTrack[];
+	order?: string[];
 }
 
 export interface RetimeConfig {
@@ -125,7 +126,21 @@ interface BaseTimelineElement {
 	trimEnd: MediaTime;
 	sourceDuration?: MediaTime;
 	animations?: ElementAnimations;
+	transitions?: ElementTransitions;
 	params: ParamValues;
+}
+
+export interface AppliedElementTransition {
+	id: string;
+	presetId: string;
+	placement: "in" | "out" | "cut-left" | "cut-right";
+	duration: MediaTime;
+	createdAt: string;
+}
+
+export interface ElementTransitions {
+	in?: AppliedElementTransition;
+	out?: AppliedElementTransition;
 }
 
 export interface VideoElement extends BaseTimelineElement {
@@ -153,17 +168,30 @@ export interface TextElement extends BaseTimelineElement {
 	wordRuns?: TextWordRun[];
 	captionPresetId?: string;
 	captionRevealMode?: TextCaptionRevealMode;
+	captionTransitionIn?: TextWordTransitionIn;
 	captionAccentColor?: string;
 	captionWordDirection?: TextWordDirection;
 }
 
 export type TextCaptionRevealMode =
+	| "determined-by-preset"
 	| "row"
 	| "spoken-word"
 	| "spoken-word-keep"
 	| "emphasize-spoken"
 	| "emphasize-spoken-keep"
 	| "growing-row";
+
+export type TextWordTransitionIn =
+	| "none"
+	| "fade"
+	| "blur"
+	| "zoom"
+	| "blur-zoom"
+	| "rise"
+	| "slide"
+	| "typewriter"
+	| "glow-dissolve";
 
 export type TextWordDirection = "auto" | "ltr" | "rtl";
 

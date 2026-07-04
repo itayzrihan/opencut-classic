@@ -2,6 +2,7 @@ import { CORNER_RADIUS_MIN } from "@/text/background";
 import { DEFAULTS } from "@/timeline/defaults";
 import type { TextElement } from "@/timeline";
 import type { TextWordRun, TextWordStyle } from "@/timeline";
+import type { TextCaptionRevealMode, TextWordTransitionIn } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
 import { getTextVisualRect, type TextLayoutMeasurementContext } from "./layout";
@@ -200,7 +201,10 @@ function measureWordRunsLayout({
 	}
 
 	const preset = getCaptionWordPreset({ presetId: element.captionPresetId });
-	const revealMode = element.captionRevealMode ?? preset.revealMode;
+	const revealMode = resolveRevealMode({
+		elementMode: element.captionRevealMode,
+		presetMode: preset.revealMode,
+	});
 	const direction = resolveWordDirection({ element });
 	const lineGroups = new Map<number, TextWordRun[]>();
 	for (const run of element.wordRuns) {
@@ -231,6 +235,7 @@ function measureWordRunsLayout({
 				run,
 				localTime,
 				revealMode,
+				transitionIn: element.captionTransitionIn ?? "blur-zoom",
 				preset,
 				accentColor: element.captionAccentColor,
 				baseColor: typeof element.params.color === "string" ? element.params.color : undefined,
@@ -323,6 +328,7 @@ function resolveWordStyle({
 	run,
 	localTime,
 	revealMode,
+	transitionIn,
 	preset,
 	accentColor,
 	baseColor,
@@ -330,7 +336,8 @@ function resolveWordStyle({
 	base: TextLayoutParams;
 	run: TextWordRun;
 	localTime: number;
-	revealMode: NonNullable<TextElement["captionRevealMode"]>;
+	revealMode: TextCaptionRevealMode;
+	transitionIn: TextWordTransitionIn;
 	preset: ReturnType<typeof getCaptionWordPreset>;
 	accentColor: string | undefined;
 	baseColor: string | undefined;
@@ -339,38 +346,47 @@ function resolveWordStyle({
 	const end = run.endTime ?? start;
 	const isActive = localTime >= start && localTime < end;
 	const isSpoken = localTime >= end;
+	const progress = Math.max(
+		0,
+		Math.min(1, (localTime - start) / Math.max(0.001, end - start)),
+	);
+	const isPresetDriven = revealMode === "determined-by-preset";
+	const effectiveRevealMode = isPresetDriven ? preset.revealMode : revealMode;
 	const isVisible =
-		revealMode === "row" ||
+		effectiveRevealMode === "row" ||
 		isActive ||
-		((revealMode === "growing-row" ||
-			revealMode === "spoken-word-keep" ||
-			revealMode === "emphasize-spoken-keep") &&
+		((effectiveRevealMode === "growing-row" ||
+			effectiveRevealMode === "spoken-word-keep" ||
+			effectiveRevealMode === "emphasize-spoken-keep") &&
 			(isSpoken || isActive)) ||
-		(revealMode === "emphasize-spoken" && !isActive);
+		(effectiveRevealMode === "emphasize-spoken" && !isActive);
 
 	const presetStyle = isActive
 		? preset.activeStyle
 		: isSpoken && preset.spokenStyle
 			? preset.spokenStyle
 			: preset.idleStyle;
+	const revealStyle = isPresetDriven
+		? {}
+		: resolveRevealStyle({
+				revealMode: effectiveRevealMode,
+				transitionIn,
+				isActive,
+				isSpoken,
+				isVisible,
+				progress,
+			});
 	const color =
 		isActive && preset.useAccentOnActive
 			? (accentColor ?? presetStyle.color ?? baseColor)
 			: isSpoken && preset.useAccentOnSpoken
 				? (accentColor ?? presetStyle.color ?? baseColor)
 				: presetStyle.color;
-	const opacity =
-		revealMode === "spoken-word" ||
-		revealMode === "spoken-word-keep" ||
-		revealMode === "growing-row"
-			? isVisible
-				? presetStyle.opacity ?? 1
-				: 0
-			: presetStyle.opacity;
 
 	return {
 		...base,
 		...presetStyle,
+		...revealStyle,
 		...run.style,
 		color: run.style?.color ?? color ?? baseColor ?? "#ffffff",
 		shadowColor:
@@ -378,8 +394,109 @@ function resolveWordStyle({
 			((presetStyle.shadowBlur ?? 0) > 0
 				? (accentColor ?? color ?? baseColor ?? "#ffffff")
 				: presetStyle.shadowColor),
-		opacity: run.style?.opacity ?? opacity ?? 1,
+		opacity:
+			run.style?.opacity ??
+			revealStyle.opacity ??
+			(isPresetDriven ? presetStyle.opacity : undefined) ??
+			1,
 	};
+}
+
+function resolveRevealMode({
+	elementMode,
+	presetMode,
+}: {
+	elementMode: TextElement["captionRevealMode"];
+	presetMode: TextCaptionRevealMode;
+}): TextCaptionRevealMode {
+	return elementMode ?? presetMode;
+}
+
+function resolveRevealStyle({
+	revealMode,
+	transitionIn,
+	isActive,
+	isSpoken,
+	isVisible,
+	progress,
+}: {
+	revealMode: TextCaptionRevealMode;
+	transitionIn: TextWordTransitionIn;
+	isActive: boolean;
+	isSpoken: boolean;
+	isVisible: boolean;
+	progress: number;
+}): TextWordStyle {
+	if (!isVisible) {
+		return { opacity: 0 };
+	}
+
+	const activeEntrance = isActive
+		? resolveTransitionInStyle({ transitionIn, progress })
+		: {};
+
+	if (revealMode === "row") {
+		return { opacity: 1 };
+	}
+
+	if (revealMode === "spoken-word" || revealMode === "spoken-word-keep") {
+		return isActive
+			? { opacity: 1, ...activeEntrance }
+			: { opacity: isSpoken ? 1 : 0 };
+	}
+
+	if (revealMode === "growing-row") {
+		return isActive
+			? { opacity: 1, ...activeEntrance }
+			: { opacity: isSpoken ? 1 : 0 };
+	}
+
+	if (revealMode === "emphasize-spoken" || revealMode === "emphasize-spoken-keep") {
+		if (isActive) {
+			return { opacity: 1, scale: 1.18, fontWeight: "bold", ...activeEntrance };
+		}
+		return {
+			opacity: revealMode === "emphasize-spoken-keep" && isSpoken ? 1 : 0.58,
+			scale: revealMode === "emphasize-spoken-keep" && isSpoken ? 1.06 : 1,
+		};
+	}
+
+	return {};
+}
+
+function resolveTransitionInStyle({
+	transitionIn,
+	progress,
+}: {
+	transitionIn: TextWordTransitionIn;
+	progress: number;
+}): TextWordStyle {
+	const eased = 1 - Math.pow(1 - progress, 3);
+	switch (transitionIn) {
+		case "none":
+			return {};
+		case "fade":
+			return { opacity: eased };
+		case "blur":
+			return { opacity: eased, blur: (1 - eased) * 12 };
+		case "zoom":
+			return { opacity: eased, scale: 0.72 + eased * 0.28 };
+		case "blur-zoom":
+			return { opacity: eased, blur: (1 - eased) * 14, scale: 0.72 + eased * 0.28 };
+		case "rise":
+			return { opacity: eased, offsetY: (1 - eased) * 20 };
+		case "slide":
+			return { opacity: eased, offsetX: (1 - eased) * -28, blur: (1 - eased) * 6 };
+		case "typewriter":
+			return { opacity: 1, characterReveal: true };
+		case "glow-dissolve":
+			return {
+				opacity: eased,
+				blur: (1 - eased) * 18,
+				scale: 1.28 - eased * 0.28,
+				shadowBlur: 28 * eased,
+			};
+	}
 }
 
 function resolveDrawText({

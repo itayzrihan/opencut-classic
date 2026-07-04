@@ -19,6 +19,7 @@ import type {
 	TextWordDirection,
 	TextWordRun,
 	TextWordStyle,
+	TextWordTransitionIn,
 } from "@/timeline";
 import {
 	CAPTION_ACCENT_COLORS,
@@ -27,12 +28,25 @@ import {
 import type { ElementWithTrackForParams } from "./element-params-tab";
 
 const REVEAL_MODES: Array<{ value: TextCaptionRevealMode; label: string }> = [
+	{ value: "determined-by-preset", label: "Determined by preset" },
 	{ value: "row", label: "Whole row" },
 	{ value: "spoken-word", label: "Spoken word only" },
 	{ value: "spoken-word-keep", label: "Spoken word, keep previous" },
 	{ value: "emphasize-spoken", label: "Emphasize spoken" },
 	{ value: "emphasize-spoken-keep", label: "Keep emphasized" },
 	{ value: "growing-row", label: "Growing row" },
+];
+
+const TRANSITION_IN_OPTIONS: Array<{ value: TextWordTransitionIn; label: string }> = [
+	{ value: "none", label: "None" },
+	{ value: "fade", label: "Fade" },
+	{ value: "blur", label: "Blur build" },
+	{ value: "zoom", label: "Zoom" },
+	{ value: "blur-zoom", label: "Blur zoom" },
+	{ value: "rise", label: "Rise" },
+	{ value: "slide", label: "Slide" },
+	{ value: "typewriter", label: "Type letter by letter" },
+	{ value: "glow-dissolve", label: "Glow blur dissolve" },
 ];
 
 const WORD_DIRECTIONS: Array<{ value: TextWordDirection; label: string }> = [
@@ -106,12 +120,8 @@ export function TextWordsTab({
 						<Select
 							value={element.captionPresetId ?? CAPTION_WORD_PRESETS[0].id}
 							onValueChange={(captionPresetId) => {
-								const preset = CAPTION_WORD_PRESETS.find(
-									(item) => item.id === captionPresetId,
-								);
 								updateSharedSettings({
 									captionPresetId,
-									captionRevealMode: preset?.revealMode ?? element.captionRevealMode,
 									captionAccentColor:
 										element.captionAccentColor ?? CAPTION_ACCENT_COLORS[0].value,
 								});
@@ -150,6 +160,29 @@ export function TextWordsTab({
 							</SelectContent>
 						</Select>
 					</SectionField>
+					{usesTransitionIn(element.captionRevealMode ?? "emphasize-spoken") && (
+						<SectionField label="Transition in">
+							<Select
+								value={element.captionTransitionIn ?? "blur-zoom"}
+								onValueChange={(captionTransitionIn) =>
+									updateSharedSettings({
+										captionTransitionIn: toTransitionIn(captionTransitionIn),
+									})
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{TRANSITION_IN_OPTIONS.map((option) => (
+										<SelectItem key={option.value} value={option.value}>
+											{option.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SectionField>
+					)}
 					<SectionField label="Accent">
 						<Select
 							value={element.captionAccentColor ?? CAPTION_ACCENT_COLORS[0].value}
@@ -292,7 +325,8 @@ function toWordDirection(value: string): TextWordDirection {
 }
 
 function toRevealMode(value: string): TextCaptionRevealMode {
-	return value === "row" ||
+	return value === "determined-by-preset" ||
+		value === "row" ||
 		value === "spoken-word" ||
 		value === "spoken-word-keep" ||
 		value === "emphasize-spoken" ||
@@ -300,6 +334,24 @@ function toRevealMode(value: string): TextCaptionRevealMode {
 		value === "growing-row"
 		? value
 		: "emphasize-spoken";
+}
+
+function toTransitionIn(value: string): TextWordTransitionIn {
+	return value === "none" ||
+		value === "fade" ||
+		value === "blur" ||
+		value === "zoom" ||
+		value === "blur-zoom" ||
+		value === "rise" ||
+		value === "slide" ||
+		value === "typewriter" ||
+		value === "glow-dissolve"
+		? value
+		: "blur-zoom";
+}
+
+function usesTransitionIn(revealMode: TextCaptionRevealMode): boolean {
+	return revealMode === "spoken-word" || revealMode === "spoken-word-keep";
 }
 
 function getWordRuns({ element }: { element: TextElement }): TextWordRun[] {

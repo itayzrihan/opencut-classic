@@ -258,6 +258,7 @@ export function buildSubtitleTextElement({
 	caption,
 	canvasSize,
 	revealMode,
+	transitionIn,
 	presetId,
 	accentColor,
 	wordDirection,
@@ -266,6 +267,7 @@ export function buildSubtitleTextElement({
 	caption: SubtitleCue;
 	canvasSize: { width: number; height: number };
 	revealMode?: CreateTextElement["captionRevealMode"];
+	transitionIn?: CreateTextElement["captionTransitionIn"];
 	presetId?: string;
 	accentColor?: string;
 	wordDirection?: CreateTextElement["captionWordDirection"];
@@ -330,6 +332,7 @@ export function buildSubtitleTextElement({
 		name: `Caption ${index + 1}`,
 		wordRuns,
 		captionRevealMode: revealMode,
+		captionTransitionIn: transitionIn,
 		captionPresetId: presetId,
 		captionAccentColor: accentColor,
 		captionWordDirection: wordDirection,

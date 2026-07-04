@@ -50,7 +50,7 @@ import {
 import type { DiagnosticSeverity } from "@/diagnostics/types";
 import { TracksSnapshotCommand } from "@/commands";
 import type { SceneTracks, TextElement, TextTrack } from "@/timeline";
-import type { TextCaptionRevealMode } from "@/timeline";
+import type { TextCaptionRevealMode, TextWordTransitionIn } from "@/timeline";
 import { buildEmptyTrack } from "@/timeline/placement";
 import { generateUUID } from "@/utils/id";
 import { mediaTimeToSeconds } from "@/wasm";
@@ -90,6 +90,7 @@ const CAPTION_REVEAL_MODES: Array<{
 	value: TextCaptionRevealMode;
 	label: string;
 }> = [
+	{ value: "determined-by-preset", label: "Determined by preset" },
 	{ value: "row", label: "Whole row together" },
 	{ value: "spoken-word", label: "Show word when spoken" },
 	{ value: "spoken-word-keep", label: "Show word and keep previous" },
@@ -97,6 +98,24 @@ const CAPTION_REVEAL_MODES: Array<{
 	{ value: "emphasize-spoken-keep", label: "Keep words emphasized" },
 	{ value: "growing-row", label: "Growing row" },
 ];
+const CAPTION_TRANSITION_IN_OPTIONS: Array<{
+	value: TextWordTransitionIn;
+	label: string;
+}> = [
+	{ value: "none", label: "None" },
+	{ value: "fade", label: "Fade" },
+	{ value: "blur", label: "Blur build" },
+	{ value: "zoom", label: "Zoom" },
+	{ value: "blur-zoom", label: "Blur zoom" },
+	{ value: "rise", label: "Rise" },
+	{ value: "slide", label: "Slide" },
+	{ value: "typewriter", label: "Type letter by letter" },
+	{ value: "glow-dissolve", label: "Glow blur dissolve" },
+];
+
+function usesTransitionIn(revealMode: TextCaptionRevealMode): boolean {
+	return revealMode === "spoken-word" || revealMode === "spoken-word-keep";
+}
 
 function hasSameCaptionSource({
 	track,
@@ -323,6 +342,7 @@ export function Captions() {
 					...current,
 					[key]:
 						key === "revealMode" ||
+						key === "transitionIn" ||
 						key === "presetId" ||
 						key === "accentColor" ||
 						key === "wordDirection"
@@ -651,6 +671,30 @@ export function Captions() {
 								</SelectContent>
 							</Select>
 						</SectionField>
+						{usesTransitionIn(captionSettings.revealMode) && (
+							<SectionField label="Transition in">
+								<Select
+									value={captionSettings.transitionIn}
+									onValueChange={(value) =>
+										updateCaptionSetting({
+											key: "transitionIn",
+											value,
+										})
+									}
+								>
+									<SelectTrigger>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{CAPTION_TRANSITION_IN_OPTIONS.map((option) => (
+											<SelectItem key={option.value} value={option.value}>
+												{option.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SectionField>
+						)}
 						<SectionField label="Preset">
 							<Select
 								value={captionSettings.presetId}
