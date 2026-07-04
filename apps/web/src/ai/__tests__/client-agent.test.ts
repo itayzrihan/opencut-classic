@@ -154,13 +154,21 @@ describe("AI client agent", () => {
 			executeTool: async () => ({ text: "x".repeat(20_000) }),
 		});
 
-		const toolOutput = (
-			(secondRequestBody?.input as Array<{ output?: string }> | undefined)?.[0] ??
-			{}
-		).output;
+		const secondInput = secondRequestBody?.input as
+			| Array<{ type?: string; output?: string; call_id?: string }>
+			| undefined;
+		const functionCall = secondInput?.find(
+			(item) => item.type === "function_call",
+		);
+		const functionOutput = secondInput?.find(
+			(item) => item.type === "function_call_output",
+		);
 
 		expect(result.status).toBe("completed");
-		expect(toolOutput?.length).toBeLessThan(17_000);
-		expect(toolOutput).toContain('"truncated":true');
+		expect(secondRequestBody?.previousResponseId).toBeUndefined();
+		expect(functionCall?.call_id).toBe("call-large");
+		expect(functionOutput?.call_id).toBe("call-large");
+		expect(functionOutput?.output?.length).toBeLessThan(17_000);
+		expect(functionOutput?.output).toContain('"truncated":true');
 	});
 });

@@ -129,17 +129,19 @@ describe("OpenAI Codex OAuth helpers", () => {
 						parameters: { type: "object", properties: {} },
 					},
 				],
+				previousResponseId: "resp-previous",
 			},
 		});
 
 		expect(body.model).toBe("gpt-5.5");
 		expect(body.instructions).toBe("System instructions");
 		expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
-		expect(body.store).toBe(true);
+		expect(body.store).toBe(false);
 		expect(body.stream).toBe(true);
 		expect(body.reasoning).toEqual({ effort: "low" });
 		expect(body.tool_choice).toBe("auto");
 		expect((body.tools as Array<{ strict: unknown }>)[0].strict).toBe(null);
+		expect(body.previous_response_id).toBeUndefined();
 	});
 
 	test("parses streamed Codex Responses events into agent response shape", async () => {

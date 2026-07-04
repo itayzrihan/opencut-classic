@@ -391,7 +391,7 @@ function buildCodexResponsesRequestBody({
 
 	return {
 		model: selectedModel,
-		store: true,
+		store: false,
 		stream: true,
 		reasoning: { effort: "low" },
 		...(instructions ? { instructions } : {}),
@@ -399,9 +399,6 @@ function buildCodexResponsesRequestBody({
 		...(tools ? { tools } : {}),
 		tool_choice: tools ? "auto" : undefined,
 		parallel_tool_calls: false,
-		...(typeof body.previousResponseId === "string"
-			? { previous_response_id: body.previousResponseId }
-			: {}),
 	};
 }
 

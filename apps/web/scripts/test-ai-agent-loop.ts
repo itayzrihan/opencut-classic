@@ -92,9 +92,10 @@ console.log(
 			firstToolName: (
 				(requests[0]?.tools as Array<{ name?: string }> | undefined)?.[0] ?? {}
 			).name,
-			secondInputType: (
-				(requests[1]?.input as Array<{ type?: string }> | undefined)?.[0] ?? {}
-			).type,
+			secondInputTypes: (
+				requests[1]?.input as Array<{ type?: string }> | undefined
+			)?.map((item) => item.type),
+			secondPreviousResponseId: requests[1]?.previousResponseId ?? null,
 		},
 		null,
 		2,

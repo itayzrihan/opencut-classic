@@ -97,7 +97,16 @@ globalThis.fetch = (async (
 			);
 		}
 
-		if (requestBody.previous_response_id === "resp-tool") {
+		if (
+			Array.isArray(requestBody.input) &&
+			requestBody.input.some(
+				(item) =>
+					typeof item === "object" &&
+					item !== null &&
+					"type" in item &&
+					item.type === "function_call_output",
+			)
+		) {
 			return new Response(
 				'{"title":"Route smoke edit","summary":"Tool loop completed","operations":[]}',
 				{ headers: { "Content-Type": "text/plain" } },
@@ -202,30 +211,66 @@ try {
 	if (!firstAcceptedRequest) {
 		throw new Error("Expected unsupported model retry to use gpt-5.5.");
 	}
-
-	const continuationRequest = upstreamRequests.find(
-		(request) => request.previous_response_id === "resp-tool",
-	);
-	if (!continuationRequest) {
-		throw new Error("Expected a continuation request with previous_response_id.");
+	if (upstreamRequests.some((request) => request.store !== false)) {
+		throw new Error("Expected every ChatGPT Codex request to set store:false.");
 	}
-	const continuationInput = continuationRequest?.input;
+	if (
+		upstreamRequests.some(
+			(request) => typeof request.previous_response_id === "string",
+		)
+	) {
+		throw new Error("Expected stateless requests to omit previous_response_id.");
+	}
+
+	const continuationRequest = upstreamRequests.find((request) => {
+		if (!Array.isArray(request.input)) return false;
+		return request.input.some(
+			(item) =>
+				typeof item === "object" &&
+				item !== null &&
+				"type" in item &&
+				item.type === "function_call_output",
+		);
+	});
+	if (!continuationRequest) {
+		throw new Error("Expected a stateless continuation request with tool output.");
+	}
+	const continuationInput = continuationRequest.input;
 	if (!Array.isArray(continuationInput)) {
 		throw new Error("Expected continuation request to include tool output input.");
 	}
-	const toolOutput = continuationInput[0] as
-		| { type?: string; output?: string }
-		| undefined;
-	if (toolOutput?.type !== "function_call_output") {
-		throw new Error("Expected continuation input to be a function_call_output.");
+	const functionCallInput = continuationInput.find(
+		(item) =>
+			typeof item === "object" &&
+			item !== null &&
+			"type" in item &&
+			item.type === "function_call",
+	) as { type?: string; call_id?: string } | undefined;
+	const functionOutputInput = continuationInput.find(
+		(item) =>
+			typeof item === "object" &&
+			item !== null &&
+			"type" in item &&
+			item.type === "function_call_output",
+	) as { type?: string; output?: string; call_id?: string } | undefined;
+	if (functionCallInput?.call_id !== "call-search") {
+		throw new Error("Expected stateless continuation to include function call.");
 	}
-	if (typeof toolOutput.output !== "string") {
+	if (functionOutputInput?.type !== "function_call_output") {
+		throw new Error(
+			"Expected continuation input to include a function_call_output.",
+		);
+	}
+	if (functionOutputInput?.call_id !== "call-search") {
+		throw new Error("Expected tool output to reference the function call id.");
+	}
+	if (typeof functionOutputInput.output !== "string") {
 		throw new Error("Expected continuation tool output to be serialized.");
 	}
-	if (!toolOutput.output.includes('"truncated":true')) {
+	if (!functionOutputInput.output.includes('"truncated":true')) {
 		throw new Error("Expected large tool output to be truncated.");
 	}
-	if (toolOutput.output.length > 17_000) {
+	if (functionOutputInput.output.length > 17_000) {
 		throw new Error("Expected truncated tool output to stay bounded.");
 	}
 
@@ -236,8 +281,13 @@ try {
 				iterations: result.iterations,
 				upstreamRequestCount: upstreamRequests.length,
 				modelsTried: upstreamRequests.map((request) => request.model),
-				previousResponseId: continuationRequest.previous_response_id,
-				toolOutputLength: toolOutput.output.length,
+				storeValues: upstreamRequests.map((request) => request.store),
+				continuationInputTypes: continuationInput.map((item) =>
+					typeof item === "object" && item !== null && "type" in item
+						? item.type
+						: null,
+				),
+				toolOutputLength: functionOutputInput.output.length,
 			},
 			null,
 			2,

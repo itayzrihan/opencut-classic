@@ -45,7 +45,6 @@ export async function runAiAgent({
 	maxIterations = AI_AGENT_MAX_ITERATIONS,
 	onStep,
 }: AiAgentRunOptions): Promise<AiAgentResult> {
-	let previousResponseId: string | undefined;
 	let input: unknown[] = messages.map((message) => ({
 		role: message.role,
 		content: message.content,
@@ -67,10 +66,8 @@ export async function runAiAgent({
 			input,
 			tools: toWireToolDefinitions(tools),
 			model,
-			previousResponseId,
 			signal,
 		});
-		previousResponseId = response.id;
 		lastText = getResponseText(response) || lastText;
 
 		const toolCalls = getResponseToolCalls(response);
@@ -105,7 +102,7 @@ export async function runAiAgent({
 				});
 			}
 		}
-		input = toolOutputs;
+		input = [...input, ...getResponseContinuationItems(response), ...toolOutputs];
 	}
 
 	return {
@@ -122,13 +119,11 @@ async function callAiChatRoute({
 	input,
 	tools,
 	model,
-	previousResponseId,
 	signal,
 }: {
 	input: unknown[];
 	tools: AiToolDefinition[];
 	model?: string;
-	previousResponseId?: string;
 	signal?: AbortSignal;
 }): Promise<ResponsesApiResult> {
 	const response = await fetch("/api/ai/chat", {
@@ -138,7 +133,6 @@ async function callAiChatRoute({
 			input,
 			tools,
 			model,
-			previousResponseId,
 		}),
 		signal,
 	});
@@ -178,6 +172,15 @@ function getResponseToolCalls(response: ResponsesApiResult): AiToolCall[] {
 			arguments: parseToolArguments(item.arguments),
 		}))
 		.filter((toolCall) => toolCall.name.length > 0);
+}
+
+function getResponseContinuationItems(response: ResponsesApiResult): ResponsesOutputItem[] {
+	return (response.output ?? []).filter(
+		(item) =>
+			item.type === "function_call" ||
+			item.type === "reasoning" ||
+			item.type === "message",
+	);
 }
 
 const TOOL_WIRE_NAMES = new Map<string, string>([
