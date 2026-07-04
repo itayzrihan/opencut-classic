@@ -356,9 +356,12 @@ export async function forwardCodexResponsesRequest({
 		}
 
 		const responseText = await response.text();
-		const responseBody = parseJsonObject(responseText);
+		const responseBody = parseCodexResponseText({
+			text: responseText,
+			contentType: response.headers.get("content-type"),
+		});
 		if (!responseBody) {
-			throw new Error("OpenAI Codex response was not JSON.");
+			throw new Error("OpenAI Codex response was empty.");
 		}
 		return responseBody;
 	}
@@ -388,8 +391,9 @@ function buildCodexResponsesRequestBody({
 
 	return {
 		model: selectedModel,
-		store: false,
+		store: true,
 		stream: true,
+		reasoning: { effort: "low" },
 		...(instructions ? { instructions } : {}),
 		input,
 		...(tools ? { tools } : {}),
@@ -581,18 +585,17 @@ function processCodexStreamEvent({
 			}
 			return;
 		}
+		case "response.output_text.done": {
+			if (typeof event.text === "string") {
+				state.outputText = event.text;
+			}
+			return;
+		}
 		case "response.output_item.added": {
 			const outputIndex = getOutputIndex(event);
-			const item = isRecord(event.item) ? event.item : {};
-			if (item.type === "function_call") {
-				state.outputItemsByIndex.set(outputIndex, {
-					id: typeof item.id === "string" ? item.id : undefined,
-					call_id:
-						typeof item.call_id === "string" ? item.call_id : undefined,
-					type: "function_call",
-					name: typeof item.name === "string" ? item.name : undefined,
-					arguments: typeof item.arguments === "string" ? item.arguments : "",
-				});
+			const item = normalizeCodexOutputItem(event.item);
+			if (item) {
+				state.outputItemsByIndex.set(outputIndex, item);
 			}
 			return;
 		}
@@ -614,16 +617,9 @@ function processCodexStreamEvent({
 		}
 		case "response.output_item.done": {
 			const outputIndex = getOutputIndex(event);
-			const item = isRecord(event.item) ? event.item : null;
-			if (item?.type === "function_call") {
-				state.outputItemsByIndex.set(outputIndex, {
-					id: typeof item.id === "string" ? item.id : undefined,
-					call_id:
-						typeof item.call_id === "string" ? item.call_id : undefined,
-					type: "function_call",
-					name: typeof item.name === "string" ? item.name : undefined,
-					arguments: typeof item.arguments === "string" ? item.arguments : "",
-				});
+			const item = normalizeCodexOutputItem(event.item);
+			if (item) {
+				state.outputItemsByIndex.set(outputIndex, item);
 			}
 			return;
 		}
@@ -666,17 +662,223 @@ function mergeCompletedResponseOutput({
 	state: CodexStreamState;
 }): void {
 	output.forEach((item, index) => {
-		if (!isRecord(item) || item.type !== "function_call") {
-			return;
+		const outputItem = normalizeCodexOutputItem(item);
+		if (!outputItem) return;
+		state.outputItemsByIndex.set(index, outputItem);
+		const text = getOutputItemText(outputItem);
+		if (text) {
+			state.outputText = state.outputText
+				? `${state.outputText}\n${text}`
+				: text;
 		}
-		state.outputItemsByIndex.set(index, {
-			id: typeof item.id === "string" ? item.id : undefined,
-			call_id: typeof item.call_id === "string" ? item.call_id : undefined,
-			type: "function_call",
-			name: typeof item.name === "string" ? item.name : undefined,
-			arguments: typeof item.arguments === "string" ? item.arguments : "",
-		});
 	});
+}
+
+function parseCodexResponseText({
+	text,
+	contentType,
+}: {
+	text: string;
+	contentType: string | null;
+}): Record<string, unknown> | null {
+	const trimmed = text.trim();
+	if (!trimmed) return null;
+
+	const parsed = parseJsonObject(trimmed);
+	if (parsed) {
+		if (isCodexResponseShape(parsed)) {
+			return normalizeCodexResponseObject(parsed);
+		}
+		return createPlainTextCodexResponse(trimmed);
+	}
+
+	if (looksLikeCodexEventStream(trimmed)) {
+		return parseCodexResponsesStreamText({ text: trimmed });
+	}
+
+	if (looksLikeHtmlResponse({ text: trimmed, contentType })) {
+		throw new Error(
+			"OpenAI Codex returned an HTML page instead of a model response. The ChatGPT session may need a fresh login.",
+		);
+	}
+
+	return createPlainTextCodexResponse(trimmed);
+}
+
+function createPlainTextCodexResponse(text: string): Record<string, unknown> {
+	return {
+		id: `codex-text-${Date.now()}`,
+		output: [
+			{
+				type: "message",
+				role: "assistant",
+				content: [{ type: "output_text", text }],
+			},
+		],
+		output_text: text,
+	};
+}
+
+function parseCodexResponsesStreamText({
+	text,
+}: {
+	text: string;
+}): Record<string, unknown> {
+	const state: CodexStreamState = {
+		responseId: undefined,
+		outputText: "",
+		outputItemsByIndex: new Map(),
+		error: undefined,
+	};
+
+	if (text.includes("data:")) {
+		consumeCodexStreamBuffer({ buffer: `${text}\n\n`, state });
+	} else {
+		for (const line of text.split(/\r?\n/)) {
+			const event = parseJsonObject(line.trim());
+			if (event) {
+				processCodexStreamEvent({ event, state });
+			}
+		}
+	}
+
+	if (state.error) {
+		throw new Error(state.error);
+	}
+
+	const output = [...state.outputItemsByIndex.entries()]
+		.sort(([left], [right]) => left - right)
+		.map(([, item]) => item);
+
+	return {
+		id: state.responseId ?? `codex-stream-${Date.now()}`,
+		output,
+		output_text: state.outputText,
+	};
+}
+
+function normalizeCodexResponseObject(
+	value: Record<string, unknown>,
+): Record<string, unknown> {
+	if (isRecord(value.response)) {
+		return normalizeCodexResponseObject(value.response);
+	}
+
+	if (Array.isArray(value.output)) {
+		const output = value.output
+			.map(normalizeCodexOutputItem)
+			.filter((item): item is CodexStreamOutputItem => item !== null);
+		const outputText =
+			typeof value.output_text === "string"
+				? value.output_text
+				: output.map(getOutputItemText).filter(Boolean).join("\n").trim();
+		return {
+			...value,
+			output,
+			...(outputText ? { output_text: outputText } : {}),
+		};
+	}
+
+	return value;
+}
+
+function isCodexResponseShape(value: Record<string, unknown>): boolean {
+	return (
+		isRecord(value.response) ||
+		typeof value.id === "string" ||
+		typeof value.object === "string" ||
+		typeof value.status === "string" ||
+		typeof value.output_text === "string" ||
+		Array.isArray(value.output)
+	);
+}
+
+function normalizeCodexOutputItem(value: unknown): CodexStreamOutputItem | null {
+	if (!isRecord(value)) return null;
+	const type = typeof value.type === "string" ? value.type : undefined;
+	if (type === "function_call") {
+		return {
+			id: typeof value.id === "string" ? value.id : undefined,
+			call_id: typeof value.call_id === "string" ? value.call_id : undefined,
+			type,
+			name: typeof value.name === "string" ? value.name : undefined,
+			arguments: typeof value.arguments === "string" ? value.arguments : "",
+		};
+	}
+
+	if (type === "message") {
+		const content = Array.isArray(value.content)
+			? value.content
+					.map(normalizeCodexContentPart)
+					.filter(
+						(
+							item,
+						): item is NonNullable<
+							CodexStreamOutputItem["content"]
+						>[number] => item !== null,
+					)
+			: undefined;
+		return {
+			id: typeof value.id === "string" ? value.id : undefined,
+			type,
+			content,
+		};
+	}
+
+	return {
+		id: typeof value.id === "string" ? value.id : undefined,
+		type,
+	};
+}
+
+function normalizeCodexContentPart(
+	value: unknown,
+): NonNullable<CodexStreamOutputItem["content"]>[number] | null {
+	if (!isRecord(value)) return null;
+	const text =
+		typeof value.text === "string"
+			? value.text
+			: typeof value.output_text === "string"
+				? value.output_text
+				: undefined;
+	return {
+		type: typeof value.type === "string" ? value.type : undefined,
+		...(text ? { text, output_text: text } : {}),
+	};
+}
+
+function getOutputItemText(item: CodexStreamOutputItem): string {
+	return (item.content ?? [])
+		.map((content) => content.text ?? content.output_text ?? "")
+		.filter(Boolean)
+		.join("\n")
+		.trim();
+}
+
+function looksLikeCodexEventStream(text: string): boolean {
+	if (/(^|\n)\s*data:/.test(text)) {
+		return true;
+	}
+	return text
+		.split(/\r?\n/)
+		.some((line) => {
+			const event = parseJsonObject(line.trim());
+			return typeof event?.type === "string" && event.type.startsWith("response.");
+		});
+}
+
+function looksLikeHtmlResponse({
+	text,
+	contentType,
+}: {
+	text: string;
+	contentType: string | null;
+}): boolean {
+	return (
+		contentType?.toLowerCase().includes("text/html") === true ||
+		text.startsWith("<!DOCTYPE html") ||
+		text.startsWith("<html")
+	);
 }
 
 function getOutputIndex(event: Record<string, unknown>): number {
@@ -1388,4 +1590,6 @@ export const testing = {
 	readSessionCookie,
 	buildCodexResponsesRequestBody,
 	parseCodexResponsesStream,
+	parseCodexResponseText,
+	parseCodexResponsesStreamText,
 };

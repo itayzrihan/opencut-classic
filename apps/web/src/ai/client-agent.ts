@@ -8,6 +8,7 @@ import type {
 import { extractAiEditPlanFromText } from "./edit-plan";
 
 export const AI_AGENT_MAX_ITERATIONS = 12;
+const TOOL_OUTPUT_MAX_CHARS = 16_000;
 
 export interface AiAgentRunOptions {
 	messages: AiAgentMessage[];
@@ -91,13 +92,13 @@ export async function runAiAgent({
 				toolOutputs.push({
 					type: "function_call_output",
 					call_id: toolCall.id,
-					output: JSON.stringify({ ok: true, result: output }),
+					output: serializeToolOutput({ ok: true, result: output }),
 				});
 			} catch (error) {
 				toolOutputs.push({
 					type: "function_call_output",
 					call_id: toolCall.id,
-					output: JSON.stringify({
+					output: serializeToolOutput({
 						ok: false,
 						error: error instanceof Error ? error.message : String(error),
 					}),
@@ -234,6 +235,35 @@ function parseToolArguments(
 		return isRecord(parsed) ? parsed : {};
 	} catch {
 		return {};
+	}
+}
+
+function serializeToolOutput(value: Record<string, unknown>): string {
+	const serialized = safeJsonStringify(value);
+	if (serialized.length <= TOOL_OUTPUT_MAX_CHARS) {
+		return serialized;
+	}
+
+	return safeJsonStringify({
+		ok: value.ok === true,
+		truncated: true,
+		originalLength: serialized.length,
+		resultPreview: serialized.slice(0, TOOL_OUTPUT_MAX_CHARS),
+		note: "Tool output was shortened. Search or fetch a narrower layer/element if more detail is needed.",
+	});
+}
+
+function safeJsonStringify(value: unknown): string {
+	try {
+		return JSON.stringify(value);
+	} catch (error) {
+		return JSON.stringify({
+			ok: false,
+			error:
+				error instanceof Error
+					? error.message
+					: "Tool output could not be serialized.",
+		});
 	}
 }
 

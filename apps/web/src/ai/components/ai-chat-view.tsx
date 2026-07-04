@@ -106,6 +106,7 @@ export function AiChatView() {
 					range: activeRange,
 					selectedElements,
 					includePreviewImage: enabled.has("preview"),
+					includeLayerAccess: enabled.has("layers"),
 				},
 			});
 			const context = buildTimelineContextPrompt({

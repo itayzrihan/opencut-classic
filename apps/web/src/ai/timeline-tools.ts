@@ -20,6 +20,7 @@ export interface TimelineToolContextOptions {
 	range?: AiTimelineRange | null;
 	selectedElements?: ElementRef[];
 	includePreviewImage?: boolean;
+	includeLayerAccess?: boolean;
 }
 
 export interface TimelineToolRuntime {
@@ -34,7 +35,18 @@ export function createTimelineToolRuntime({
 	editor: EditorCore;
 	options?: TimelineToolContextOptions;
 }): TimelineToolRuntime {
-	const tools = createTimelineToolDefinitions();
+	const includeLayerAccess = options.includeLayerAccess ?? true;
+	const tools = createTimelineToolDefinitions().filter(
+		(tool) => {
+			if (tool.name === "preview.capture_frame") {
+				return options.includePreviewImage === true;
+			}
+			if (tool.name === "timeline.propose_edit_plan") {
+				return true;
+			}
+			return includeLayerAccess;
+		},
+	);
 	const executeTool = async (toolCall: AiToolCall) => {
 		const scene = editor.scenes.getActiveSceneOrNull();
 		if (!scene) {
@@ -253,6 +265,18 @@ export function buildTimelineContextPrompt({
 	}
 
 	const parts: string[] = [`Project: ${project.metadata.name}`];
+	const displayTracks = [
+		...scene.tracks.overlay,
+		scene.tracks.main,
+		...scene.tracks.audio,
+	];
+	const elementCount = displayTracks.reduce(
+		(total, track) => total + track.elements.length,
+		0,
+	);
+	parts.push(
+		`Timeline summary: ${scene.tracks.overlay.length} overlay layers, 1 main layer, ${scene.tracks.audio.length} audio layers, ${elementCount} total elements.`,
+	);
 	if (includePlayheadTime) {
 		parts.push(`Playhead time ticks: ${editor.playback.getCurrentTime()}`);
 	}
@@ -262,11 +286,10 @@ export function buildTimelineContextPrompt({
 			tracks: scene.tracks,
 			mediaAssets: editor.media.getAssets(),
 		});
+		const rangeLayers = getLayersInRange({ index, range });
+		const rangeElements = getElementsInRange({ index, range });
 		parts.push(
-			`Range layers: ${JSON.stringify(getLayersInRange({ index, range }))}`,
-		);
-		parts.push(
-			`Range elements: ${JSON.stringify(getElementsInRange({ index, range }).slice(0, 30))}`,
+			`Active range summary: ${rangeLayers.length} layers and ${rangeElements.length} elements overlap this range. Use timeline.search_elements with inActiveRange=true and timeline.get_element for details.`,
 		);
 	}
 	if (includeSelectedElements) {

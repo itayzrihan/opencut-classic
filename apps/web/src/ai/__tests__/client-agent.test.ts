@@ -106,4 +106,61 @@ describe("AI client agent", () => {
 		expect(result.status).toBe("max_iterations");
 		expect(result.iterations).toBe(2);
 	});
+
+	test("bounds large tool outputs before sending the next turn", async () => {
+		let secondRequestBody: Record<string, unknown> | null = null;
+		let callCount = 0;
+		globalThis.fetch = async (...fetchParameters) => {
+			callCount += 1;
+			const init = fetchParameters[1];
+			if (callCount === 2 && typeof init?.body === "string") {
+				secondRequestBody = JSON.parse(init.body) as Record<string, unknown>;
+			}
+			return new Response(
+				JSON.stringify({
+					response:
+						callCount === 1
+							? {
+									id: "resp-large-tool",
+									output: [
+										{
+											type: "function_call",
+											call_id: "call-large",
+											name: "timeline_get_layer",
+											arguments: '{"trackId":"track-1"}',
+										},
+									],
+								}
+							: {
+									id: "resp-final",
+									output_text:
+										'{"title":"Done","summary":"Done","operations":[]}',
+								},
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		};
+
+		const result = await runAiAgent({
+			messages: [{ role: "user", content: "inspect layer" }],
+			tools: [
+				{
+					type: "function",
+					name: "timeline.get_layer",
+					description: "",
+					parameters: { type: "object", properties: {} },
+				},
+			],
+			executeTool: async () => ({ text: "x".repeat(20_000) }),
+		});
+
+		const toolOutput = (
+			(secondRequestBody?.input as Array<{ output?: string }> | undefined)?.[0] ??
+			{}
+		).output;
+
+		expect(result.status).toBe("completed");
+		expect(toolOutput?.length).toBeLessThan(17_000);
+		expect(toolOutput).toContain('"truncated":true');
+	});
 });

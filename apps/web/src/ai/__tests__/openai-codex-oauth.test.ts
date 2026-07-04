@@ -135,8 +135,9 @@ describe("OpenAI Codex OAuth helpers", () => {
 		expect(body.model).toBe("gpt-5.5");
 		expect(body.instructions).toBe("System instructions");
 		expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
-		expect(body.store).toBe(false);
+		expect(body.store).toBe(true);
 		expect(body.stream).toBe(true);
+		expect(body.reasoning).toEqual({ effort: "low" });
 		expect(body.tool_choice).toBe("auto");
 		expect((body.tools as Array<{ strict: unknown }>)[0].strict).toBe(null);
 	});
@@ -187,6 +188,54 @@ describe("OpenAI Codex OAuth helpers", () => {
 				arguments: '{"ok":true}',
 			},
 		]);
+	});
+
+	test("parses successful text/plain event-stream shaped Codex responses", async () => {
+		setRequiredEnv();
+		const { testing } = await import("@/ai/server/openai-codex-oauth");
+		const parsed = testing.parseCodexResponseText({
+			contentType: "text/plain; charset=utf-8",
+			text: [
+				{
+					type: "response.completed",
+					response: {
+						id: "resp-text-stream",
+						output: [
+							{
+								type: "message",
+								role: "assistant",
+								content: [
+									{
+										type: "output_text",
+										text: '{"title":"Plan","summary":"Done","operations":[]}',
+									},
+								],
+							},
+						],
+					},
+				},
+			]
+				.map((event) => `data: ${JSON.stringify(event)}\n\n`)
+				.join(""),
+		});
+
+		expect(parsed.id).toBe("resp-text-stream");
+		expect(parsed.output_text).toBe(
+			'{"title":"Plan","summary":"Done","operations":[]}',
+		);
+	});
+
+	test("wraps plain successful Codex text as assistant output", async () => {
+		setRequiredEnv();
+		const { testing } = await import("@/ai/server/openai-codex-oauth");
+		const parsed = testing.parseCodexResponseText({
+			contentType: "text/plain",
+			text: '{"title":"Plain","summary":"Done","operations":[]}',
+		});
+
+		expect(parsed?.output_text).toBe(
+			'{"title":"Plain","summary":"Done","operations":[]}',
+		);
 	});
 });
 
