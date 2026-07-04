@@ -127,10 +127,10 @@ export function AiChatView() {
 						content: [
 							context,
 							enabled.has("layers")
-								? "Layer access is enabled through tools. Browse layers with timeline.search_layers and timeline.search_elements."
+								? "Layer access is enabled through timeline search tools."
 								: "Layer access is disabled unless layer ids were explicitly provided.",
 							enabled.has("preview")
-								? "Preview image context is enabled. Use preview.capture_frame if visual state matters."
+								? "Preview image context is enabled through the preview capture tool."
 								: "Preview image context is disabled.",
 							`User request: ${prompt}`,
 						].join("\n\n"),

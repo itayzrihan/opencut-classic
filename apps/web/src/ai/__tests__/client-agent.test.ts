@@ -10,8 +10,14 @@ afterEach(() => {
 describe("AI client agent", () => {
 	test("executes tool calls and returns the final edit plan", async () => {
 		let callCount = 0;
-		globalThis.fetch = async () => {
+		let firstRequestBody: Record<string, unknown> | null = null;
+		let executedToolName = "";
+		globalThis.fetch = async (...fetchParameters) => {
+			const init = fetchParameters[1];
 			callCount += 1;
+			if (callCount === 1 && typeof init?.body === "string") {
+				firstRequestBody = JSON.parse(init.body) as Record<string, unknown>;
+			}
 			return new Response(
 				JSON.stringify({
 					response:
@@ -22,7 +28,7 @@ describe("AI client agent", () => {
 										{
 											type: "function_call",
 											call_id: "call-1",
-											name: "timeline.get_visible_state",
+											name: "timeline_get_visible_state",
 											arguments: "{}",
 										},
 									],
@@ -46,13 +52,22 @@ describe("AI client agent", () => {
 					description: "",
 					parameters: { type: "object", properties: {} },
 				},
-			],
-			executeTool: async () => ({ ok: true }),
+				],
+			executeTool: async (toolCall) => {
+				executedToolName = toolCall.name;
+				return { ok: true };
+			},
 		});
 
 		expect(result.status).toBe("completed");
 		expect(result.iterations).toBe(2);
 		expect(result.editPlan?.title).toBe("No edits");
+		expect(
+			(
+				(firstRequestBody?.tools as Array<{ name: string }> | undefined)?.[0]
+			)?.name,
+		).toBe("timeline_get_visible_state");
+		expect(executedToolName).toBe("timeline.get_visible_state");
 	});
 
 	test("stops when the max iteration budget is exhausted", async () => {
@@ -65,7 +80,7 @@ describe("AI client agent", () => {
 							{
 								type: "function_call",
 								call_id: "call-loop",
-								name: "timeline.get_visible_state",
+								name: "timeline_get_visible_state",
 								arguments: "{}",
 							},
 						],

@@ -64,7 +64,7 @@ export async function runAiAgent({
 		onStep?.(`Thinking ${iteration}/${maxIterations}`);
 		const response = await callAiChatRoute({
 			input,
-			tools,
+			tools: toWireToolDefinitions(tools),
 			model,
 			previousResponseId,
 			signal,
@@ -173,10 +173,38 @@ function getResponseToolCalls(response: ResponsesApiResult): AiToolCall[] {
 		.filter((item) => item.type === "function_call")
 		.map((item) => ({
 			id: item.call_id ?? item.id ?? crypto.randomUUID(),
-			name: item.name ?? "",
+			name: fromWireToolName(item.name ?? ""),
 			arguments: parseToolArguments(item.arguments),
 		}))
 		.filter((toolCall) => toolCall.name.length > 0);
+}
+
+const TOOL_WIRE_NAMES = new Map<string, string>([
+	["timeline.search_layers", "timeline_search_layers"],
+	["timeline.get_layer", "timeline_get_layer"],
+	["timeline.search_elements", "timeline_search_elements"],
+	["timeline.get_element", "timeline_get_element"],
+	["timeline.get_visible_state", "timeline_get_visible_state"],
+	["preview.capture_frame", "preview_capture_frame"],
+	["timeline.propose_edit_plan", "timeline_propose_edit_plan"],
+]);
+
+const TOOL_INTERNAL_NAMES = new Map(
+	[...TOOL_WIRE_NAMES.entries()].map(([internalName, wireName]) => [
+		wireName,
+		internalName,
+	]),
+);
+
+function toWireToolDefinitions(tools: AiToolDefinition[]): AiToolDefinition[] {
+	return tools.map((tool) => ({
+		...tool,
+		name: TOOL_WIRE_NAMES.get(tool.name) ?? tool.name,
+	}));
+}
+
+function fromWireToolName(name: string): string {
+	return TOOL_INTERNAL_NAMES.get(name) ?? name;
 }
 
 function getResponseText(response: ResponsesApiResult): string {

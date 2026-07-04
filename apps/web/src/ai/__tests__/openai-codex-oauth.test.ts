@@ -111,6 +111,82 @@ describe("OpenAI Codex OAuth helpers", () => {
 		expect(result.status.identity?.accountId).toBe("acct-large-token");
 		expect(result.credentials?.access.startsWith("access-")).toBe(true);
 	});
+
+	test("normalizes Codex request bodies for the ChatGPT backend", async () => {
+		setRequiredEnv();
+		const { testing } = await import("@/ai/server/openai-codex-oauth");
+		const body = testing.buildCodexResponsesRequestBody({
+			body: {
+				input: [
+					{ role: "system", content: "System instructions" },
+					{ role: "user", content: "Hello" },
+				],
+				tools: [
+					{
+						type: "function",
+						name: "timeline_get_visible_state",
+						description: "",
+						parameters: { type: "object", properties: {} },
+					},
+				],
+			},
+		});
+
+		expect(body.instructions).toBe("System instructions");
+		expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
+		expect(body.store).toBe(false);
+		expect(body.stream).toBe(true);
+		expect(body.tool_choice).toBe("auto");
+		expect((body.tools as Array<{ strict: unknown }>)[0].strict).toBe(null);
+	});
+
+	test("parses streamed Codex Responses events into agent response shape", async () => {
+		setRequiredEnv();
+		const { testing } = await import("@/ai/server/openai-codex-oauth");
+		const stream = [
+			{
+				type: "response.output_item.added",
+				output_index: 0,
+				item: {
+					type: "function_call",
+					call_id: "call-1",
+					name: "timeline_get_visible_state",
+					arguments: "",
+				},
+			},
+			{
+				type: "response.function_call_arguments.delta",
+				output_index: 0,
+				delta: '{"ok"',
+			},
+			{
+				type: "response.function_call_arguments.delta",
+				output_index: 0,
+				delta: ":true}",
+			},
+			{
+				type: "response.completed",
+				response: { id: "resp-1", status: "completed" },
+			},
+		]
+			.map((event) => `data: ${JSON.stringify(event)}\n\n`)
+			.join("");
+		const response = new Response(stream, {
+			headers: { "Content-Type": "text/event-stream" },
+		});
+
+		const parsed = await testing.parseCodexResponsesStream({ response });
+
+		expect(parsed.id).toBe("resp-1");
+		expect(parsed.output).toEqual([
+			{
+				type: "function_call",
+				call_id: "call-1",
+				name: "timeline_get_visible_state",
+				arguments: '{"ok":true}',
+			},
+		]);
+	});
 });
 
 function setRequiredEnv() {
