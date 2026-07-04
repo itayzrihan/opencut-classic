@@ -5,6 +5,7 @@ import {
 	Delete02Icon,
 	MagicWand05Icon,
 	MusicNote03Icon,
+	Settings05Icon,
 	TaskAdd02Icon,
 	TextIcon,
 	ViewIcon,
@@ -20,6 +21,13 @@ import {
 	ContextMenuItem,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import { useTimelineZoom } from "@/timeline/hooks/use-timeline-zoom";
 import {
 	useCallback,
@@ -31,7 +39,12 @@ import {
 } from "react";
 import { useContainerSize } from "@/hooks/use-container-size";
 import type { MediaTime } from "@/wasm";
-import type { ElementDragView, DropTarget } from "@/timeline";
+import type {
+	ElementDragView,
+	DropTarget,
+	SceneTracks,
+	TextTrack,
+} from "@/timeline";
 import { TimelineTrackContent } from "./timeline-track";
 import { TimelinePlayhead } from "./timeline-playhead";
 import { SelectionBox } from "@/selection/selection-box";
@@ -87,6 +100,13 @@ import { DragLine } from "./drag-line";
 import { invokeAction } from "@/actions";
 import { resolveTimelineElementIntersections } from "./selection-hit-testing";
 import { cn } from "@/utils/ui";
+import { TracksSnapshotCommand } from "@/commands/timeline";
+import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
+import {
+	buildSubtitleCuesFromWords,
+	normalizeCaptionLayoutSettings,
+	type CaptionLayoutSettings,
+} from "@/subtitles/caption-layout";
 
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
@@ -698,6 +718,12 @@ function TrackLabelsPanel({
 													}
 												/>
 											)}
+											{track.type === "text" && track.captionSource && (
+												<CaptionTrackSettingsButton
+													key={`${track.id}:${track.captionSource.settings.wordsPerRow}:${track.captionSource.settings.rows}`}
+													track={track}
+												/>
+											)}
 											<TrackIcon track={track} />
 										</div>
 										{expandedRows.length > 0 && (
@@ -896,6 +922,153 @@ function TimelineGutter({
 	return (
 		// eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- spatial gesture surface (empty space below tracks); clicks here clear selection. Keyboard control is global timeline shortcuts.
 		<div className="flex-1" onMouseDown={onMouseDown} onClick={onClick} />
+	);
+}
+
+function buildCaptionElementsForTrack({
+	track,
+	settings,
+	canvasSize,
+}: {
+	track: TextTrack;
+	settings: CaptionLayoutSettings;
+	canvasSize: { width: number; height: number };
+}): TextTrack["elements"] {
+	if (!track.captionSource) return track.elements;
+	const captions = buildSubtitleCuesFromWords({
+		words: track.captionSource.words,
+		settings,
+	});
+	return captions.map((caption, index) => ({
+		...buildSubtitleTextElement({ index, caption, canvasSize }),
+		id: crypto.randomUUID(),
+	}));
+}
+
+function updateCaptionTrackInTracks({
+	tracks,
+	trackId,
+	settings,
+	canvasSize,
+}: {
+	tracks: SceneTracks;
+	trackId: string;
+	settings: CaptionLayoutSettings;
+	canvasSize: { width: number; height: number };
+}): SceneTracks {
+	return {
+		...tracks,
+		overlay: tracks.overlay.map((track) => {
+			if (track.id !== trackId || track.type !== "text" || !track.captionSource) {
+				return track;
+			}
+			return {
+				...track,
+				elements: buildCaptionElementsForTrack({
+					track,
+					settings,
+					canvasSize,
+				}),
+				captionSource: {
+					...track.captionSource,
+					settings,
+				},
+			};
+		}),
+	};
+}
+
+function CaptionTrackSettingsButton({ track }: { track: TextTrack }) {
+	const editor = useEditor();
+	const [draft, setDraft] = useState(() =>
+		normalizeCaptionLayoutSettings({
+			settings: track.captionSource?.settings,
+		}),
+	);
+
+	if (!track.captionSource) return null;
+
+	const applySettings = () => {
+		const settings = normalizeCaptionLayoutSettings({ settings: draft });
+		const activeScene = editor.scenes.getActiveSceneOrNull();
+		if (!activeScene) return;
+		const before = activeScene.tracks;
+		const after = updateCaptionTrackInTracks({
+			tracks: before,
+			trackId: track.id,
+			settings,
+			canvasSize: editor.project.getActive().settings.canvasSize,
+		});
+		editor.command.execute({
+			command: new TracksSnapshotCommand({ before, after }),
+		});
+	};
+
+	const updateDraft = ({
+		key,
+		value,
+	}: {
+		key: keyof CaptionLayoutSettings;
+		value: string;
+	}) => {
+		setDraft((current) =>
+			normalizeCaptionLayoutSettings({
+				settings: {
+					...current,
+					[key]: Number(value),
+				},
+			}),
+		);
+	};
+
+	return (
+		<Popover>
+			<PopoverTrigger asChild>
+				<Button
+					type="button"
+					variant="text"
+					size="icon"
+					className="text-muted-foreground size-5 p-0 hover:text-foreground"
+					aria-label="Caption settings"
+				>
+					<HugeiconsIcon icon={Settings05Icon} className="size-4" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent side="right" align="center" className="w-56 space-y-3">
+				<div className="space-y-1.5">
+					<span className="text-muted-foreground text-xs">Words per row</span>
+					<Input
+						type="number"
+						min={1}
+						max={12}
+						size="sm"
+						value={draft.wordsPerRow}
+						onChange={(event) =>
+							updateDraft({
+								key: "wordsPerRow",
+								value: event.target.value,
+							})
+						}
+					/>
+				</div>
+				<div className="space-y-1.5">
+					<span className="text-muted-foreground text-xs">Rows</span>
+					<Input
+						type="number"
+						min={1}
+						max={4}
+						size="sm"
+						value={draft.rows}
+						onChange={(event) =>
+							updateDraft({ key: "rows", value: event.target.value })
+						}
+					/>
+				</div>
+				<Button type="button" size="sm" className="w-full" onClick={applySettings}>
+					Apply
+				</Button>
+			</PopoverContent>
+		</Popover>
 	);
 }
 

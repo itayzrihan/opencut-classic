@@ -8,9 +8,16 @@ export interface TranscriptionSegment {
 	end: number;
 }
 
+export interface TranscriptionWord {
+	text: string;
+	start: number;
+	end: number;
+}
+
 export interface TranscriptionResult {
 	text: string;
 	segments: TranscriptionSegment[];
+	words?: TranscriptionWord[];
 	language: string;
 }
 

@@ -19,6 +19,17 @@ interface WhisperSegment {
 		from?: number;
 		to?: number;
 	};
+	tokens?: Array<{
+		text?: string;
+		timestamps?: {
+			from?: string;
+			to?: string;
+		};
+		offsets?: {
+			from?: number;
+			to?: number;
+		};
+	}>;
 }
 
 const DEFAULT_BINARY_PATHS = ["whisper-cli"];
@@ -48,6 +59,25 @@ const whisperJsonSchema = z.object({
 						from: z.number().optional(),
 						to: z.number().optional(),
 					})
+					.optional(),
+				tokens: z
+					.array(
+						z.object({
+							text: z.string().optional(),
+							timestamps: z
+								.object({
+									from: z.string().optional(),
+									to: z.string().optional(),
+								})
+								.optional(),
+							offsets: z
+								.object({
+									from: z.number().optional(),
+									to: z.number().optional(),
+								})
+								.optional(),
+						}),
+					)
 					.optional(),
 			}),
 		)
@@ -79,6 +109,93 @@ function segmentStart(segment: WhisperSegment) {
 function segmentEnd(segment: WhisperSegment) {
 	if (typeof segment.offsets?.to === "number") return segment.offsets.to / 1000;
 	return parseTimestamp(segment.timestamps?.to);
+}
+
+function tokenStart({
+	token,
+	fallback,
+}: {
+	token: NonNullable<WhisperSegment["tokens"]>[number];
+	fallback: number;
+}) {
+	if (typeof token.offsets?.from === "number") return token.offsets.from / 1000;
+	return parseTimestamp(token.timestamps?.from) || fallback;
+}
+
+function tokenEnd({
+	token,
+	fallback,
+}: {
+	token: NonNullable<WhisperSegment["tokens"]>[number];
+	fallback: number;
+}) {
+	if (typeof token.offsets?.to === "number") return token.offsets.to / 1000;
+	return parseTimestamp(token.timestamps?.to) || fallback;
+}
+
+function cleanTokenText(text: string) {
+	return text.replace(/\[_BEG_\]|\[_TT_\d+\]|\[_EOT_\]|\[_SOLM_\]|\[_PREV_\]|\[_NOT_\]/g, "");
+}
+
+function isPunctuationOnly(text: string) {
+	return /^[\s.,!?;:()[\]{}"'`\-–—…]+$/.test(text);
+}
+
+function buildWords({ segments }: { segments: WhisperSegment[] }) {
+	const words: Array<{ text: string; start: number; end: number }> = [];
+
+	for (const segment of segments) {
+		const segmentStartTime = segmentStart(segment);
+		const segmentEndTime = segmentEnd(segment);
+		let current: { text: string; start: number; end: number } | null = null;
+
+		for (const token of segment.tokens || []) {
+			const raw = cleanTokenText(token.text || "");
+			if (!raw.trim()) continue;
+
+			const start = tokenStart({ token, fallback: segmentStartTime });
+			const end = tokenEnd({ token, fallback: segmentEndTime });
+			const hasLeadingSpace = /^\s/.test(raw);
+			const piece = raw.replace(/\s+/g, " ").trim();
+			if (!piece) continue;
+
+			if (isPunctuationOnly(piece)) {
+				if (current) {
+					current.text += piece;
+					current.end = Math.max(current.end, end);
+				}
+				continue;
+			}
+
+			if (!current || hasLeadingSpace) {
+				if (current) words.push(current);
+				current = { text: piece, start, end: Math.max(end, start + 0.001) };
+				continue;
+			}
+
+			current.text += piece;
+			current.end = Math.max(current.end, end);
+		}
+
+		if (current) {
+			words.push(current);
+			continue;
+		}
+
+		const fallbackWords = (segment.text || "").trim().split(/\s+/).filter(Boolean);
+		if (fallbackWords.length === 0) continue;
+		const duration = Math.max(0.1, segmentEndTime - segmentStartTime);
+		const wordDuration = duration / fallbackWords.length;
+		fallbackWords.forEach((text, index) => {
+			words.push({
+				text,
+				start: segmentStartTime + index * wordDuration,
+				end: segmentStartTime + (index + 1) * wordDuration,
+			});
+		});
+	}
+
+	return words;
 }
 
 function runProcess({
@@ -182,10 +299,12 @@ export async function POST(request: NextRequest) {
 				end: segmentEnd(segment),
 			}))
 			.filter((segment) => segment.text && segment.end > segment.start);
+		const words = buildWords({ segments: raw.transcription || [] });
 
 		return NextResponse.json({
 			text: segments.map((segment) => segment.text).join(" "),
 			segments,
+			words,
 			language,
 			source: "whisper.cpp",
 			model: modelPath,

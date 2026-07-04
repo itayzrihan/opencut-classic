@@ -2,6 +2,8 @@ import type { ElementAnimations } from "@/animation/types";
 import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { ParamValues } from "@/params";
+import type { CaptionLayoutSettings } from "@/subtitles/caption-layout";
+import type { TranscriptionWord } from "@/transcription/types";
 import type { MediaTime } from "@/wasm";
 
 export type ElementRef = {
@@ -44,6 +46,10 @@ export interface TextTrack extends BaseTrack {
 	type: "text";
 	elements: TextElement[];
 	hidden: boolean;
+	captionSource?: {
+		words: TranscriptionWord[];
+		settings: CaptionLayoutSettings;
+	};
 }
 
 export interface AudioTrack extends BaseTrack {

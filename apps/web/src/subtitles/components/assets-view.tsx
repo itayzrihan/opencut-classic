@@ -17,7 +17,11 @@ import type {
 	TranscriptionLanguage,
 	TranscriptionResult,
 } from "@/transcription/types";
-import { buildCaptionChunks } from "@/transcription/caption";
+import {
+	DEFAULT_CAPTION_LAYOUT,
+	buildCaptionChunksFromSegments,
+	buildCaptionChunksFromWords,
+} from "@/subtitles/caption-layout";
 import { insertCaptionChunksAsTextTrack } from "@/subtitles/insert";
 import { parseSubtitleFile } from "@/subtitles/parse";
 import { Spinner } from "@/components/ui/spinner";
@@ -71,6 +75,15 @@ const transcriptionResultSchema = z.object({
 			end: z.number(),
 		}),
 	),
+	words: z
+		.array(
+			z.object({
+				text: z.string(),
+				start: z.number(),
+				end: z.number(),
+			}),
+		)
+		.optional(),
 	language: z.string(),
 });
 
@@ -109,10 +122,18 @@ export function Captions() {
 
 	const insertCaptions = ({
 		captions,
+		captionSource,
 	}: {
 		captions: CaptionChunk[];
+		captionSource?: Parameters<
+			typeof insertCaptionChunksAsTextTrack
+		>[0]["captionSource"];
 	}): boolean => {
-		const trackId = insertCaptionChunksAsTextTrack({ editor, captions });
+		const trackId = insertCaptionChunksAsTextTrack({
+			editor,
+			captions,
+			captionSource,
+		});
 		return trackId !== null;
 	};
 
@@ -146,9 +167,25 @@ export function Captions() {
 			);
 
 			dispatch({ type: "update_step", step: "Generating captions..." });
-			const captionChunks = buildCaptionChunks({ segments: result.segments });
+			const captionSettings = { ...DEFAULT_CAPTION_LAYOUT };
+			const captionChunks = result.words?.length
+				? buildCaptionChunksFromWords({
+						words: result.words,
+						settings: captionSettings,
+					})
+				: buildCaptionChunksFromSegments({
+						segments: result.segments,
+						settings: captionSettings,
+					});
 
-			if (!insertCaptions({ captions: captionChunks })) {
+			if (
+				!insertCaptions({
+					captions: captionChunks,
+					captionSource: result.words?.length
+						? { words: result.words, settings: captionSettings }
+						: undefined,
+				})
+			) {
 				dispatch({ type: "fail", error: "No captions were generated" });
 				return;
 			}
