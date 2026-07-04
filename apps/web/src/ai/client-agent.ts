@@ -199,11 +199,11 @@ function parseToolArguments(
 		return {};
 	}
 	if (typeof value === "object") {
-		return value;
+		return isRecord(value) ? value : {};
 	}
 	try {
 		const parsed: unknown = JSON.parse(value);
-		return parsed && typeof parsed === "object" ? parsed : {};
+		return isRecord(parsed) ? parsed : {};
 	} catch {
 		return {};
 	}
@@ -223,5 +223,5 @@ function isResponsesApiResult(value: unknown): value is ResponsesApiResult {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

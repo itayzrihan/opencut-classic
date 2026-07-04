@@ -1,6 +1,11 @@
 import type { EditorCore } from "@/core";
 import { getVisibleElementsWithBounds } from "@/preview/element-bounds";
-import type { ElementRef, TrackType } from "@/timeline";
+import type {
+	ElementRef,
+	OverlayTrack,
+	TextTrack,
+	TrackType,
+} from "@/timeline";
 import type { AiTimelineRange, AiToolCall, AiToolDefinition } from "./types";
 import {
 	buildTimelineContextIndex,
@@ -285,14 +290,12 @@ export function buildTimelineContextPrompt({
 	if (includeCaptions) {
 		parts.push(
 			`Caption tracks: ${JSON.stringify(
-				scene.tracks.overlay
-					.filter((track) => track.type === "text" && track.captionSource)
-					.map((track) => ({
-						trackId: track.id,
-						name: track.name,
-						wordCount: track.captionSource?.words.length ?? 0,
-						settings: track.captionSource?.settings,
-					})),
+				scene.tracks.overlay.filter(isGeneratedCaptionTrack).map((track) => ({
+					trackId: track.id,
+					name: track.name,
+					wordCount: track.captionSource.words.length,
+					settings: track.captionSource.settings,
+				})),
 			)}`,
 		);
 	}
@@ -432,6 +435,14 @@ function isTrackType(value: unknown): value is TrackType {
 		value === "graphic" ||
 		value === "effect"
 	);
+}
+
+function isGeneratedCaptionTrack(
+	track: OverlayTrack,
+): track is TextTrack & {
+	captionSource: NonNullable<TextTrack["captionSource"]>;
+} {
+	return track.type === "text" && track.captionSource !== undefined;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {

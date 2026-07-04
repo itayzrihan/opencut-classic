@@ -10,6 +10,12 @@ export interface FreeformPathPoint {
 	outY: number;
 }
 
+const HANDLE_EPSILON = 1e-9;
+
+function isZeroHandle({ x, y }: { x: number; y: number }): boolean {
+	return Math.abs(x) <= HANDLE_EPSILON && Math.abs(y) <= HANDLE_EPSILON;
+}
+
 function isFreeformPathPoint(value: unknown): value is FreeformPathPoint {
 	if (!value || typeof value !== "object") {
 		return false;
@@ -566,6 +572,25 @@ export function insertPointIntoFreeformSegment({
 		y: endPoint.y + endPoint.inY,
 	};
 	const p3 = { x: endPoint.x, y: endPoint.y };
+
+	if (
+		isZeroHandle({ x: startPoint.outX, y: startPoint.outY }) &&
+		isZeroHandle({ x: endPoint.inX, y: endPoint.inY })
+	) {
+		const splitPoint = lerpPoint({ a: p0, b: p3, t: clampedT });
+		const nextPoints = [...points];
+		nextPoints.splice(indices.endIndex, 0, {
+			id: pointId,
+			x: splitPoint.x,
+			y: splitPoint.y,
+			inX: 0,
+			inY: 0,
+			outX: 0,
+			outY: 0,
+		});
+		return nextPoints;
+	}
+
 	const p01 = lerpPoint({ a: p0, b: p1, t: clampedT });
 	const p12 = lerpPoint({ a: p1, b: p2, t: clampedT });
 	const p23 = lerpPoint({ a: p2, b: p3, t: clampedT });

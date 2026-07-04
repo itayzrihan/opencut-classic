@@ -1,7 +1,6 @@
-import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import type { TTimelineViewState } from "@/project/types";
 import type { BlendMode, Transform } from "@/rendering";
-import { ZERO_MEDIA_TIME } from "@/wasm";
+import { mediaTime, TICKS_PER_SECOND, ZERO_MEDIA_TIME } from "@/wasm";
 import type { TextElement } from "./types";
 
 const defaultTransform: Transform = {
@@ -17,6 +16,7 @@ const defaultVolume = 0;
 
 const defaultTextLetterSpacing = 0;
 const defaultTextLineHeight = 1.2;
+const defaultNewElementDuration = mediaTime({ ticks: 5 * TICKS_PER_SECOND });
 
 const defaultTextBackground = {
 	enabled: false,
@@ -31,7 +31,7 @@ const defaultTextBackground = {
 const defaultTextElement: Omit<TextElement, "id"> = {
 	type: "text",
 	name: "Text",
-	duration: DEFAULT_NEW_ELEMENT_DURATION,
+	duration: defaultNewElementDuration,
 	startTime: ZERO_MEDIA_TIME,
 	trimStart: ZERO_MEDIA_TIME,
 	trimEnd: ZERO_MEDIA_TIME,

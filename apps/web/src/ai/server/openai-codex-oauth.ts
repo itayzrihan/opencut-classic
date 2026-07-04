@@ -230,7 +230,7 @@ export async function getOpenAIOAuthStatus({
 				},
 			},
 			credentials: activeCredentials,
-			refreshedCredentials,
+			...(refreshedCredentials ? { refreshedCredentials } : {}),
 		};
 	} catch (error) {
 		return {

@@ -19,19 +19,37 @@ export type TextCanvasContext =
 	| CanvasRenderingContext2D
 	| OffscreenCanvasRenderingContext2D;
 
+export interface TextMeasurementContext {
+	font: string;
+	textBaseline: CanvasTextBaseline;
+	letterSpacing?: string;
+	save(): void;
+	restore(): void;
+	measureText(text: string): TextMetrics;
+}
+
+export type TextLayoutMeasurementContext =
+	| TextCanvasContext
+	| TextMeasurementContext;
+
 const TEXT_DECORATION_THICKNESS_RATIO = 0.07;
 const STRIKETHROUGH_VERTICAL_RATIO = 0.35;
+
+function hasLetterSpacing(
+	ctx: TextLayoutMeasurementContext,
+): ctx is TextLayoutMeasurementContext & { letterSpacing: string } {
+	return "letterSpacing" in ctx && typeof ctx.letterSpacing === "string";
+}
 
 export function setCanvasLetterSpacing({
 	ctx,
 	letterSpacingPx,
 }: {
-	ctx: TextCanvasContext;
+	ctx: TextLayoutMeasurementContext;
 	letterSpacingPx: number;
 }): void {
-	if ("letterSpacing" in ctx) {
-		(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing =
-			`${letterSpacingPx}px`;
+	if (hasLetterSpacing(ctx)) {
+		ctx.letterSpacing = `${letterSpacingPx}px`;
 	}
 }
 

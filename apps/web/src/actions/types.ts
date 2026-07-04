@@ -1,5 +1,5 @@
 import type { MutableRefObject } from "react";
-import type { TAction } from "./definitions";
+import { ACTIONS, type TAction } from "./definitions";
 
 export type { TAction };
 
@@ -42,3 +42,21 @@ export type TActionHandlerOptions =
 	| MutableRefObject<boolean>
 	| boolean
 	| undefined;
+
+const ACTIONS_WITH_OPTIONAL_ARGS = new Set<string>([
+	"seek-forward",
+	"seek-backward",
+	"jump-forward",
+	"jump-backward",
+]);
+
+export function isAction(value: string): value is TAction {
+	return Object.hasOwn(ACTIONS, value);
+}
+
+export function isActionWithOptionalArgs(
+	value: string,
+): value is TActionWithOptionalArgs {
+	if (!isAction(value)) return false;
+	return ACTIONS_WITH_OPTIONAL_ARGS.has(value) || !("args" in ACTIONS[value]);
+}

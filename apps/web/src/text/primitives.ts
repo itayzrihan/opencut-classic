@@ -1,4 +1,8 @@
-import type { TextCanvasContext, TextBlockMeasurement } from "@/text/layout";
+import type {
+	TextBlockMeasurement,
+	TextCanvasContext,
+	TextLayoutMeasurementContext,
+} from "@/text/layout";
 import { DEFAULTS } from "@/timeline/defaults";
 import { clamp } from "@/utils/math";
 import { CORNER_RADIUS_MAX, CORNER_RADIUS_MIN } from "./background";
@@ -53,7 +57,11 @@ export interface ResolvedTextBackgroundLike {
 	cornerRadius: number;
 }
 
-export function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
+export function quoteFontFamily({
+	fontFamily,
+}: {
+	fontFamily: string;
+}): string {
 	return `"${fontFamily.replace(/"/g, '\\"')}"`;
 }
 
@@ -110,7 +118,7 @@ export function measureTextLayout({
 }: {
 	text: TextLayoutParams;
 	canvasHeight: number;
-	ctx: TextCanvasContext;
+	ctx: TextLayoutMeasurementContext;
 }): MeasuredTextLayout {
 	const resolvedLayout = resolveTextLayout({ text, canvasHeight });
 	const lines = text.content.split("\n");

@@ -12,18 +12,8 @@ import type {
 	VideoElement,
 	VideoTrack,
 } from "@/timeline";
-import type { Transform } from "@/rendering";
 import { resolveTrackPlacement } from "@/timeline/placement";
-import { mediaTime, ZERO_MEDIA_TIME } from "@/wasm";
-
-function buildTransform(): Transform {
-	return {
-		scaleX: 1,
-		scaleY: 1,
-		position: { x: 0, y: 0 },
-		rotate: 0,
-	};
-}
+import { mediaTime, roundMediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 
 type TestElement = AudioElement | GraphicElement | TextElement | VideoElement;
 
@@ -241,8 +231,8 @@ function buildTimeSpan({
 	excludeElementId?: string;
 }) {
 	return {
-		startTime: mediaTime({ ticks: startTime }),
-		duration: mediaTime({ ticks: duration }),
+		startTime: roundMediaTime({ time: startTime }),
+		duration: roundMediaTime({ time: duration }),
 		excludeElementId,
 	};
 }
