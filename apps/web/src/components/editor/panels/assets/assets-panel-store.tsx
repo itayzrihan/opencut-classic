@@ -11,12 +11,13 @@ import {
 	TextIcon,
 	Settings01Icon,
 	SlidersHorizontalIcon,
-	ColorsIcon,
+	AiChat02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 export const TAB_KEYS = [
 	"media",
+	"ai",
 	"sounds",
 	"text",
 	"stickers",
@@ -29,16 +30,22 @@ export const TAB_KEYS = [
 
 export type Tab = (typeof TAB_KEYS)[number];
 
-const createHugeiconsIcon =
-	({ icon }: { icon: IconSvgElement }) =>
-	({ className }: { className?: string }) => (
+const createHugeiconsIcon = ({ icon }: { icon: IconSvgElement }) => {
+	const AssetPanelIcon = ({ className }: { className?: string }) => (
 		<HugeiconsIcon icon={icon} className={className} />
 	);
+	AssetPanelIcon.displayName = "AssetPanelIcon";
+	return AssetPanelIcon;
+};
 
 export const tabs = {
 	media: {
 		icon: createHugeiconsIcon({ icon: Folder03Icon }),
 		label: "Media",
+	},
+	ai: {
+		icon: createHugeiconsIcon({ icon: AiChat02Icon }),
+		label: "AI",
 	},
 	sounds: {
 		icon: createHugeiconsIcon({ icon: HeadphonesIcon }),

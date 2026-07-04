@@ -6,10 +6,9 @@ import { SceneExporter } from "@/services/renderer/scene-exporter";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { formatTimecode } from "opencut-wasm";
-import { frameRateToFloat } from "@/fps/utils";
 import { downloadBlob } from "@/utils/browser";
 
-type SnapshotResult =
+export type SnapshotResult =
 	| { success: true; blob: Blob; filename: string }
 	| { success: false; error: string };
 
@@ -37,6 +36,10 @@ export class RendererManager {
 
 	getRenderTree(): RootNode | null {
 		return this.renderTree;
+	}
+
+	async captureSnapshot(): Promise<SnapshotResult> {
+		return this.createSnapshot();
 	}
 
 	async saveSnapshot(): Promise<{ success: boolean; error?: string }> {
@@ -122,7 +125,10 @@ export class RendererManager {
 				return { success: false, error: "Failed to create image" };
 			}
 
-			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(/:/g, "-");
+			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(
+				/:/g,
+				"-",
+			);
 			const safeName =
 				activeProject.metadata.name.replace(/[<>:"/\\|?*]/g, "-").trim() ||
 				"snapshot";
