@@ -9,6 +9,8 @@ import {
 	searchElements,
 	searchLayers,
 } from "@/ai/timeline-context";
+import { buildTimelineContextPrompt } from "@/ai/timeline-tools";
+import type { EditorCore } from "@/core";
 
 const t = (time: number) => {
 	// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- test fixtures use integer ticks.
@@ -111,5 +113,40 @@ describe("timeline context index", () => {
 		expect(searchElements({ index, query: "world" }).items[0]?.elementId).toBe(
 			"word-2",
 		);
+	});
+
+	test("keeps active range prompt compact and points the agent to tools", () => {
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- test fixture only implements the editor APIs this prompt builder reads.
+		const editor = {
+			scenes: {
+				getActiveSceneOrNull: () => ({
+					bookmarks: [],
+					tracks,
+				}),
+			},
+			project: {
+				getActiveOrNull: () => ({
+					metadata: { name: "Prompt Smoke" },
+				}),
+			},
+			media: {
+				getAssets: () => [],
+			},
+			playback: {
+				getCurrentTime: () => t(0),
+			},
+		} as unknown as EditorCore;
+
+		const prompt = buildTimelineContextPrompt({
+			editor,
+			range: { startTime: t(250), endTime: t(360) },
+			includeActiveRange: true,
+		});
+
+		expect(prompt).toContain("Timeline summary:");
+		expect(prompt).toContain("Active range summary: 2 layers and 2 elements");
+		expect(prompt).toContain("Use timeline.search_elements");
+		expect(prompt).not.toContain("Range elements:");
+		expect(prompt).not.toContain('"elementId":"word-2"');
 	});
 });
