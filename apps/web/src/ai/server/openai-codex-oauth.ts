@@ -17,7 +17,8 @@ import { webEnv } from "@/env/web";
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const SCOPE = "openid profile email offline_access";
-const OAUTH_TOKEN_COOKIE = "opencut_openai_oauth_token";
+const LEGACY_OAUTH_TOKEN_COOKIE = "opencut_openai_oauth_token";
+const OAUTH_SESSION_COOKIE = "opencut_openai_oauth_session";
 const CALLBACK_PORT = 1455;
 const CALLBACK_PATH = "/auth/callback";
 const OAUTH_FLOW_MAX_AGE_MS = 10 * 60 * 1000;
@@ -58,6 +59,19 @@ interface OAuthRuntimeState {
 	serverStart: Promise<void> | null;
 	flows: Map<string, OAuthState>;
 	handoffs: Map<string, OAuthHandoff>;
+	credentialSessions: Map<string, OAuthCredentialSession>;
+}
+
+interface OAuthCredentialSession {
+	credentials: OpenAICodexCredentials;
+	sessionBinding: string;
+	createdAt: number;
+	updatedAt: number;
+}
+
+interface OAuthSessionCookie {
+	sessionId: string;
+	sessionBinding: string;
 }
 
 export interface OAuthStatus {
@@ -201,11 +215,12 @@ export async function getOpenAIOAuthStatus({
 	credentials?: OpenAICodexCredentials;
 	refreshedCredentials?: OpenAICodexCredentials;
 }> {
-	const credentials = readCredentialsCookie({ request });
-	if (!credentials) {
+	const credentialSession = readCredentialSession({ request });
+	if (!credentialSession) {
 		return { status: { authenticated: false, identity: null } };
 	}
 
+	const { sessionId, credentials } = credentialSession;
 	if (credentials.sessionBinding !== getSessionBinding({ request })) {
 		return {
 			status: {
@@ -219,6 +234,9 @@ export async function getOpenAIOAuthStatus({
 	try {
 		const refreshedCredentials = await refreshIfNeeded(credentials);
 		const activeCredentials = refreshedCredentials ?? credentials;
+		if (refreshedCredentials) {
+			updateCredentialSession({ sessionId, credentials: refreshedCredentials });
+		}
 		return {
 			status: {
 				authenticated: true,
@@ -230,7 +248,6 @@ export async function getOpenAIOAuthStatus({
 				},
 			},
 			credentials: activeCredentials,
-			...(refreshedCredentials ? { refreshedCredentials } : {}),
 		};
 	} catch (error) {
 		return {
@@ -253,20 +270,31 @@ export function setCredentialsCookie({
 	response: NextResponse;
 	credentials: OpenAICodexCredentials;
 }): void {
+	const sessionId = storeCredentialSession({ credentials });
 	setSealedCookie({
 		response,
-		name: OAUTH_TOKEN_COOKIE,
-		value: credentials,
+		name: OAUTH_SESSION_COOKIE,
+		value: { sessionId, sessionBinding: credentials.sessionBinding },
 		maxAge: TOKEN_MAX_AGE_SECONDS,
 	});
+	clearCookie({ response, name: LEGACY_OAUTH_TOKEN_COOKIE });
 }
 
 export function clearOpenAICredentials({
 	response,
+	request,
 }: {
 	response: NextResponse;
+	request?: NextRequest;
 }): void {
-	clearCookie({ response, name: OAUTH_TOKEN_COOKIE });
+	if (request) {
+		const sessionCookie = readSessionCookie({ request });
+		if (sessionCookie) {
+			getOAuthRuntime().credentialSessions.delete(sessionCookie.sessionId);
+		}
+	}
+	clearCookie({ response, name: OAUTH_SESSION_COOKIE });
+	clearCookie({ response, name: LEGACY_OAUTH_TOKEN_COOKIE });
 }
 
 export async function forwardCodexResponsesRequest({
@@ -379,8 +407,46 @@ function getOAuthRuntime(): OAuthRuntimeState {
 		serverStart: null,
 		flows: new Map(),
 		handoffs: new Map(),
+		credentialSessions: new Map(),
 	};
+	globalThis.__opencutOpenAIOAuthRuntime.credentialSessions ??= new Map();
 	return globalThis.__opencutOpenAIOAuthRuntime;
+}
+
+function storeCredentialSession({
+	credentials,
+}: {
+	credentials: OpenAICodexCredentials;
+}): string {
+	const runtime = getOAuthRuntime();
+	cleanupOAuthRuntime(runtime);
+	const sessionId = randomUUID();
+	const now = Date.now();
+	runtime.credentialSessions.set(sessionId, {
+		credentials,
+		sessionBinding: credentials.sessionBinding,
+		createdAt: now,
+		updatedAt: now,
+	});
+	return sessionId;
+}
+
+function updateCredentialSession({
+	sessionId,
+	credentials,
+}: {
+	sessionId: string;
+	credentials: OpenAICodexCredentials;
+}): void {
+	const runtime = getOAuthRuntime();
+	const previous = runtime.credentialSessions.get(sessionId);
+	if (!previous) return;
+	runtime.credentialSessions.set(sessionId, {
+		...previous,
+		credentials,
+		sessionBinding: credentials.sessionBinding,
+		updatedAt: Date.now(),
+	});
 }
 
 async function ensureOAuthCallbackServer(
@@ -525,6 +591,11 @@ function cleanupOAuthRuntime(runtime: OAuthRuntimeState): void {
 	for (const [handoffId, handoff] of runtime.handoffs) {
 		if (now - handoff.createdAt > OAUTH_HANDOFF_MAX_AGE_MS) {
 			runtime.handoffs.delete(handoffId);
+		}
+	}
+	for (const [sessionId, session] of runtime.credentialSessions) {
+		if (now - session.updatedAt > TOKEN_MAX_AGE_SECONDS * 1000) {
+			runtime.credentialSessions.delete(sessionId);
 		}
 	}
 }
@@ -714,13 +785,40 @@ function readSealedCookie({
 	}
 }
 
-function readCredentialsCookie({
+function readSessionCookie({
 	request,
 }: {
 	request: NextRequest;
-}): OpenAICodexCredentials | null {
-	const value = readSealedCookie({ request, name: OAUTH_TOKEN_COOKIE });
-	return isOpenAICodexCredentials(value) ? value : null;
+}): OAuthSessionCookie | null {
+	const value = readSealedCookie({ request, name: OAUTH_SESSION_COOKIE });
+	return isOAuthSessionCookie(value) ? value : null;
+}
+
+function readCredentialSession({
+	request,
+}: {
+	request: NextRequest;
+}): { sessionId: string; credentials: OpenAICodexCredentials } | null {
+	const sessionCookie = readSessionCookie({ request });
+	if (!sessionCookie) return null;
+
+	const sessionBinding = getSessionBinding({ request });
+	if (sessionCookie.sessionBinding !== sessionBinding) {
+		return null;
+	}
+
+	const runtime = getOAuthRuntime();
+	cleanupOAuthRuntime(runtime);
+	const session = runtime.credentialSessions.get(sessionCookie.sessionId);
+	if (!session || session.sessionBinding !== sessionBinding) {
+		return null;
+	}
+
+	session.updatedAt = Date.now();
+	return {
+		sessionId: sessionCookie.sessionId,
+		credentials: session.credentials,
+	};
 }
 
 function clearCookie({
@@ -881,14 +979,10 @@ function isSealedEnvelope(value: unknown): value is {
 	);
 }
 
-function isOpenAICodexCredentials(
-	value: unknown,
-): value is OpenAICodexCredentials {
+function isOAuthSessionCookie(value: unknown): value is OAuthSessionCookie {
 	return (
 		isRecord(value) &&
-		typeof value.access === "string" &&
-		typeof value.refresh === "string" &&
-		typeof value.expires === "number" &&
+		typeof value.sessionId === "string" &&
 		typeof value.sessionBinding === "string"
 	);
 }
@@ -932,4 +1026,6 @@ export const testing = {
 	resolveCodexAuthIdentity,
 	resolveLoopbackRedirectUri,
 	normalizeReturnTo,
+	storeCredentialSession,
+	readSessionCookie,
 };

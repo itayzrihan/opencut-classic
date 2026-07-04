@@ -13,6 +13,8 @@ const chatRequestSchema = z.object({
 	previousResponseId: z.string().optional(),
 });
 
+export const runtime = "nodejs";
+
 export async function POST(request: NextRequest) {
 	const body = await request.json().catch(() => null);
 	const parsed = chatRequestSchema.safeParse(body);

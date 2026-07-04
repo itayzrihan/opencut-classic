@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { NextRequest, NextResponse } from "next/server";
 
 function fakeJwt(payload: Record<string, unknown>): string {
 	return [
@@ -66,6 +68,48 @@ describe("OpenAI Codex OAuth helpers", () => {
 		expect(authorizeUrl.searchParams.get("scope")).toBe(
 			"openid profile email offline_access",
 		);
+	});
+
+	test("keeps large OAuth tokens server-side behind a small session cookie", async () => {
+		setRequiredEnv();
+		const { getOpenAIOAuthStatus, setCredentialsCookie } = await import(
+			"@/ai/server/openai-codex-oauth"
+		);
+		const sessionBinding = createHash("sha256")
+			.update("sessionless")
+			.digest("base64url");
+		const response = NextResponse.json({ ok: true });
+
+		setCredentialsCookie({
+			response,
+			credentials: {
+				access: `access-${"a".repeat(8000)}`,
+				refresh: `refresh-${"r".repeat(8000)}`,
+				expires: Date.now() + 300_000,
+				accountId: "acct-large-token",
+				sessionBinding,
+			},
+		});
+
+		const sessionCookie = response.cookies.get(
+			"opencut_openai_oauth_session",
+		)?.value;
+		expect(typeof sessionCookie).toBe("string");
+		expect(sessionCookie?.length).toBeLessThan(700);
+		expect(
+			response.cookies.get("opencut_openai_oauth_token")?.value ?? "",
+		).toBe("");
+
+		const request = new NextRequest("http://localhost:3000/api/ai/oauth/status", {
+			headers: {
+				cookie: `opencut_openai_oauth_session=${sessionCookie}`,
+			},
+		});
+		const result = await getOpenAIOAuthStatus({ request });
+
+		expect(result.status.authenticated).toBe(true);
+		expect(result.status.identity?.accountId).toBe("acct-large-token");
+		expect(result.credentials?.access.startsWith("access-")).toBe(true);
 	});
 });
 
