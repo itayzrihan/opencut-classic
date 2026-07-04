@@ -47,6 +47,12 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import type { DiagnosticSeverity } from "@/diagnostics/types";
 import { TracksSnapshotCommand } from "@/commands";
 import type { SceneTracks, TextElement, TextTrack } from "@/timeline";
@@ -481,6 +487,21 @@ export function Captions() {
 		setCaptionSettings(normalizeCaptionLayoutSettings({ settings: preset.settings }));
 	};
 
+	const renamePreset = ({ presetId }: { presetId: string }) => {
+		const preset = savedPresets.find((item) => item.id === presetId);
+		if (!preset) return;
+		const nextName = window.prompt("Preset name", preset.name);
+		const trimmedName = nextName?.trim();
+		if (!trimmedName) return;
+		setSavedPresets((current) => {
+			const next = current.map((item) =>
+				item.id === presetId ? { ...item, name: trimmedName } : item,
+			);
+			saveSavedCaptionPresets({ presets: next });
+			return next;
+		});
+	};
+
 	const applyCaptionSettings = () => {
 		const activeScene = editor.scenes.getActiveSceneOrNull();
 		if (!activeScene) return;
@@ -824,19 +845,32 @@ export function Captions() {
 							</SectionField>
 						)}
 						{savedPresets.length > 0 && (
-							<SectionField label="Saved preset">
-								<Select onValueChange={(presetId) => loadPreset({ presetId })}>
-									<SelectTrigger>
-										<SelectValue placeholder="Choose saved preset" />
-									</SelectTrigger>
-									<SelectContent>
-										{savedPresets.map((preset) => (
-											<SelectItem key={preset.id} value={preset.id}>
-												{preset.name}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+							<SectionField label="Saved presets">
+								<div className="scrollbar-thin flex max-w-full gap-2 overflow-x-auto pb-1">
+									{savedPresets.map((preset) => (
+										<ContextMenu key={preset.id}>
+											<ContextMenuTrigger asChild>
+												<button
+													type="button"
+													className="bg-accent hover:bg-accent/80 focus-visible:ring-ring flex size-16 shrink-0 items-center justify-center rounded-md border px-1 text-center text-[0.68rem] leading-tight outline-none focus-visible:ring-2"
+													title={preset.name}
+													onClick={() => loadPreset({ presetId: preset.id })}
+												>
+													<span className="line-clamp-3 break-words">
+														{preset.name}
+													</span>
+												</button>
+											</ContextMenuTrigger>
+											<ContextMenuContent>
+												<ContextMenuItem
+													onSelect={() => renamePreset({ presetId: preset.id })}
+												>
+													Rename
+												</ContextMenuItem>
+											</ContextMenuContent>
+										</ContextMenu>
+									))}
+								</div>
 							</SectionField>
 						)}
 						<SectionField label="Word animation">
