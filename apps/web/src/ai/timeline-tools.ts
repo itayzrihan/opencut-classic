@@ -231,6 +231,7 @@ export function buildAiSystemPrompt(): string {
 		"Never invent trackId, elementId, effectId, or keyframeId values. Use ids from the timeline document or fetch them with tools first.",
 		"Keep edits inside the selected range when a range is active.",
 		"Supported operations: update_element, insert_text_element, trim_element, move_element, split_element, delete_element, add_clip_effect, update_clip_effect_params, upsert_keyframe, remove_keyframe.",
+		'For update_element, put element changes under patch, for example {"type":"update_element","trackId":"...","elementId":"...","patch":{"params":{"content":"New text"}}}.',
 		"For insert_text_element, provide content, startTime, duration, and optional trackId, name, params, and reason.",
 		"You may call timeline.propose_edit_plan to validate uncertain plans, but do not call tools just to restate information already in OPENCUT_TIMELINE_DOCUMENT.",
 		'Your final answer must be JSON only and match this shape: {"title":"...","summary":"...","operations":[],"notes":[]}.',

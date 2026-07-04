@@ -127,7 +127,7 @@ export function validateAiEditPlan({
 	tracks: SceneTracks;
 	range?: AiTimelineRange | null;
 }): ValidateAiEditPlanResult {
-	const parsed = aiEditPlanSchema.safeParse(value);
+	const parsed = aiEditPlanSchema.safeParse(normalizeAiEditPlanInput(value));
 	if (!parsed.success) {
 		return {
 			success: false,
@@ -167,34 +167,98 @@ export function extractAiEditPlanFromText(text: string): unknown | null {
 		return null;
 	}
 
-	if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-		try {
-			return JSON.parse(trimmed);
-		} catch {
-			return null;
-		}
+	const parsedFullText = parseJsonRecursively({ text: trimmed });
+	if (parsedFullText) {
+		return normalizeAiEditPlanInput(parsedFullText);
 	}
 
 	const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
 	if (fenced?.[1]) {
-		try {
-			return JSON.parse(fenced[1]);
-		} catch {
-			return null;
+		const parsedFence = parseJsonRecursively({ text: fenced[1].trim() });
+		if (parsedFence) {
+			return normalizeAiEditPlanInput(parsedFence);
 		}
 	}
 
 	const firstBrace = trimmed.indexOf("{");
 	const lastBrace = trimmed.lastIndexOf("}");
 	if (firstBrace >= 0 && lastBrace > firstBrace) {
-		try {
-			return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
-		} catch {
-			return null;
+		const parsedSlice = parseJsonRecursively({
+			text: trimmed.slice(firstBrace, lastBrace + 1),
+		});
+		if (parsedSlice) {
+			return normalizeAiEditPlanInput(parsedSlice);
 		}
 	}
 
 	return null;
+}
+
+function parseJsonRecursively({
+	text,
+	depth = 0,
+}: {
+	text: string;
+	depth?: number;
+}): unknown | null {
+	if (depth > 2) {
+		return null;
+	}
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (typeof parsed === "string") {
+			return parseJsonRecursively({ text: parsed.trim(), depth: depth + 1 });
+		}
+		return parsed;
+	} catch {
+		return null;
+	}
+}
+
+function normalizeAiEditPlanInput(value: unknown): unknown {
+	if (!isRecord(value)) {
+		return value;
+	}
+	if (!Array.isArray(value.operations)) {
+		return value;
+	}
+	return {
+		...value,
+		operations: value.operations.map(normalizeAiEditOperationInput),
+	};
+}
+
+function normalizeAiEditOperationInput(value: unknown): unknown {
+	if (!isRecord(value) || value.type !== "update_element") {
+		return value;
+	}
+	if (isRecord(value.patch)) {
+		return value;
+	}
+	const params = isRecord(value.params) ? value.params : null;
+	if (params) {
+		return {
+			...value,
+			patch: { params },
+		};
+	}
+	if (typeof value.content === "string") {
+		return {
+			...value,
+			patch: { params: { content: value.content } },
+		};
+	}
+	if (typeof value.text === "string") {
+		return {
+			...value,
+			patch: { params: { content: value.text } },
+		};
+	}
+	return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function getRangeGuardErrors({

@@ -170,6 +170,7 @@ export function AiChatView() {
 		try {
 			applyAiEditPlan({ editor, plan: pendingPlan });
 			setPendingPlan(null);
+			setResponseText("");
 			setMessage("");
 			toast.success("AI edit plan applied");
 		} catch (error) {
@@ -257,7 +258,10 @@ export function AiChatView() {
 					errors={planErrors}
 					isApplying={isApplying}
 					onApply={handleApply}
-					onDiscard={() => setPendingPlan(null)}
+					onDiscard={() => {
+						setPendingPlan(null);
+						setResponseText("");
+					}}
 				/>
 			</div>
 

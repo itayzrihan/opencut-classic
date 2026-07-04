@@ -14,8 +14,8 @@ import type {
 	AiTimelineRange,
 } from "./types";
 
-const DEFAULT_TIMELINE_DOCUMENT_MAX_ELEMENTS = 700;
-const DEFAULT_TIMELINE_DOCUMENT_TEXT_LIMIT = 120;
+const DEFAULT_TIMELINE_DOCUMENT_MAX_ELEMENTS = 220;
+const DEFAULT_TIMELINE_DOCUMENT_TEXT_LIMIT = 90;
 
 export function rangesOverlap({
 	firstStart,

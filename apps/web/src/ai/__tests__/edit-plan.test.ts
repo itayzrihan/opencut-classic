@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { SceneTracks } from "@/timeline";
-import { validateAiEditPlan } from "@/ai/edit-plan";
+import {
+	extractAiEditPlanFromText,
+	validateAiEditPlan,
+} from "@/ai/edit-plan";
 import type { MediaTime } from "@/wasm";
 
 const t = (time: number) => {
@@ -51,6 +54,59 @@ const tracks: SceneTracks = {
 };
 
 describe("AI edit plan validation", () => {
+	test("extracts an edit plan from double-encoded JSON text", () => {
+		const plan = {
+			title: "Update text",
+			summary: "Change two text layers",
+			operations: [
+				{
+					type: "update_element",
+					trackId: "text",
+					elementId: "inside",
+					params: { content: "HELLO" },
+				},
+			],
+		};
+
+		const extracted = extractAiEditPlanFromText(
+			JSON.stringify(JSON.stringify(plan)),
+		);
+
+		expect(extracted).toEqual({
+			...plan,
+			operations: [
+				{
+					...plan.operations[0],
+					patch: { params: { content: "HELLO" } },
+				},
+			],
+		});
+	});
+
+	test("normalizes update-element params shorthand before validation", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Update word",
+				summary: "Change one text element",
+				operations: [
+					{
+						type: "update_element",
+						trackId: "text",
+						elementId: "inside",
+						params: { content: "HELLO" },
+					},
+				],
+			},
+			tracks,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.plan?.operations[0]).toMatchObject({
+			type: "update_element",
+			patch: { params: { content: "HELLO" } },
+		});
+	});
+
 	test("accepts operations inside active range", () => {
 		const result = validateAiEditPlan({
 			value: {

@@ -5,7 +5,7 @@ import type {
 	AiToolCall,
 	AiToolDefinition,
 } from "./types";
-import { extractAiEditPlanFromText } from "./edit-plan";
+import { aiEditPlanSchema, extractAiEditPlanFromText } from "./edit-plan";
 
 export const AI_AGENT_MAX_ITERATIONS = 12;
 const TOOL_OUTPUT_MAX_CHARS = 16_000;
@@ -17,6 +17,7 @@ export interface AiAgentRunOptions {
 	model?: string;
 	signal?: AbortSignal;
 	maxIterations?: number;
+	preferDirectPlan?: boolean;
 	onStep?: (message: string) => void;
 }
 
@@ -43,6 +44,7 @@ export async function runAiAgent({
 	model,
 	signal,
 	maxIterations = AI_AGENT_MAX_ITERATIONS,
+	preferDirectPlan = true,
 	onStep,
 }: AiAgentRunOptions): Promise<AiAgentResult> {
 	let input: unknown[] = messages.map((message) => ({
@@ -50,6 +52,22 @@ export async function runAiAgent({
 		content: message.content,
 	}));
 	let lastText = "";
+	const canTryDirectPlan =
+		preferDirectPlan &&
+		tools.some((tool) => tool.name === "timeline.propose_edit_plan");
+
+	if (canTryDirectPlan) {
+		const directResult = await tryDirectEditPlan({
+			input,
+			model,
+			signal,
+			onStep,
+		});
+		lastText = directResult.text;
+		if (directResult.status !== "fallback") {
+			return directResult;
+		}
+	}
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		if (signal?.aborted) {
@@ -61,7 +79,11 @@ export async function runAiAgent({
 			};
 		}
 
-		onStep?.(`Planning ${iteration}/${maxIterations}`);
+		onStep?.(
+			tools.length > 0
+				? `Inspecting timeline ${iteration}/${maxIterations}`
+				: "Drafting edit plan",
+		);
 		const response = await callAiChatRoute({
 			input,
 			tools: toWireToolDefinitions(tools),
@@ -72,11 +94,13 @@ export async function runAiAgent({
 
 		const toolCalls = getResponseToolCalls(response);
 		if (toolCalls.length === 0) {
-			const extractedPlan = extractAiEditPlanFromText(lastText);
+			const extractedPlan = readAiEditPlanCandidate(
+				extractAiEditPlanFromText(lastText),
+			);
 			return {
 				status: "completed",
 				text: lastText,
-				editPlan: isAiEditPlan(extractedPlan) ? extractedPlan : null,
+				editPlan: extractedPlan,
 				iterations: iteration,
 			};
 		}
@@ -126,6 +150,58 @@ export async function runAiAgent({
 		editPlan: null,
 		iterations: maxIterations,
 		error: `The AI agent reached the ${maxIterations} step limit before returning an edit plan.`,
+	};
+}
+
+async function tryDirectEditPlan({
+	input,
+	model,
+	signal,
+	onStep,
+}: {
+	input: unknown[];
+	model?: string;
+	signal?: AbortSignal;
+	onStep?: (message: string) => void;
+}): Promise<
+	| AiAgentResult
+	| {
+			status: "fallback";
+			text: string;
+	  }
+> {
+	if (signal?.aborted) {
+		return {
+			status: "cancelled",
+			text: "",
+			editPlan: null,
+			iterations: 0,
+		};
+	}
+
+	onStep?.("Drafting edit plan");
+	const response = await callAiChatRoute({
+		input,
+		tools: [],
+		model,
+		signal,
+	});
+	const text = getResponseText(response);
+	const extractedPlan = readAiEditPlanCandidate(
+		extractAiEditPlanFromText(text),
+	);
+	if (extractedPlan) {
+		return {
+			status: "completed",
+			text,
+			editPlan: extractedPlan,
+			iterations: 1,
+		};
+	}
+
+	return {
+		status: "fallback",
+		text,
 	};
 }
 
@@ -283,21 +359,16 @@ function safeJsonStringify(value: unknown): string {
 	}
 }
 
-function isAiEditPlan(value: unknown): value is AiEditPlan {
-	return (
-		isRecord(value) &&
-		typeof value.title === "string" &&
-		typeof value.summary === "string" &&
-		Array.isArray(value.operations)
-	);
+function readAiEditPlanCandidate(value: unknown): AiEditPlan | null {
+	const parsed = aiEditPlanSchema.safeParse(value);
+	return parsed.success ? (parsed.data as AiEditPlan) : null;
 }
 
 function readSuccessfulValidationPlan(value: unknown): AiEditPlan | null {
 	if (!isRecord(value) || value.success !== true) {
 		return null;
 	}
-	const plan = value.plan;
-	return isAiEditPlan(plan) ? plan : null;
+	return readAiEditPlanCandidate(value.plan);
 }
 
 function isResponsesApiResult(value: unknown): value is ResponsesApiResult {
