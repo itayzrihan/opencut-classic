@@ -39,6 +39,8 @@ import {
 	useSelectionScope,
 } from "@/selection";
 import { buildElementFromMedia } from "@/timeline/element-utils";
+import { PodcastSyncDialog } from "@/podcast-sync/components/podcast-sync-dialog";
+import { unnestSceneTracks } from "@/podcast-sync/scene";
 import {
 	type MediaSortKey,
 	type MediaSortOrder,
@@ -47,6 +49,7 @@ import {
 } from "@/components/editor/panels/assets/assets-panel-store";
 import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
+import type { TScene } from "@/timeline";
 import { cn } from "@/utils/ui";
 import {
 	CloudUploadIcon,
@@ -58,11 +61,14 @@ import {
 	Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { Layers2, SplitSquareHorizontal } from "lucide-react";
 
 export function MediaView() {
 	const editor = useEditor();
 	const mediaFiles = useEditor((e) => e.media.getAssets());
 	const activeProject = useEditor((e) => e.project.getActive());
+	const scenes = useEditor((e) => e.scenes.getScenes());
+	const activeScene = useEditor((e) => e.scenes.getActiveSceneOrNull());
 
 	const {
 		mediaViewMode,
@@ -76,6 +82,10 @@ export function MediaView() {
 
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [progress, setProgress] = useState(0);
+	const [podcastSyncAssets, setPodcastSyncAssets] = useState<
+		MediaAsset[] | null
+	>(null);
+	const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
 
 	const processFiles = async ({ files }: { files: File[] }) => {
 		if (!files || files.length === 0) return;
@@ -186,10 +196,55 @@ export function MediaView() {
 	const orderedMediaIds = useMemo(() => {
 		return filteredMediaItems.map((item) => item.id);
 	}, [filteredMediaItems]);
+	const sequenceScenes = useMemo(
+		() => scenes.filter((scene) => !scene.isMain),
+		[scenes],
+	);
+
+	const handleCreatePodcastSync = ({ ids }: { ids: string[] }) => {
+		const selectedAssets = mediaFiles.filter((asset) => ids.includes(asset.id));
+		if (selectedAssets.length === 0) {
+			toast.error("Select media files first");
+			return;
+		}
+		setPodcastSyncAssets(selectedAssets);
+	};
+
+	const handleOpenSequence = async ({ sceneId }: { sceneId: string }) => {
+		try {
+			await editor.scenes.switchToScene({ sceneId });
+		} catch (error) {
+			console.error("Failed to open sequence:", error);
+			toast.error("Failed to open sequence");
+		}
+	};
+
+	const handleUnnestSequence = ({ scene }: { scene: TScene }) => {
+		if (!activeScene) return;
+		if (activeScene.id === scene.id) {
+			toast.error("Open another scene before unnesting this sequence");
+			return;
+		}
+		const tracks = unnestSceneTracks({
+			targetTracks: activeScene.tracks,
+			sourceScene: scene,
+			startTime: editor.playback.getCurrentTime(),
+		});
+		editor.timeline.updateTracks(tracks);
+		toast.success("Sequence unnested into timeline");
+	};
 
 	return (
 		<>
 			<input {...fileInputProps} />
+			<PodcastSyncDialog
+				key={podcastSyncAssets?.map((asset) => asset.id).join(":") ?? "closed"}
+				open={podcastSyncAssets !== null}
+				onOpenChange={(open) => {
+					if (!open) setPodcastSyncAssets(null);
+				}}
+				assets={podcastSyncAssets ?? []}
+			/>
 
 			<PanelView
 				title="Assets"
@@ -202,13 +257,18 @@ export function MediaView() {
 						sortOrder={mediaSortOrder}
 						onSort={handleSort}
 						onImport={openFilePicker}
+						selectedCount={selectedMediaIds.length}
+						onPodcastSync={() =>
+							handleCreatePodcastSync({ ids: selectedMediaIds })
+						}
 					/>
 				}
 				className={cn(isDragOver && "bg-accent/30")}
 				contentClassName="h-full"
 				{...dragProps}
 			>
-				{isDragOver || filteredMediaItems.length === 0 ? (
+				{isDragOver ||
+				(filteredMediaItems.length === 0 && sequenceScenes.length === 0) ? (
 					<MediaDragOverlay
 						isVisible={true}
 						isProcessing={isProcessing}
@@ -221,12 +281,19 @@ export function MediaView() {
 						orderedIds={orderedMediaIds}
 						revealId={highlightMediaId}
 						onRevealComplete={clearHighlight}
+						onSelectionChange={(selection) =>
+							setSelectedMediaIds(selection.selectedIds)
+						}
 					>
 						<MediaScopeRegistrar />
 						<MediaItemList
 							items={filteredMediaItems}
+							sequences={sequenceScenes}
 							mode={mediaViewMode}
 							onRemove={handleRemove}
+							onCreatePodcastSync={handleCreatePodcastSync}
+							onOpenSequence={handleOpenSequence}
+							onUnnestSequence={handleUnnestSequence}
 						/>
 					</SelectableSurface>
 				)}
@@ -304,6 +371,7 @@ function MediaItemWithContextMenu({
 	item,
 	children,
 	onRemove,
+	onCreatePodcastSync,
 }: {
 	item: MediaAsset;
 	children: React.ReactNode;
@@ -314,6 +382,7 @@ function MediaItemWithContextMenu({
 		event: React.MouseEvent;
 		ids: string[];
 	}) => void;
+	onCreatePodcastSync: ({ ids }: { ids: string[] }) => void;
 }) {
 	const { isSelected, selectedIds } = useSelection();
 	const idsToDelete = isSelected(item.id) ? selectedIds : [item.id];
@@ -325,6 +394,11 @@ function MediaItemWithContextMenu({
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem>Export clips</ContextMenuItem>
+				<ContextMenuItem
+					onClick={() => onCreatePodcastSync({ ids: idsToDelete })}
+				>
+					Create podcast sync sequence
+				</ContextMenuItem>
 				<ContextMenuItem
 					variant="destructive"
 					onClick={(event: React.MouseEvent<HTMLDivElement>) =>
@@ -340,10 +414,15 @@ function MediaItemWithContextMenu({
 
 function MediaItemList({
 	items,
+	sequences,
 	mode,
 	onRemove,
+	onCreatePodcastSync,
+	onOpenSequence,
+	onUnnestSequence,
 }: {
 	items: MediaAsset[];
+	sequences: TScene[];
 	mode: MediaViewMode;
 	onRemove: ({
 		event,
@@ -352,6 +431,9 @@ function MediaItemList({
 		event: React.MouseEvent;
 		ids: string[];
 	}) => void;
+	onCreatePodcastSync: ({ ids }: { ids: string[] }) => void;
+	onOpenSequence: ({ sceneId }: { sceneId: string }) => void;
+	onUnnestSequence: ({ scene }: { scene: TScene }) => void;
 }) {
 	const isGrid = mode === "grid";
 
@@ -363,7 +445,12 @@ function MediaItemList({
 			}
 		>
 			{items.map((item) => (
-				<MediaItemWithContextMenu item={item} onRemove={onRemove} key={item.id}>
+				<MediaItemWithContextMenu
+					item={item}
+					onRemove={onRemove}
+					onCreatePodcastSync={onCreatePodcastSync}
+					key={item.id}
+				>
 					<SelectableItem className={cn(!isGrid && "w-full")} id={item.id}>
 						<MediaAssetDraggable
 							item={item}
@@ -379,7 +466,70 @@ function MediaItemList({
 					</SelectableItem>
 				</MediaItemWithContextMenu>
 			))}
+			{sequences.map((scene) => (
+				<SequenceItem
+					key={scene.id}
+					scene={scene}
+					variant={isGrid ? "grid" : "compact"}
+					onOpenSequence={onOpenSequence}
+					onUnnestSequence={onUnnestSequence}
+				/>
+			))}
 		</div>
+	);
+}
+
+function SequenceItem({
+	scene,
+	variant,
+	onOpenSequence,
+	onUnnestSequence,
+}: {
+	scene: TScene;
+	variant: "grid" | "compact";
+	onOpenSequence: ({ sceneId }: { sceneId: string }) => void;
+	onUnnestSequence: ({ scene }: { scene: TScene }) => void;
+}) {
+	const isGrid = variant === "grid";
+	const content = (
+		<button
+			type="button"
+			className={cn(
+				"group flex min-w-0 items-center overflow-hidden rounded border bg-background text-left hover:bg-accent/40",
+				isGrid ? "h-28 w-28 flex-col" : "h-12 w-full gap-2 px-2",
+			)}
+			onClick={() => onOpenSequence({ sceneId: scene.id })}
+		>
+			<div
+				className={cn(
+					"flex shrink-0 items-center justify-center bg-muted text-muted-foreground",
+					isGrid ? "h-20 w-full" : "size-8 rounded",
+				)}
+			>
+				<Layers2 className="size-5" />
+			</div>
+			<div className={cn("min-w-0", isGrid ? "w-full px-1.5 py-1" : "flex-1")}>
+				<div className="truncate text-xs font-medium">{scene.name}</div>
+				<div className="truncate text-[11px] text-muted-foreground">
+					Sequence
+				</div>
+			</div>
+		</button>
+	);
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
+			<ContextMenuContent>
+				<ContextMenuItem onClick={() => onOpenSequence({ sceneId: scene.id })}>
+					Open sequence
+				</ContextMenuItem>
+				<ContextMenuItem onClick={() => onUnnestSequence({ scene })}>
+					<SplitSquareHorizontal className="size-4" />
+					Unnest into timeline
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
@@ -513,6 +663,8 @@ function MediaActions({
 	sortOrder,
 	onSort,
 	onImport,
+	selectedCount,
+	onPodcastSync,
 }: {
 	mediaViewMode: MediaViewMode;
 	setMediaViewMode: (mode: MediaViewMode) => void;
@@ -521,6 +673,8 @@ function MediaActions({
 	sortOrder: MediaSortOrder;
 	onSort: ({ key }: { key: MediaSortKey }) => void;
 	onImport: () => void;
+	selectedCount: number;
+	onPodcastSync: () => void;
 }) {
 	return (
 		<div className="flex gap-1.5">
@@ -604,6 +758,18 @@ function MediaActions({
 					</TooltipContent>
 				</Tooltip>
 			</TooltipProvider>
+			{selectedCount > 0 ? (
+				<Button
+					variant="outline"
+					onClick={onPodcastSync}
+					disabled={isProcessing}
+					size="sm"
+					className="items-center justify-center gap-1.5"
+				>
+					<SplitSquareHorizontal className="size-4" />
+					Sync
+				</Button>
+			) : null}
 			<Button
 				variant="outline"
 				onClick={onImport}
