@@ -119,6 +119,14 @@ globalThis.fetch = (async (
 					type: "response.output_item.added",
 					output_index: 0,
 					item: {
+						type: "reasoning",
+						id: "rs-smoke",
+					},
+				},
+				{
+					type: "response.output_item.added",
+					output_index: 1,
+					item: {
 						type: "function_call",
 						call_id: "call-search",
 						name: "timeline_search_elements",
@@ -127,7 +135,7 @@ globalThis.fetch = (async (
 				},
 				{
 					type: "response.function_call_arguments.delta",
-					output_index: 0,
+					output_index: 1,
 					delta: '{"inActiveRange":true,"limit":2}',
 				},
 				{
@@ -272,6 +280,17 @@ try {
 	}
 	if (functionOutputInput.output.length > 17_000) {
 		throw new Error("Expected truncated tool output to stay bounded.");
+	}
+	if (
+		continuationInput.some(
+			(item) =>
+				typeof item === "object" &&
+				item !== null &&
+				"type" in item &&
+				item.type === "reasoning",
+		)
+	) {
+		throw new Error("Expected stateless continuation to omit reasoning items.");
 	}
 
 	console.log(

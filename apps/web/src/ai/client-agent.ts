@@ -175,12 +175,7 @@ function getResponseToolCalls(response: ResponsesApiResult): AiToolCall[] {
 }
 
 function getResponseContinuationItems(response: ResponsesApiResult): ResponsesOutputItem[] {
-	return (response.output ?? []).filter(
-		(item) =>
-			item.type === "function_call" ||
-			item.type === "reasoning" ||
-			item.type === "message",
-	);
+	return (response.output ?? []).filter((item) => item.type === "function_call");
 }
 
 const TOOL_WIRE_NAMES = new Map<string, string>([

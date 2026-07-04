@@ -124,6 +124,19 @@ describe("AI client agent", () => {
 									id: "resp-large-tool",
 									output: [
 										{
+											type: "reasoning",
+											id: "rs-1",
+										},
+										{
+											type: "message",
+											content: [
+												{
+													type: "output_text",
+													text: "Inspecting the layer.",
+												},
+											],
+										},
+										{
 											type: "function_call",
 											call_id: "call-large",
 											name: "timeline_get_layer",
@@ -166,6 +179,8 @@ describe("AI client agent", () => {
 
 		expect(result.status).toBe("completed");
 		expect(secondRequestBody?.previousResponseId).toBeUndefined();
+		expect(secondInput?.some((item) => item.type === "reasoning")).toBe(false);
+		expect(secondInput?.some((item) => item.type === "message")).toBe(false);
 		expect(functionCall?.call_id).toBe("call-large");
 		expect(functionOutput?.call_id).toBe("call-large");
 		expect(functionOutput?.output?.length).toBeLessThan(17_000);
