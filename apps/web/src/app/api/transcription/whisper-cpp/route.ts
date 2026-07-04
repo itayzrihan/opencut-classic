@@ -1,8 +1,8 @@
 import { webEnv } from "@/env/web";
 import { type NextRequest, NextResponse } from "next/server";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -21,6 +21,7 @@ interface WhisperSegment {
 	};
 	tokens?: Array<{
 		text?: string;
+		t_dtw?: number;
 		timestamps?: {
 			from?: string;
 			to?: string;
@@ -30,6 +31,16 @@ interface WhisperSegment {
 			to?: number;
 		};
 	}>;
+}
+
+interface WordTiming {
+	text: string;
+	start: number;
+	end: number;
+	dtwStart?: number;
+	dtwEnd?: number;
+	segmentStart?: number;
+	segmentEnd?: number;
 }
 
 const DEFAULT_BINARY_PATHS = ["whisper-cli"];
@@ -64,6 +75,7 @@ const whisperJsonSchema = z.object({
 					.array(
 						z.object({
 							text: z.string().optional(),
+							t_dtw: z.number().optional(),
 							timestamps: z
 								.object({
 									from: z.string().optional(),
@@ -133,21 +145,89 @@ function tokenEnd({
 	return parseTimestamp(token.timestamps?.to) || fallback;
 }
 
+function tokenDtwSeconds(token: NonNullable<WhisperSegment["tokens"]>[number]) {
+	const value = Number(token.t_dtw);
+	return Number.isFinite(value) && value >= 0 ? value / 100 : null;
+}
+
+function roundSeconds(value: number) {
+	return Math.round(value * 1000) / 1000;
+}
+
 function cleanTokenText(text: string) {
 	return text.replace(/\[_BEG_\]|\[_TT_\d+\]|\[_EOT_\]|\[_SOLM_\]|\[_PREV_\]|\[_NOT_\]/g, "");
 }
 
 function isPunctuationOnly(text: string) {
-	return /^[\s.,!?;:()[\]{}"'`\-–—…]+$/.test(text);
+	return /^[\s.,!?;:()[\]{}"'`\-.]+$/.test(text);
+}
+
+function finalizeWordTimings(words: WordTiming[]) {
+	if (words.length === 0) return words;
+
+	const centers = words.map((word) => (
+		typeof word.dtwStart === "number" && typeof word.dtwEnd === "number"
+			? (word.dtwStart + word.dtwEnd) / 2
+			: null
+	));
+
+	return words.map((word, index) => {
+		const center = centers[index];
+		if (center === null) {
+			return {
+				text: word.text,
+				start: roundSeconds(Math.max(0, word.start)),
+				end: roundSeconds(Math.max(word.end, word.start + 0.001)),
+			};
+		}
+
+		const prevCenter = index > 0 ? centers[index - 1] : null;
+		const nextCenter = index + 1 < centers.length ? centers[index + 1] : null;
+		const segmentStartTime = Number.isFinite(word.segmentStart)
+			? Number(word.segmentStart)
+			: word.start;
+		const segmentEndTime = Number.isFinite(word.segmentEnd)
+			? Number(word.segmentEnd)
+			: word.end;
+		const midpointStart = prevCenter === null
+			? segmentStartTime
+			: (prevCenter + center) / 2;
+		const dtwStart = typeof word.dtwStart === "number" ? word.dtwStart : word.start;
+		const dtwEnd = typeof word.dtwEnd === "number" ? word.dtwEnd : word.end;
+
+		// Start captions no earlier than the aligned token onset.
+		const start = Math.max(segmentStartTime, midpointStart, dtwStart);
+		const end = nextCenter === null
+			? Math.min(segmentEndTime, dtwEnd + 0.12)
+			: (center + nextCenter) / 2;
+
+		return {
+			text: word.text,
+			start: roundSeconds(Math.max(0, start)),
+			end: roundSeconds(Math.max(end, start + 0.001)),
+		};
+	});
+}
+
+function dtwPresetForModel(modelPath: string) {
+	const normalized = modelPath.toLowerCase().replace(/\\/g, "/");
+	if (normalized.includes("large-v3") || normalized.includes("large.v3")) return "large.v3";
+	if (normalized.includes("large-v2") || normalized.includes("large.v2")) return "large.v2";
+	if (normalized.includes("large")) return "large";
+	if (normalized.includes("medium")) return "medium";
+	if (normalized.includes("small")) return "small";
+	if (normalized.includes("base")) return "base";
+	if (normalized.includes("tiny")) return "tiny";
+	return null;
 }
 
 function buildWords({ segments }: { segments: WhisperSegment[] }) {
-	const words: Array<{ text: string; start: number; end: number }> = [];
+	const words: WordTiming[] = [];
 
 	for (const segment of segments) {
 		const segmentStartTime = segmentStart(segment);
 		const segmentEndTime = segmentEnd(segment);
-		let current: { text: string; start: number; end: number } | null = null;
+		let current: WordTiming | null = null;
 
 		for (const token of segment.tokens || []) {
 			const raw = cleanTokenText(token.text || "");
@@ -155,6 +235,7 @@ function buildWords({ segments }: { segments: WhisperSegment[] }) {
 
 			const start = tokenStart({ token, fallback: segmentStartTime });
 			const end = tokenEnd({ token, fallback: segmentEndTime });
+			const dtw = tokenDtwSeconds(token);
 			const hasLeadingSpace = /^\s/.test(raw);
 			const piece = raw.replace(/\s+/g, " ").trim();
 			if (!piece) continue;
@@ -163,18 +244,33 @@ function buildWords({ segments }: { segments: WhisperSegment[] }) {
 				if (current) {
 					current.text += piece;
 					current.end = Math.max(current.end, end);
+					if (dtw !== null) {
+						current.dtwEnd = dtw;
+					}
 				}
 				continue;
 			}
 
 			if (!current || hasLeadingSpace) {
 				if (current) words.push(current);
-				current = { text: piece, start, end: Math.max(end, start + 0.001) };
+				current = {
+					text: piece,
+					start,
+					end: Math.max(end, start + 0.001),
+					dtwStart: dtw ?? undefined,
+					dtwEnd: dtw ?? undefined,
+					segmentStart: segmentStartTime,
+					segmentEnd: segmentEndTime,
+				};
 				continue;
 			}
 
 			current.text += piece;
 			current.end = Math.max(current.end, end);
+			if (dtw !== null) {
+				current.dtwEnd = dtw;
+				current.dtwStart ??= dtw;
+			}
 		}
 
 		if (current) {
@@ -195,7 +291,7 @@ function buildWords({ segments }: { segments: WhisperSegment[] }) {
 		});
 	}
 
-	return words;
+	return finalizeWordTimings(words);
 }
 
 function runProcess({
@@ -266,6 +362,8 @@ export async function POST(request: NextRequest) {
 		const wavPath = join(workDir, "audio16k.wav");
 		const outBase = join(workDir, "transcript");
 		const outJson = `${outBase}.json`;
+		const dtwPreset = dtwPresetForModel(modelPath);
+		const dtwArgs = dtwPreset ? ["-dtw", dtwPreset, "-nfa"] : [];
 
 		await writeFile(inputPath, Buffer.from(await audio.arrayBuffer()));
 		await runProcess({
@@ -287,6 +385,7 @@ export async function POST(request: NextRequest) {
 				"-of",
 				outBase,
 				"-np",
+				...dtwArgs,
 			],
 			cwd: workDir,
 		});
