@@ -4,7 +4,12 @@ import {
 	type CommandResult,
 } from "@/commands/base-command";
 import { EditorCore } from "@/core";
-import type { SceneTracks, TimelineElement } from "@/timeline";
+import {
+	findTrackInSceneTracks,
+	getDisplayTracks,
+	type SceneTracks,
+	type TimelineElement,
+} from "@/timeline";
 import type { ElementClipboardItem } from "@/clipboard";
 import { generateUUID } from "@/utils/id";
 import {
@@ -71,11 +76,9 @@ export class PasteCommand extends Command {
 			}
 
 			const trackType = items[0].trackType;
-			const sourceTrackIndex = [
-				...updatedTracks.overlay,
-				updatedTracks.main,
-				...updatedTracks.audio,
-			].findIndex((track) => track.id === trackId);
+			const sourceTrackIndex = getDisplayTracks({
+				tracks: updatedTracks,
+			}).findIndex((track) => track.id === trackId);
 			const placementResult = resolveTrackPlacement({
 				tracks: updatedTracks,
 				trackType,
@@ -91,14 +94,10 @@ export class PasteCommand extends Command {
 
 			let elementsForPlacement = elementsToAdd;
 			if (placementResult.kind === "existingTrack") {
-				const targetTrack =
-					placementResult.trackIndex < updatedTracks.overlay.length
-						? updatedTracks.overlay[placementResult.trackIndex]
-						: placementResult.trackIndex === updatedTracks.overlay.length
-							? updatedTracks.main
-							: updatedTracks.audio[
-									placementResult.trackIndex - updatedTracks.overlay.length - 1
-								];
+				const targetTrack = findTrackInSceneTracks({
+					tracks: updatedTracks,
+					trackId: placementResult.trackId,
+				});
 				if (targetTrack?.id === updatedTracks.main.id) {
 					const earliestElement = elementsToAdd.reduce((earliest, element) =>
 						element.startTime < earliest.startTime ? element : earliest,

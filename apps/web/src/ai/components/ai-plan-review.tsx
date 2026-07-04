@@ -17,7 +17,23 @@ export function AiPlanReview({
 	onDiscard: () => void;
 }) {
 	if (!plan) {
-		return null;
+		if (errors.length === 0) {
+			return null;
+		}
+		return (
+			<div className="border-t pt-3">
+				<div className="text-sm font-medium">The AI plan was rejected</div>
+				<div className="border-destructive/40 bg-destructive/10 text-destructive mt-2 max-h-40 overflow-y-auto rounded-sm border p-2 text-xs leading-5">
+					{errors.map((error) => (
+						<div key={error}>{error}</div>
+					))}
+				</div>
+				<div className="text-muted-foreground mt-2 text-xs">
+					The returned plan failed validation against the current timeline. Send
+					the request again.
+				</div>
+			</div>
+		);
 	}
 
 	return (
@@ -63,6 +79,13 @@ export function AiPlanReview({
 								<div className="text-muted-foreground mt-1 text-xs">
 									{operation.reason}
 								</div>
+							)}
+							{operation.type === "insert_html_element" && (
+								<pre className="bg-muted/40 mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-sm p-2 text-[11px] leading-4">
+									{operation.html.length > 600
+										? `${operation.html.slice(0, 600)}...`
+										: operation.html}
+								</pre>
 							)}
 							{operation.type === "attach_custom_edit" && (
 								<>
@@ -127,6 +150,34 @@ function getOperationTitle({
 			return "Upsert keyframe";
 		case "remove_keyframe":
 			return "Remove keyframe";
+		case "add_track":
+			return `Add ${operation.trackType} track`;
+		case "remove_track":
+			return "Remove track";
+		case "reorder_track":
+			return `Reorder track to index ${operation.toIndex}`;
+		case "set_track_state":
+			return `Set track ${describeStateFlags({
+				hidden: operation.hidden,
+				muted: operation.muted,
+			})}`;
+		case "insert_media_element":
+			return "Insert media element";
+		case "insert_graphic_element":
+			return `Insert ${operation.definitionId} graphic`;
+		case "insert_html_element":
+			return `Insert HTML frame${operation.name ? `: ${operation.name}` : ""}`;
+		case "duplicate_element":
+			return "Duplicate element";
+		case "apply_transition":
+			return `Apply ${operation.presetId} transition (${operation.side})`;
+		case "set_element_state":
+			return `Set element ${describeStateFlags({
+				hidden: operation.hidden,
+				muted: operation.muted,
+			})}`;
+		case "retime_element":
+			return `Retime element to ${operation.rate}x`;
 		default: {
 			const exhaustive: never = operation;
 			return exhaustive;
@@ -134,15 +185,49 @@ function getOperationTitle({
 	}
 }
 
+function describeStateFlags({
+	hidden,
+	muted,
+}: {
+	hidden?: boolean;
+	muted?: boolean;
+}): string {
+	const parts: string[] = [];
+	if (hidden !== undefined) {
+		parts.push(hidden ? "hidden" : "visible");
+	}
+	if (muted !== undefined) {
+		parts.push(muted ? "muted" : "unmuted");
+	}
+	return parts.join(", ") || "state";
+}
+
 function getOperationTarget({
 	operation,
 }: {
 	operation: AiEditOperation;
 }): string {
-	if (operation.type === "insert_text_element") {
+	if (operation.type === "add_track") {
+		return operation.index !== undefined
+			? `new ${operation.trackType} track at index ${operation.index}`
+			: `new ${operation.trackType} track`;
+	}
+	if (
+		operation.type === "remove_track" ||
+		operation.type === "reorder_track" ||
+		operation.type === "set_track_state"
+	) {
+		return `track ${operation.trackId}`;
+	}
+	if (
+		operation.type === "insert_text_element" ||
+		operation.type === "insert_media_element" ||
+		operation.type === "insert_graphic_element" ||
+		operation.type === "insert_html_element"
+	) {
 		return operation.trackId
 			? `track ${operation.trackId}`
-			: "new text track or compatible text layer";
+			: "auto-placed on a compatible layer";
 	}
 	if (operation.type === "move_element") {
 		return `${operation.sourceTrackId}:${operation.elementId} -> ${operation.targetTrackId}`;

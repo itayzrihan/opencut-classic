@@ -1,5 +1,6 @@
 import { addMediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import type { SceneTracks } from "./types";
+import { getDisplayTracks } from "./track-order";
 
 export * from "./types";
 export * from "./drag";
@@ -10,13 +11,14 @@ export * from "./audio-separation";
 export * from "./zoom-utils";
 export * from "./ruler-utils";
 export * from "./pixel-utils";
+export * from "./track-order";
 
 export function calculateTotalDuration({
 	tracks,
 }: {
 	tracks: SceneTracks;
 }): MediaTime {
-	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
+	const orderedTracks = getDisplayTracks({ tracks });
 	if (orderedTracks.length === 0) return ZERO_MEDIA_TIME;
 
 	let maxEnd: MediaTime = ZERO_MEDIA_TIME;

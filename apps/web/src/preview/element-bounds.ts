@@ -1,13 +1,15 @@
 import type { SceneTracks, TimelineElement } from "@/timeline";
+import { getDisplayTracks } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { STICKER_INTRINSIC_SIZE_FALLBACK } from "@/stickers/intrinsic-size";
-import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
+import { getGraphicSourceSize } from "@/graphics";
 import { measureTextElement } from "@/text/measure-element";
 import {
 	getElementLocalTime,
 } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
+import { buildTransitionAnimationsFromElement } from "@/transitions";
 
 export interface ElementBounds {
 	cx: number;
@@ -125,7 +127,7 @@ function getElementBounds({
 	if (element.type === "video" || element.type === "image") {
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
-			animations: element.animations,
+			animations: buildTransitionAnimationsFromElement({ element }),
 			localTime,
 		});
 		const sourceWidth = mediaAsset?.width ?? canvasWidth;
@@ -142,7 +144,7 @@ function getElementBounds({
 	if (element.type === "sticker") {
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
-			animations: element.animations,
+			animations: buildTransitionAnimationsFromElement({ element }),
 			localTime,
 		});
 		return getVisualElementBounds({
@@ -157,14 +159,18 @@ function getElementBounds({
 	if (element.type === "graphic") {
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
-			animations: element.animations,
+			animations: buildTransitionAnimationsFromElement({ element }),
 			localTime,
+		});
+		const sourceSize = getGraphicSourceSize({
+			definitionId: element.definitionId,
+			params: element.params,
 		});
 		return getVisualElementBounds({
 			canvasWidth,
 			canvasHeight,
-			sourceWidth: DEFAULT_GRAPHIC_SOURCE_SIZE,
-			sourceHeight: DEFAULT_GRAPHIC_SOURCE_SIZE,
+			sourceWidth: sourceSize.width,
+			sourceHeight: sourceSize.height,
 			transform,
 		});
 	}
@@ -172,7 +178,7 @@ function getElementBounds({
 	if (element.type === "text") {
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
-			animations: element.animations,
+			animations: buildTransitionAnimationsFromElement({ element }),
 			localTime,
 		});
 
@@ -257,10 +263,9 @@ export function getVisibleElementsWithBounds({
 	mediaAssets: MediaAsset[];
 }): ElementWithBounds[] {
 	const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
-	const orderedTracks = [
-		...tracks.overlay.filter((track) => !("hidden" in track && track.hidden)),
-		...(!tracks.main.hidden ? [tracks.main] : []),
-	].reverse();
+	const orderedTracks = getDisplayTracks({ tracks })
+		.filter((track) => !("hidden" in track && track.hidden) && track.type !== "audio")
+		.reverse();
 
 	const result: ElementWithBounds[] = [];
 

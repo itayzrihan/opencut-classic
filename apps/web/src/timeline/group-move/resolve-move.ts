@@ -160,15 +160,13 @@ function resolveNewTrackMove({
 		anchorStartTime,
 		targetTrackIdsByElementId: new Map(),
 	});
-	const blockStartIndex = hasAudioMember
-		? clampAudioInsertIndex({
-				tracks,
-				insertIndex: anchorInsertIndex - anchorMemberIndex,
-			})
-		: Math.max(
-				0,
-				Math.min(anchorInsertIndex - anchorMemberIndex, tracks.overlay.length),
-			);
+	const blockStartIndex = Math.max(
+		0,
+		Math.min(
+			anchorInsertIndex - anchorMemberIndex,
+			getDisplayTracks({ tracks }).length,
+		),
+	);
 
 	const createTracks: PlannedTrackCreation[] = sortedMembers.map(
 		(member, memberIndex) => ({
@@ -197,20 +195,6 @@ function resolveNewTrackMove({
 			elementId,
 		})),
 	};
-}
-
-function clampAudioInsertIndex({
-	tracks,
-	insertIndex,
-}: {
-	tracks: SceneTracks;
-	insertIndex: number;
-}): number {
-	const minimumAudioInsertIndex = tracks.overlay.length + 1;
-	return Math.max(
-		minimumAudioInsertIndex,
-		Math.min(insertIndex, minimumAudioInsertIndex + tracks.audio.length),
-	);
 }
 
 function resolveExistingTrackIdsByElementId({
@@ -318,7 +302,7 @@ function findCompatibleTrackPlacement({
 	for (
 		let displayIndex = startDisplayIndex;
 		displayIndex >= 0 &&
-		displayIndex < tracks.overlay.length + 1 + tracks.audio.length;
+		displayIndex < getDisplayTracks({ tracks }).length;
 		displayIndex += step
 	) {
 		const placement = getTrackPlacementByDisplayIndex({

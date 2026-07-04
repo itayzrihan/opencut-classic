@@ -11,6 +11,7 @@ import {
 	readStorageQuotaStatus,
 } from "./quota";
 import type {
+	SerializedCommandHistory,
 	MediaAssetData,
 	StorageConfig,
 	SerializedProject,
@@ -53,6 +54,7 @@ function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 
 class StorageService {
 	private projectsAdapter: IndexedDBAdapter<SerializedProject>;
+	private commandHistoryAdapter: IndexedDBAdapter<SerializedCommandHistory>;
 	private savedSoundsAdapter: IndexedDBAdapter<SavedSoundsData>;
 	private config: StorageConfig;
 	private migrationsPromise: Promise<void> | null = null;
@@ -61,6 +63,7 @@ class StorageService {
 		this.config = {
 			projectsDb: "video-editor-projects",
 			mediaDb: "video-editor-media",
+			commandHistoryDb: "video-editor-command-history",
 			savedSoundsDb: "video-editor-saved-sounds",
 			version: 1,
 		};
@@ -70,6 +73,14 @@ class StorageService {
 			storeName: "projects",
 			version: this.config.version,
 		});
+
+		this.commandHistoryAdapter = new IndexedDBAdapter<SerializedCommandHistory>(
+			{
+				dbName: this.config.commandHistoryDb,
+				storeName: "command-history",
+				version: this.config.version,
+			},
+		);
 
 		this.savedSoundsAdapter = new IndexedDBAdapter<SavedSoundsData>({
 			dbName: this.config.savedSoundsDb,
@@ -281,7 +292,37 @@ class StorageService {
 	}
 
 	async deleteProject({ id }: { id: string }): Promise<void> {
-		await this.projectsAdapter.remove(id);
+		await Promise.all([
+			this.projectsAdapter.remove(id),
+			this.commandHistoryAdapter.remove(id),
+		]);
+	}
+
+	async saveCommandHistory({
+		history,
+	}: {
+		history: SerializedCommandHistory;
+	}): Promise<void> {
+		await this.commandHistoryAdapter.set({
+			key: history.projectId,
+			value: history,
+		});
+	}
+
+	async loadCommandHistory({
+		projectId,
+	}: {
+		projectId: string;
+	}): Promise<SerializedCommandHistory | null> {
+		return this.commandHistoryAdapter.get(projectId);
+	}
+
+	async deleteCommandHistory({
+		projectId,
+	}: {
+		projectId: string;
+	}): Promise<void> {
+		await this.commandHistoryAdapter.remove(projectId);
 	}
 
 	async saveMediaAsset({
@@ -434,7 +475,10 @@ class StorageService {
 	}
 
 	async clearAllData(): Promise<void> {
-		await this.projectsAdapter.clear();
+		await Promise.all([
+			this.projectsAdapter.clear(),
+			this.commandHistoryAdapter.clear(),
+		]);
 		// project-specific media and timelines cleaned up when projects are deleted
 	}
 

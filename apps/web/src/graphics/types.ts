@@ -7,6 +7,21 @@ export interface GraphicRenderContext {
 	params: ParamValues;
 	width: number;
 	height: number;
+	localTime?: number;
+	duration?: number;
+}
+
+export interface GraphicPrepareContext {
+	params: ParamValues;
+	width: number;
+	height: number;
+	localTime?: number;
+	duration?: number;
+}
+
+export interface GraphicSourceSize {
+	width: number;
+	height: number;
 }
 
 export interface GraphicDefinition {
@@ -14,6 +29,10 @@ export interface GraphicDefinition {
 	name: string;
 	keywords: string[];
 	params: ParamDefinition[];
+	/** Intrinsic raster size; defaults to DEFAULT_GRAPHIC_SOURCE_SIZE square. */
+	sourceSize?(context: { params: ParamValues }): GraphicSourceSize;
+	/** Awaited during renderer resolve so async sources are ready before render(). */
+	prepare?(context: GraphicPrepareContext): Promise<void>;
 	render(context: GraphicRenderContext): void;
 }
 

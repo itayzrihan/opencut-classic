@@ -6,6 +6,7 @@ import { graphicsRegistry } from "./registry";
 import {
 	registerDefaultGraphics,
 	ellipseGraphicDefinition,
+	hyperframeGraphicDefinition,
 	polygonGraphicDefinition,
 	rectangleGraphicDefinition,
 	starGraphicDefinition,
@@ -98,6 +99,25 @@ export function resolveGraphicElementParamsAtTime({
 	});
 }
 
+export function getGraphicSourceSize({
+	definitionId,
+	params,
+}: {
+	definitionId: string;
+	params?: ParamValues;
+}): { width: number; height: number } {
+	const definition = getGraphicDefinition({ definitionId });
+	if (!definition.sourceSize) {
+		return {
+			width: DEFAULT_GRAPHIC_SOURCE_SIZE,
+			height: DEFAULT_GRAPHIC_SOURCE_SIZE,
+		};
+	}
+	return definition.sourceSize({
+		params: resolveGraphicParams({ definition, params }),
+	});
+}
+
 export function buildGraphicPreviewUrl({
 	definitionId,
 	params,
@@ -143,11 +163,17 @@ export {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
 	ellipseGraphicDefinition,
 	graphicsRegistry,
+	hyperframeGraphicDefinition,
 	polygonGraphicDefinition,
 	rectangleGraphicDefinition,
 	registerDefaultGraphics,
 	starGraphicDefinition,
 };
+export {
+	DEFAULT_HYPERFRAME_HEIGHT,
+	DEFAULT_HYPERFRAME_WIDTH,
+	HYPERFRAME_DEFINITION_ID,
+} from "./definitions/hyperframe";
 export type {
 	GraphicDefinition,
 	GraphicInstance,

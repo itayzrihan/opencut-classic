@@ -27,9 +27,11 @@ import type {
 	TimelineTrack,
 	CreateTimelineElement,
 } from "@/timeline";
+import { getDisplayTracks, type VisualElement } from "@/timeline";
 import type { TimelineDragData } from "@/timeline/drag";
 import type { MediaAsset } from "@/media/types";
 import type { ProcessedMediaAsset } from "@/media/processing";
+import { CUSTOM_AI_EFFECT_TYPE } from "@/effects";
 import { roundFrameTime, type MediaTime } from "@/wasm";
 
 // --- Config ---
@@ -39,6 +41,7 @@ export interface DragDropConfig {
 	getContainerEl: () => HTMLDivElement | null;
 	getHeaderEl: () => HTMLElement | null;
 	getTracksScrollEl: () => HTMLDivElement | null;
+	getTracksTopInsetPx: () => number;
 	getActiveProjectFps: () => FrameRate | null;
 	getActiveProjectId: () => string | null;
 	getSceneTracks: () => SceneTracks;
@@ -58,6 +61,15 @@ export interface DragDropConfig {
 		trackId: string;
 		elementId: string;
 		effectType: string;
+	}) => void;
+	applyTransitions: (args: {
+		applications: Array<{
+			trackId: string;
+			elementId: string;
+			presetId: string;
+			side: "in" | "out";
+			percent?: number;
+		}>;
 	}) => void;
 }
 
@@ -96,6 +108,8 @@ function elementTypeFromDrag({
 			return "sticker";
 		case "effect":
 			return "effect";
+		case "transition":
+			return "effect";
 		case "media":
 			return dragData.mediaType;
 	}
@@ -107,6 +121,7 @@ function getTargetElementTypesForDrag({
 	dragData: TimelineDragData;
 }): string[] | undefined {
 	if (dragData.type === "effect") return dragData.targetElementTypes;
+	if (dragData.type === "transition") return dragData.targetElementTypes;
 	if (dragData.type === "media") return dragData.targetElementTypes;
 	return undefined;
 }
@@ -128,7 +143,79 @@ function orderedTracks({
 }: {
 	sceneTracks: SceneTracks;
 }): TimelineTrack[] {
-	return [...sceneTracks.overlay, sceneTracks.main, ...sceneTracks.audio];
+	return getDisplayTracks({ tracks: sceneTracks });
+}
+
+function isTransitionTargetElement(
+	element: TimelineTrack["elements"][number],
+): element is VisualElement {
+	return (
+		element.type === "video" ||
+		element.type === "image" ||
+		element.type === "text" ||
+		element.type === "sticker" ||
+		element.type === "graphic"
+	);
+}
+
+function getTransitionSideForElement({
+	element,
+	xPosition,
+}: {
+	element: VisualElement;
+	xPosition: MediaTime;
+}): "in" | "out" {
+	const midpoint = element.startTime + element.duration / 2;
+	return xPosition <= midpoint ? "in" : "out";
+}
+
+function getCutTransitionApplications({
+	track,
+	xPosition,
+	transitionId,
+}: {
+	track: Exclude<TimelineTrack, { type: "audio" | "effect" }>;
+	xPosition: MediaTime;
+	transitionId: string;
+}): Array<{
+	trackId: string;
+	elementId: string;
+	presetId: string;
+	side: "in" | "out";
+}> {
+	const tolerance = Math.max(1, Math.round(DEFAULT_NEW_ELEMENT_DURATION / 90));
+	const elements = track.elements
+		.filter(isTransitionTargetElement)
+		.slice()
+		.sort((left, right) => left.startTime - right.startTime);
+
+	for (let index = 0; index < elements.length - 1; index++) {
+		const left = elements[index];
+		const right = elements[index + 1];
+		const cutTime = left.startTime + left.duration;
+		const isAdjacent = Math.abs(right.startTime - cutTime) <= tolerance;
+		const isNearCut = Math.abs(xPosition - cutTime) <= tolerance;
+		if (!isAdjacent || !isNearCut) {
+			continue;
+		}
+
+		return [
+			{
+				trackId: track.id,
+				elementId: left.id,
+				presetId: transitionId,
+				side: "out",
+			},
+			{
+				trackId: track.id,
+				elementId: right.id,
+				presetId: transitionId,
+				side: "in",
+			},
+		];
+	}
+
+	return [];
 }
 
 // --- Controller ---
@@ -311,7 +398,12 @@ export class DragDropController {
 
 		return {
 			mouseX: event.clientX - referenceRect.left + scrollLeft,
-			mouseY: event.clientY - referenceRect.top + scrollTop - headerHeight,
+			mouseY:
+				event.clientY -
+				referenceRect.top +
+				scrollTop -
+				headerHeight -
+				this.config.getTracksTopInsetPx(),
 		};
 	}
 
@@ -370,6 +462,9 @@ export class DragDropController {
 				return;
 			case "effect":
 				this.executeEffectDrop({ target, dragData });
+				return;
+			case "transition":
+				this.executeTransitionDrop({ target, dragData });
 				return;
 			case "media":
 				this.executeMediaDrop({ target, dragData });
@@ -473,21 +568,90 @@ export class DragDropController {
 		const element = buildEffectElement({
 			effectType: dragData.effectType,
 			startTime: target.xPosition,
+			name: dragData.name,
+			params: dragData.params,
 		});
 
-		const existingEffectTrack = orderedTracks({
-			sceneTracks: this.config.getSceneTracks(),
-		}).find((track) => track.type === "effect");
+		this.insertAtTarget({ element, target, trackType: "effect" });
+	}
 
-		if (existingEffectTrack) {
-			this.config.insertElement({
-				placement: { mode: "explicit", trackId: existingEffectTrack.id },
-				element,
-			});
+	private executeTransitionDrop({
+		target,
+		dragData,
+	}: {
+		target: DropTarget;
+		dragData: Extract<TimelineDragData, { type: "transition" }>;
+	}): void {
+		const applications = this.resolveTransitionApplications({
+			target,
+			transitionId: dragData.transitionId,
+		});
+		if (applications.length > 0) {
+			this.config.applyTransitions({ applications });
 			return;
 		}
 
+		const element = buildEffectElement({
+			effectType: CUSTOM_AI_EFFECT_TYPE,
+			name: `Transition: ${dragData.name}`,
+			startTime: target.xPosition,
+			params: {
+				label: dragData.name,
+				kind: "transition",
+				intent: "Timeline transition adjustment layer",
+				transitionId: dragData.transitionId,
+			},
+		});
 		this.insertAtTarget({ element, target, trackType: "effect" });
+	}
+
+	private resolveTransitionApplications({
+		target,
+		transitionId,
+	}: {
+		target: DropTarget;
+		transitionId: string;
+	}): Array<{
+		trackId: string;
+		elementId: string;
+		presetId: string;
+		side: "in" | "out";
+		percent?: number;
+	}> {
+		const sceneTracks = this.config.getSceneTracks();
+		const tracks = orderedTracks({ sceneTracks });
+		const track = tracks[target.trackIndex];
+		if (!track || track.type === "audio" || track.type === "effect") {
+			return [];
+		}
+
+		if (target.targetElement) {
+			const element = track.elements.find(
+				(trackElement) => trackElement.id === target.targetElement?.elementId,
+			);
+			if (!element || !isTransitionTargetElement(element)) {
+				return [];
+			}
+			const side = getTransitionSideForElement({
+				element,
+				xPosition: target.xPosition,
+			});
+			return [
+				{
+					trackId: track.id,
+					elementId: element.id,
+					presetId: transitionId,
+					side,
+				},
+			];
+		}
+
+		const cutApplications = getCutTransitionApplications({
+			track,
+			xPosition: target.xPosition,
+			transitionId,
+		});
+		return cutApplications;
 	}
 
 	private async executeFileDrop({

@@ -81,7 +81,7 @@ export async function runAiAgent({
 
 		onStep?.(
 			tools.length > 0
-				? `Inspecting timeline ${iteration}/${maxIterations}`
+				? `Editing timeline (step ${iteration}/${maxIterations})`
 				: "Drafting edit plan",
 		);
 		const response = await callAiChatRoute({
@@ -278,6 +278,11 @@ const TOOL_WIRE_NAMES = new Map<string, string>([
 	["timeline.search_elements", "timeline_search_elements"],
 	["timeline.get_element", "timeline_get_element"],
 	["timeline.get_visible_state", "timeline_get_visible_state"],
+	["timeline.edit_source", "timeline_edit_source"],
+	["timeline.read_source", "timeline_read_source"],
+	["timeline.list_media", "timeline_list_media"],
+	["skills.list", "skills_list"],
+	["skills.load", "skills_load"],
 	["preview.capture_frame", "preview_capture_frame"],
 	["timeline.propose_edit_plan", "timeline_propose_edit_plan"],
 ]);

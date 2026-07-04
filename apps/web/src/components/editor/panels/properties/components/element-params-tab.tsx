@@ -15,6 +15,12 @@ import {
 } from "@/params/registry";
 import type { TimelineElement } from "@/timeline";
 import type { MediaTime } from "@/wasm";
+import {
+	buildScopedTextPatch,
+	readScopedTextParamValue,
+	textParamToScopedPatch,
+	type TextOverrideScope,
+} from "../text-scope";
 
 export type ElementWithTrackForParams = {
 	track: { id: string };
@@ -27,21 +33,32 @@ export function ElementParamsTab({
 	elementsWithTracks,
 	paramKeys,
 	sectionKey,
+	textScope,
 }: {
 	element: TimelineElement;
 	trackId: string;
 	elementsWithTracks?: ElementWithTrackForParams[];
 	paramKeys?: readonly string[];
 	sectionKey: string;
+	textScope?: TextOverrideScope;
 }) {
 	const { localTime, isPlayheadWithinElementRange } = useElementPlayhead({
 		startTime: element.startTime,
 		duration: element.duration,
 	});
-	const params = getElementParams({ element }).filter(
-		(param) => !paramKeys || paramKeys.includes(param.key),
-	);
-	const baseValues = buildValues({ element, params });
+	const isScopedText =
+		element.type === "text" &&
+		textScope !== undefined &&
+		textScope.type !== "layer";
+	const params = getElementParams({ element })
+		.filter((param) => !paramKeys || paramKeys.includes(param.key))
+		.filter((param) =>
+			isScopedText
+				? textParamToScopedPatch({ key: param.key, value: param.default }) !==
+					null
+				: true,
+		);
+	const baseValues = buildValues({ element, params, textScope });
 	const bulkElements =
 		elementsWithTracks && elementsWithTracks.length > 1
 			? elementsWithTracks
@@ -71,6 +88,7 @@ export function ElementParamsTab({
 								}
 								localTime={localTime}
 								isPlayheadWithinElementRange={isPlayheadWithinElementRange}
+								textScope={textScope}
 							/>
 						))}
 				</SectionFields>
@@ -88,6 +106,7 @@ function ElementParamField({
 	isMixed,
 	localTime,
 	isPlayheadWithinElementRange,
+	textScope,
 }: {
 	element: TimelineElement;
 	trackId: string;
@@ -97,13 +116,25 @@ function ElementParamField({
 	isMixed: boolean;
 	localTime: MediaTime;
 	isPlayheadWithinElementRange: boolean;
+	textScope?: TextOverrideScope;
 }) {
-	const resolvedValue = resolveAnimationPathValueAtTime({
-		animations: element.animations,
-		propertyPath: param.key,
-		localTime,
-		fallbackValue: baseValue,
-	});
+	const isScopedText =
+		element.type === "text" &&
+		textScope !== undefined &&
+		textScope.type !== "layer";
+	const resolvedValue = isScopedText
+		? readScopedTextParamValue({
+				element,
+				scope: textScope,
+				key: param.key,
+				fallbackValue: baseValue,
+			})
+		: resolveAnimationPathValueAtTime({
+				animations: element.animations,
+				propertyPath: param.key,
+				localTime,
+				fallbackValue: baseValue,
+			});
 	const animatedParam = useKeyframedParamProperty({
 		param,
 		trackId,
@@ -120,6 +151,25 @@ function ElementParamField({
 	const isBulk = !!elementsWithTracks?.length;
 
 	const onPreview = (value: ParamValue) => {
+		if (isScopedText) {
+			const scopedPatch = textParamToScopedPatch({ key: param.key, value });
+			if (!scopedPatch) return;
+			editor.timeline.previewElements({
+				updates: [
+					{
+						trackId,
+						elementId: element.id,
+						updates: buildScopedTextPatch({
+							element,
+							scope: textScope,
+							patch: scopedPatch,
+						}),
+					},
+				],
+			});
+			return;
+		}
+
 		if (!elementsWithTracks) {
 			animatedParam.onPreview(value);
 			return;
@@ -146,9 +196,9 @@ function ElementParamField({
 			value={resolvedValue}
 			isMixed={isMixed}
 			onPreview={onPreview}
-			onCommit={isBulk ? onCommit : animatedParam.onCommit}
+			onCommit={isBulk || isScopedText ? onCommit : animatedParam.onCommit}
 			keyframe={
-				isBulk || param.keyframable === false
+				isBulk || isScopedText || param.keyframable === false
 					? undefined
 					: {
 							isActive: animatedParam.isKeyframedAtTime,
@@ -163,15 +213,25 @@ function ElementParamField({
 function buildValues({
 	element,
 	params,
+	textScope,
 }: {
 	element: TimelineElement;
 	params: readonly ElementParamDefinition[];
+	textScope?: TextOverrideScope;
 }): ParamValues {
 	const values: ParamValues = {};
 	for (const param of params) {
 		const value = readElementParamValue({ element, param });
 		if (value !== null) {
-			values[param.key] = value;
+			values[param.key] =
+				element.type === "text" && textScope && textScope.type !== "layer"
+					? readScopedTextParamValue({
+							element,
+							scope: textScope,
+							key: param.key,
+							fallbackValue: value,
+						})
+					: value;
 		}
 	}
 	return values;
@@ -188,9 +248,10 @@ function isMixedParamValue({
 		element: elementsWithTracks[0].element,
 		param,
 	});
-	return elementsWithTracks.some((entry) => (
-		readElementParamValue({ element: entry.element, param }) !== first
-	));
+	return elementsWithTracks.some(
+		(entry) =>
+			readElementParamValue({ element: entry.element, param }) !== first,
+	);
 }
 
 function isVisible({

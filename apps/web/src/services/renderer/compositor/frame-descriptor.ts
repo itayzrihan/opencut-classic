@@ -26,7 +26,6 @@ import type {
 	TextureCanvasDrawFn,
 	TextureUploadDescriptor,
 } from "./types";
-import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
 
 type RendererSize = Pick<CanvasRenderer, "width" | "height">;
 
@@ -281,10 +280,7 @@ function drawAiEffectOverlay({
 		: "";
 	const titleSize = 15 * scale;
 	const subtitleSize = 11 * scale;
-	const boxWidth = Math.min(
-		width - x * 2,
-		maxTextWidth + paddingX * 2,
-	);
+	const boxWidth = Math.min(width - x * 2, maxTextWidth + paddingX * 2);
 	const boxHeight =
 		paddingY * 2 + titleSize + (subtitle ? subtitleSize + 7 * scale : 0);
 
@@ -346,7 +342,10 @@ async function collectVisualSourceNode({
 
 	const source =
 		node instanceof GraphicNode
-			? node.getSource({ resolvedParams: node.resolved.resolvedParams })
+			? node.getSource({
+					resolvedParams: node.resolved.resolvedParams,
+					localTime: node.resolved.localTime,
+				})
 			: node.resolved.source;
 	if (!source) {
 		return;
@@ -354,11 +353,11 @@ async function collectVisualSourceNode({
 
 	const sourceWidth =
 		node instanceof GraphicNode
-			? DEFAULT_GRAPHIC_SOURCE_SIZE
+			? (node.resolved as ResolvedGraphicNodeState).sourceWidth
 			: (node.resolved as ResolvedVisualSourceNodeState).sourceWidth;
 	const sourceHeight =
 		node instanceof GraphicNode
-			? DEFAULT_GRAPHIC_SOURCE_SIZE
+			? (node.resolved as ResolvedGraphicNodeState).sourceHeight
 			: (node.resolved as ResolvedVisualSourceNodeState).sourceHeight;
 
 	const textureId = `${path}:source`;
@@ -477,9 +476,7 @@ function computeVisualTransform({
 	};
 }
 
-function fullCanvasTransform(
-	renderer: RendererSize,
-): QuadTransformDescriptor {
+function fullCanvasTransform(renderer: RendererSize): QuadTransformDescriptor {
 	return {
 		centerX: renderer.width / 2,
 		centerY: renderer.height / 2,

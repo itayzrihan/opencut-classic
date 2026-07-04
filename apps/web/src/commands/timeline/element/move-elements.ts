@@ -5,6 +5,7 @@ import {
 } from "@/commands/base-command";
 import { EditorCore } from "@/core";
 import type { SceneTracks, TimelineElement, TimelineTrack } from "@/timeline";
+import { splitTrackByType } from "@/timeline";
 import {
 	buildEmptyTrack,
 	validateElementTrackCompatibility,
@@ -138,6 +139,7 @@ function mapSceneTracks({
 	update: <TTrack extends TimelineTrack>(track: TTrack) => TTrack;
 }): SceneTracks {
 	return {
+		...tracks,
 		overlay: tracks.overlay.map((track) => update(track)),
 		main: update(tracks.main),
 		audio: tracks.audio.map((track) => update(track)),
@@ -153,31 +155,5 @@ function insertTrackAtDisplayIndex({
 	track: TimelineTrack;
 	insertIndex: number;
 }): SceneTracks {
-	if (track.type === "audio") {
-		const audioInsertIndex = Math.max(
-			0,
-			Math.min(insertIndex - tracks.overlay.length - 1, tracks.audio.length),
-		);
-		return {
-			...tracks,
-			audio: [
-				...tracks.audio.slice(0, audioInsertIndex),
-				track,
-				...tracks.audio.slice(audioInsertIndex),
-			],
-		};
-	}
-
-	const overlayInsertIndex = Math.max(
-		0,
-		Math.min(insertIndex, tracks.overlay.length),
-	);
-	return {
-		...tracks,
-		overlay: [
-			...tracks.overlay.slice(0, overlayInsertIndex),
-			track,
-			...tracks.overlay.slice(overlayInsertIndex),
-		],
-	};
+	return splitTrackByType({ tracks, track, insertIndex });
 }

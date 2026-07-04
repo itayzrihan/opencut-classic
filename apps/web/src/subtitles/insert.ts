@@ -3,24 +3,30 @@ import { TracksSnapshotCommand } from "@/commands";
 import { buildSubtitleTextElement } from "./build-subtitle-text-element";
 import type { SubtitleCue } from "./types";
 import type { TextTrack } from "@/timeline";
-import { splitCaptionCuesByLayer } from "./caption-layout";
+import {
+	splitCaptionCuesByLayer,
+	type CaptionLayoutSettings,
+} from "./caption-layout";
 import { buildEmptyTrack } from "@/timeline/placement";
 import { generateUUID } from "@/utils/id";
 
 export function buildCaptionTextTracks({
 	captions,
 	captionSource,
+	settings,
 	layerCount = 1,
 	canvasSize,
 	name = "Captions",
 }: {
 	captions: SubtitleCue[];
 	captionSource?: TextTrack["captionSource"];
+	settings?: CaptionLayoutSettings;
 	layerCount?: number;
 	canvasSize: { width: number; height: number };
 	name?: string;
 }): TextTrack[] {
 	const layers = splitCaptionCuesByLayer({ captions, layerCount });
+	const layoutSettings = captionSource?.settings ?? settings;
 
 	return layers.map((layerCaptions, layerIndex) => {
 		const track = buildEmptyTrack({
@@ -40,6 +46,7 @@ export function buildCaptionTextTracks({
 					wordAnimationId: captionSource?.settings.wordAnimationId,
 					accentColor: captionSource?.settings.accentColor,
 					wordDirection: captionSource?.settings.wordDirection,
+					layoutSettings,
 				}),
 				id: generateUUID(),
 			})),
@@ -58,11 +65,13 @@ export function insertCaptionChunksAsTextTrack({
 	editor,
 	captions,
 	captionSource,
+	settings,
 	layerCount = 1,
 }: {
 	editor: EditorCore;
 	captions: SubtitleCue[];
 	captionSource?: TextTrack["captionSource"];
+	settings?: CaptionLayoutSettings;
 	layerCount?: number;
 }): string[] {
 	if (captions.length === 0) {
@@ -75,6 +84,7 @@ export function insertCaptionChunksAsTextTrack({
 	const captionTracks = buildCaptionTextTracks({
 		captions,
 		captionSource,
+		settings,
 		layerCount,
 		canvasSize,
 	});

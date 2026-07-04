@@ -27,6 +27,7 @@ import { getPlayheadSnapPoints } from "@/timeline/playhead-snap-source";
 import { getAnimationKeyframeSnapPointsForTimeline } from "@/timeline/animation-snap-points";
 import {
 	isRetimableElement,
+	getDisplayTracks,
 	type SceneTracks,
 	type TimelineElement,
 	type TimelineTrack,
@@ -80,7 +81,7 @@ export function buildResizeMembers({
 		selectedElements.map((el) => el.elementId),
 	);
 	const trackMap = new Map(
-		[...tracks.overlay, tracks.main, ...tracks.audio].map((track) => [
+		getDisplayTracks({ tracks }).map((track) => [
 			track.id,
 			track,
 		]),

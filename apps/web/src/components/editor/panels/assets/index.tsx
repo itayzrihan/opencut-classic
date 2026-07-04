@@ -13,6 +13,9 @@ import { SoundsView } from "@/sounds/components/assets-view";
 import { StickersView } from "@/stickers/components/assets-view";
 import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
+import { BackgroundsView } from "@/backgrounds/components/assets-view";
+import { OverlayEffectsView } from "@/effects/components/overlay-assets-view";
+import { TransitionsView } from "@/transitions/components/assets-view";
 import { AiChatView } from "@/ai/components/ai-chat-view";
 
 export function AssetsPanel() {
@@ -24,12 +27,10 @@ export function AssetsPanel() {
 		sounds: <SoundsView />,
 		text: <TextView />,
 		stickers: <StickersView />,
+		backgrounds: <BackgroundsView />,
 		effects: <EffectsView />,
-		transitions: (
-			<div className="text-muted-foreground p-4">
-				Transitions view coming soon...
-			</div>
-		),
+		overlays: <OverlayEffectsView />,
+		transitions: <TransitionsView />,
 		captions: <Captions />,
 		adjustment: (
 			<div className="text-muted-foreground p-4">

@@ -10,6 +10,8 @@ import type {
 	TextWordTransitionIn,
 } from "@/timeline";
 
+export type CaptionPlacementMode = "grid" | "manual";
+
 export const DEFAULT_CAPTION_LAYOUT = {
 	wordsPerRow: 4,
 	rows: 2,
@@ -20,6 +22,11 @@ export const DEFAULT_CAPTION_LAYOUT = {
 	wordAnimationId: "kinetic-slam-1",
 	accentColor: "#c8ff4d",
 	wordDirection: "auto" as TextWordDirection,
+	placementMode: "grid" as CaptionPlacementMode,
+	placementGridX: 0.5,
+	placementGridY: 1,
+	manualPositionX: 0,
+	manualPositionY: 0,
 };
 
 export interface CaptionLayoutSettings {
@@ -32,6 +39,11 @@ export interface CaptionLayoutSettings {
 	wordAnimationId: string;
 	accentColor: string;
 	wordDirection: TextWordDirection;
+	placementMode: CaptionPlacementMode;
+	placementGridX: number;
+	placementGridY: number;
+	manualPositionX: number;
+	manualPositionY: number;
 }
 
 type LegacyCaptionLayoutSettings = Partial<CaptionLayoutSettings> & {
@@ -64,6 +76,56 @@ function clampNumber({
 	return Math.min(max, Math.max(min, value));
 }
 
+function isPlacementMode(value: unknown): value is CaptionPlacementMode {
+	return value === "grid" || value === "manual";
+}
+
+export function getCaptionPlacementGrid({
+	canvasSize,
+}: {
+	canvasSize: { width: number; height: number };
+}): { columns: number; rows: number } {
+	const width = Math.max(1, canvasSize.width);
+	const height = Math.max(1, canvasSize.height);
+	const ratio = width / height;
+
+	if (Math.abs(ratio - 1) <= 0.05) {
+		return { columns: 3, rows: 3 };
+	}
+
+	if (ratio > 1) {
+		return { columns: 5, rows: 3 };
+	}
+
+	return { columns: 3, rows: 5 };
+}
+
+export function getCaptionGridCell({
+	settings,
+	canvasSize,
+}: {
+	settings: CaptionLayoutSettings;
+	canvasSize: { width: number; height: number };
+}): { columnIndex: number; rowIndex: number; columns: number; rows: number } {
+	const grid = getCaptionPlacementGrid({ canvasSize });
+	const columnIndex = clampInteger({
+		value: settings.placementGridX * Math.max(0, grid.columns - 1),
+		min: 0,
+		max: grid.columns - 1,
+	});
+	const rowIndex = clampInteger({
+		value: settings.placementGridY * Math.max(0, grid.rows - 1),
+		min: 0,
+		max: grid.rows - 1,
+	});
+
+	return {
+		...grid,
+		columnIndex,
+		rowIndex,
+	};
+}
+
 export function normalizeCaptionLayoutSettings({
 	settings,
 }: {
@@ -76,6 +138,7 @@ export function normalizeCaptionLayoutSettings({
 		settings?.revealMode === "spoken-word-keep" ||
 		settings?.revealMode === "emphasize-spoken" ||
 		settings?.revealMode === "emphasize-spoken-keep" ||
+		settings?.revealMode === "letter-by-letter" ||
 		settings?.revealMode === "growing-row"
 			? settings.revealMode
 			: DEFAULT_CAPTION_LAYOUT.revealMode;
@@ -97,6 +160,9 @@ export function normalizeCaptionLayoutSettings({
 		settings?.wordDirection === "auto"
 			? settings.wordDirection
 			: DEFAULT_CAPTION_LAYOUT.wordDirection;
+	const placementMode = isPlacementMode(settings?.placementMode)
+		? settings.placementMode
+		: DEFAULT_CAPTION_LAYOUT.placementMode;
 	return {
 		wordsPerRow: clampInteger({
 			value: settings?.wordsPerRow ?? DEFAULT_CAPTION_LAYOUT.wordsPerRow,
@@ -109,12 +175,14 @@ export function normalizeCaptionLayoutSettings({
 			max: 4,
 		}),
 		inPaddingPercent: clampNumber({
-			value: settings?.inPaddingPercent ?? DEFAULT_CAPTION_LAYOUT.inPaddingPercent,
+			value:
+				settings?.inPaddingPercent ?? DEFAULT_CAPTION_LAYOUT.inPaddingPercent,
 			min: 0,
 			max: 100,
 		}),
 		outPaddingPercent: clampNumber({
-			value: settings?.outPaddingPercent ?? DEFAULT_CAPTION_LAYOUT.outPaddingPercent,
+			value:
+				settings?.outPaddingPercent ?? DEFAULT_CAPTION_LAYOUT.outPaddingPercent,
 			min: 0,
 			max: 100,
 		}),
@@ -132,6 +200,29 @@ export function normalizeCaptionLayoutSettings({
 				? settings.accentColor
 				: DEFAULT_CAPTION_LAYOUT.accentColor,
 		wordDirection,
+		placementMode,
+		placementGridX: clampNumber({
+			value: settings?.placementGridX ?? DEFAULT_CAPTION_LAYOUT.placementGridX,
+			min: 0,
+			max: 1,
+		}),
+		placementGridY: clampNumber({
+			value: settings?.placementGridY ?? DEFAULT_CAPTION_LAYOUT.placementGridY,
+			min: 0,
+			max: 1,
+		}),
+		manualPositionX: clampNumber({
+			value:
+				settings?.manualPositionX ?? DEFAULT_CAPTION_LAYOUT.manualPositionX,
+			min: -100_000,
+			max: 100_000,
+		}),
+		manualPositionY: clampNumber({
+			value:
+				settings?.manualPositionY ?? DEFAULT_CAPTION_LAYOUT.manualPositionY,
+			min: -100_000,
+			max: 100_000,
+		}),
 	};
 }
 
@@ -172,7 +263,11 @@ export function buildCaptionChunksFromWords({
 		if (group.length === 0) continue;
 
 		const lines: string[] = [];
-		for (let lineStart = 0; lineStart < group.length; lineStart += normalized.wordsPerRow) {
+		for (
+			let lineStart = 0;
+			lineStart < group.length;
+			lineStart += normalized.wordsPerRow
+		) {
 			lines.push(
 				group
 					.slice(lineStart, lineStart + normalized.wordsPerRow)
@@ -182,7 +277,10 @@ export function buildCaptionChunksFromWords({
 		}
 
 		const rawStartTime = group[0].start;
-		const rawEndTime = Math.max(group[group.length - 1].end, rawStartTime + 0.1);
+		const rawEndTime = Math.max(
+			group[group.length - 1].end,
+			rawStartTime + 0.1,
+		);
 		const { startTime, endTime } = paddedCaptionTime({
 			startTime: rawStartTime,
 			endTime: rawEndTime,
@@ -238,7 +336,10 @@ export function splitCaptionCuesByLayer({
 	layerCount: number;
 }): SubtitleCue[][] {
 	const safeLayerCount = clampInteger({ value: layerCount, min: 1, max: 16 });
-	const layers = Array.from({ length: safeLayerCount }, () => [] as SubtitleCue[]);
+	const layers = Array.from(
+		{ length: safeLayerCount },
+		() => [] as SubtitleCue[],
+	);
 	const layerEnds = Array.from({ length: safeLayerCount }, () => 0);
 
 	captions.forEach((caption, index) => {

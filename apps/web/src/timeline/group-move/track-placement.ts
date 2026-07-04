@@ -1,4 +1,5 @@
 import type { SceneTracks, TimelineTrack } from "@/timeline";
+import { getDisplayTracks as getOrderedDisplayTracks } from "@/timeline";
 import type { GroupTrackSection } from "./types";
 
 export interface TrackPlacement {
@@ -14,7 +15,7 @@ export function getDisplayTracks({
 }: {
 	tracks: SceneTracks;
 }): TimelineTrack[] {
-	return [...tracks.overlay, tracks.main, ...tracks.audio];
+	return getOrderedDisplayTracks({ tracks });
 }
 
 export function getTrackPlacementById({
@@ -30,7 +31,9 @@ export function getTrackPlacementById({
 			trackType: tracks.main.type,
 			section: "main",
 			sectionIndex: -1,
-			displayIndex: tracks.overlay.length,
+			displayIndex: getOrderedDisplayTracks({ tracks }).findIndex(
+				(track) => track.id === trackId,
+			),
 		};
 	}
 
@@ -43,7 +46,9 @@ export function getTrackPlacementById({
 			trackType: tracks.overlay[overlayTrackIndex].type,
 			section: "overlay",
 			sectionIndex: overlayTrackIndex,
-			displayIndex: overlayTrackIndex,
+			displayIndex: getOrderedDisplayTracks({ tracks }).findIndex(
+				(track) => track.id === trackId,
+			),
 		};
 	}
 
@@ -56,7 +61,9 @@ export function getTrackPlacementById({
 			trackType: tracks.audio[audioTrackIndex].type,
 			section: "audio",
 			sectionIndex: audioTrackIndex,
-			displayIndex: tracks.overlay.length + 1 + audioTrackIndex,
+			displayIndex: getOrderedDisplayTracks({ tracks }).findIndex(
+				(track) => track.id === trackId,
+			),
 		};
 	}
 

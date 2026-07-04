@@ -1,4 +1,5 @@
 import type { MediaAsset } from "@/media/types";
+import { getDisplayTracks as getTimelineDisplayTracks } from "@/timeline";
 import type {
 	Bookmark,
 	ElementRef,
@@ -47,7 +48,7 @@ export function elementOverlapsRange({
 }
 
 export function getDisplayTracks(tracks: SceneTracks): TimelineTrack[] {
-	return [...tracks.overlay, tracks.main, ...tracks.audio];
+	return getTimelineDisplayTracks({ tracks });
 }
 
 export function buildTimelineContextIndex({

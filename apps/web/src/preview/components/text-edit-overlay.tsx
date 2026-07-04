@@ -10,6 +10,7 @@ import {
 } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
+import { buildTransitionAnimationsFromElement } from "@/transitions";
 import { resolveTextLayout } from "@/text/primitives";
 import {
 	buildTextBackgroundFromElement,
@@ -75,7 +76,7 @@ export function TextEditOverlay({
 	});
 	const transform = resolveTransformAtTime({
 		baseTransform: buildTransformFromParams({ params: element.params }),
-		animations: element.animations,
+		animations: buildTransitionAnimationsFromElement({ element }),
 		localTime,
 	});
 

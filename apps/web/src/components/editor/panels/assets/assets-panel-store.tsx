@@ -21,7 +21,9 @@ export const TAB_KEYS = [
 	"sounds",
 	"text",
 	"stickers",
+	"backgrounds",
 	"effects",
+	"overlays",
 	"transitions",
 	"captions",
 	"adjustment",
@@ -59,9 +61,17 @@ export const tabs = {
 		icon: createHugeiconsIcon({ icon: Happy01Icon }),
 		label: "Stickers",
 	},
+	backgrounds: {
+		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
+		label: "Backgrounds",
+	},
 	effects: {
 		icon: createHugeiconsIcon({ icon: MagicWand05Icon }),
 		label: "Effects",
+	},
+	overlays: {
+		icon: createHugeiconsIcon({ icon: MagicWand05Icon }),
+		label: "Overlay FX",
 	},
 	transitions: {
 		icon: createHugeiconsIcon({ icon: ArrowRightDoubleIcon }),

@@ -3,18 +3,39 @@ import type { EditorCore } from "@/core";
 import {
 	VISUAL_ELEMENT_TYPES,
 	type CreateTextElement,
+	type CreateTimelineElement,
 	type ElementType,
 	type SceneTracks,
 	type TimelineElement,
 	type VisualElement,
 } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
+import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import type { AnimationPath } from "@/animation/types";
-import { ZERO_MEDIA_TIME, type MediaTime } from "@/wasm";
+import { isAnimationPath } from "@/animation/path";
+import { mediaTimeFromSeconds, ZERO_MEDIA_TIME, type MediaTime } from "@/wasm";
 import type { ParamValue, ParamValues } from "@/params";
-import { buildEffectElement } from "@/timeline/element-utils";
+import {
+	buildEffectElement,
+	buildElementFromMedia,
+	buildGraphicElement,
+} from "@/timeline/element-utils";
+import { validateElementTrackCompatibility } from "@/timeline/placement";
+import { resolveAnimationTarget } from "@/timeline/animation-targets";
+import { graphicsRegistry, registerDefaultGraphics } from "@/graphics";
+import {
+	DEFAULT_HYPERFRAME_HEIGHT,
+	DEFAULT_HYPERFRAME_WIDTH,
+	HYPERFRAME_DEFINITION_ID,
+} from "@/graphics/definitions/hyperframe";
+import { TRANSITION_PRESETS } from "@/transitions";
+import type { MediaAsset } from "@/media/types";
 import type { AiEditOperation, AiEditPlan, AiTimelineRange } from "./types";
-import { buildTimelineContextIndex, rangesOverlap } from "./timeline-context";
+import {
+	buildTimelineContextIndex,
+	getDisplayTracks,
+	rangesOverlap,
+} from "./timeline-context";
 import {
 	buildCustomAiEffectParams,
 	CUSTOM_AI_EFFECT_TYPE,
@@ -146,6 +167,92 @@ const operationSchema = z.discriminatedUnion("type", [
 		keyframeId: z.string().min(1),
 		reason: z.string().optional(),
 	}),
+	z.object({
+		type: z.literal("add_track"),
+		trackType: z.enum(["video", "text", "audio", "graphic", "effect"]),
+		index: z.number().int().min(0).optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("remove_track"),
+		trackId: z.string().min(1),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("reorder_track"),
+		trackId: z.string().min(1),
+		toIndex: z.number().int().min(0),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("set_track_state"),
+		trackId: z.string().min(1),
+		muted: z.boolean().optional(),
+		hidden: z.boolean().optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("insert_media_element"),
+		mediaId: z.string().min(1),
+		startTime: mediaTimeSchema,
+		trackId: z.string().min(1).optional(),
+		duration: positiveMediaTimeSchema.optional(),
+		name: z.string().min(1).optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("insert_graphic_element"),
+		definitionId: z.string().min(1),
+		startTime: mediaTimeSchema,
+		duration: positiveMediaTimeSchema,
+		trackId: z.string().min(1).optional(),
+		name: z.string().min(1).optional(),
+		params: paramsSchema.optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("insert_html_element"),
+		html: z.string().min(1),
+		startTime: mediaTimeSchema,
+		duration: positiveMediaTimeSchema,
+		trackId: z.string().min(1).optional(),
+		name: z.string().min(1).optional(),
+		sourceWidth: z.number().int().min(16).max(4096).optional(),
+		sourceHeight: z.number().int().min(16).max(4096).optional(),
+		params: paramsSchema.optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("duplicate_element"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("apply_transition"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		presetId: z.string().min(1),
+		side: z.enum(["in", "out"]),
+		percent: z.number().min(0).max(100).optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("set_element_state"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		hidden: z.boolean().optional(),
+		muted: z.boolean().optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("retime_element"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		rate: z.number().min(0.1).max(10),
+		maintainPitch: z.boolean().optional(),
+		reason: z.string().optional(),
+	}),
 ]);
 
 export const aiEditPlanSchema = z.object({
@@ -165,17 +272,23 @@ export function validateAiEditPlan({
 	value,
 	tracks,
 	range,
+	mediaAssets,
 }: {
 	value: unknown;
 	tracks: SceneTracks;
 	range?: AiTimelineRange | null;
+	mediaAssets?: MediaAsset[];
 }): ValidateAiEditPlanResult {
 	const parsed = aiEditPlanSchema.safeParse(normalizeAiEditPlanInput(value));
 	if (!parsed.success) {
 		return {
 			success: false,
 			plan: null,
-			errors: parsed.error.issues.map((issue) => issue.message),
+			errors: parsed.error.issues.map((issue) =>
+				issue.path.length > 0
+					? `${issue.path.join(".")}: ${issue.message}`
+					: issue.message,
+			),
 		};
 	}
 
@@ -184,6 +297,7 @@ export function validateAiEditPlan({
 		operations: plan.operations,
 		tracks,
 		range,
+		mediaAssets,
 	});
 	return {
 		success: errors.length === 0,
@@ -199,8 +313,17 @@ export function applyAiEditPlan({
 	editor: EditorCore;
 	plan: AiEditPlan;
 }): void {
-	for (const operation of plan.operations) {
-		applyOperation({ editor, operation });
+	const scene = editor.scenes.getActiveSceneOrNull();
+	const previousTracks = scene?.tracks;
+	try {
+		for (const operation of plan.operations) {
+			applyOperation({ editor, operation });
+		}
+	} catch (error) {
+		if (previousTracks) {
+			editor.timeline.updateTracks(previousTracks);
+		}
+		throw error;
 	}
 }
 
@@ -272,7 +395,26 @@ function normalizeAiEditPlanInput(value: unknown): unknown {
 }
 
 function normalizeAiEditOperationInput(value: unknown): unknown {
-	if (!isRecord(value) || value.type !== "update_element") {
+	if (!isRecord(value)) {
+		return value;
+	}
+	if (
+		(value.type === "upsert_keyframe" || value.type === "remove_keyframe") &&
+		typeof value.propertyPath !== "string"
+	) {
+		const alias =
+			typeof value.property === "string"
+				? value.property
+				: typeof value.path === "string"
+					? value.path
+					: null;
+		if (alias) {
+			const { property: _property, path: _path, ...rest } = value;
+			return { ...rest, propertyPath: alias };
+		}
+		return value;
+	}
+	if (value.type !== "update_element") {
 		return value;
 	}
 	if (isRecord(value.patch)) {
@@ -308,15 +450,62 @@ function getRangeGuardErrors({
 	operations,
 	tracks,
 	range,
+	mediaAssets,
 }: {
 	operations: AiEditOperation[];
 	tracks: SceneTracks;
 	range?: AiTimelineRange | null;
+	mediaAssets?: MediaAsset[];
 }): string[] {
 	const index = buildTimelineContextIndex({ tracks });
+	const displayTracks = getDisplayTracks(tracks);
 	const errors: string[] = [];
 
 	for (const operation of operations) {
+		if (operation.type === "add_track") {
+			continue;
+		}
+
+		if (
+			operation.type === "remove_track" ||
+			operation.type === "reorder_track" ||
+			operation.type === "set_track_state"
+		) {
+			if (!index.layersById.has(operation.trackId)) {
+				errors.push(
+					`${operation.type} references a missing track ${operation.trackId}`,
+				);
+			}
+			continue;
+		}
+
+		if (
+			operation.type === "insert_media_element" ||
+			operation.type === "insert_graphic_element" ||
+			operation.type === "insert_html_element"
+		) {
+			errors.push(
+				...getInsertOperationErrors({
+					operation,
+					index,
+					displayTracks,
+					range,
+					mediaAssets,
+				}),
+			);
+			continue;
+		}
+
+		if (operation.type === "apply_transition") {
+			if (
+				!TRANSITION_PRESETS.some((preset) => preset.id === operation.presetId)
+			) {
+				errors.push(
+					`apply_transition references an unknown transition preset ${operation.presetId}`,
+				);
+			}
+		}
+
 		if (operation.type === "insert_text_element") {
 			if (operation.trackId) {
 				const layer = index.layersById.get(operation.trackId);
@@ -339,6 +528,44 @@ function getRangeGuardErrors({
 			}
 
 			continue;
+		}
+
+		if (operation.type === "move_element") {
+			const source = findTrackAndElement({
+				tracks: displayTracks,
+				trackId: operation.sourceTrackId,
+				elementId: operation.elementId,
+			});
+			const targetTrack = displayTracks.find(
+				(track) => track.id === operation.targetTrackId,
+			);
+			if (!targetTrack) {
+				errors.push(
+					`move_element references a missing target track ${operation.targetTrackId}`,
+				);
+			} else if (source?.element) {
+				const validation = validateElementTrackCompatibility({
+					element: source.element,
+					track: targetTrack,
+				});
+				if (!validation.isValid) {
+					errors.push(
+						validation.errorMessage ??
+							`move_element cannot move ${source.element.name} to ${targetTrack.name}`,
+					);
+				}
+			}
+			if (range && source?.element) {
+				const movedEndTime = operation.startTime + source.element.duration;
+				if (
+					operation.startTime < range.startTime ||
+					movedEndTime > range.endTime
+				) {
+					errors.push(
+						"move_element target timing is outside the selected range",
+					);
+				}
+			}
 		}
 
 		const refs = getOperationElementRefs(operation);
@@ -369,6 +596,36 @@ function getRangeGuardErrors({
 					`${operation.type} target ${element.name} is not a visual element`,
 				);
 			}
+			if (operation.type === "apply_transition" && !targetIsVisual) {
+				errors.push(
+					`apply_transition target ${element.name} is not a visual element`,
+				);
+			}
+			if (
+				operation.type === "retime_element" &&
+				element.type !== "video" &&
+				element.type !== "audio"
+			) {
+				errors.push(
+					`retime_element target ${element.name} is not a video or audio element`,
+				);
+			}
+			if (operation.type === "set_element_state") {
+				if (operation.hidden !== undefined && !targetIsVisual) {
+					errors.push(
+						`set_element_state cannot hide ${element.name}; it is not a visual element`,
+					);
+				}
+				if (
+					operation.muted !== undefined &&
+					element.type !== "video" &&
+					element.type !== "audio"
+				) {
+					errors.push(
+						`set_element_state cannot mute ${element.name}; it has no audio`,
+					);
+				}
+			}
 			if (
 				operation.type === "update_clip_effect_params" &&
 				targetIsVisual &&
@@ -377,6 +634,74 @@ function getRangeGuardErrors({
 				errors.push(
 					`update_clip_effect_params references a missing effect ${operation.effectId}`,
 				);
+			}
+			if (
+				operation.type === "upsert_keyframe" ||
+				operation.type === "remove_keyframe"
+			) {
+				const target = findTrackAndElement({
+					tracks: displayTracks,
+					trackId: ref.trackId,
+					elementId: ref.elementId,
+				});
+				if (!isAnimationPath(operation.propertyPath)) {
+					errors.push(
+						`${operation.type} references an unsupported animation path ${operation.propertyPath}`,
+					);
+				} else if (
+					target?.element &&
+					!resolveAnimationTarget({
+						element: target.element,
+						path: operation.propertyPath,
+					})
+				) {
+					errors.push(
+						`${operation.type} cannot animate ${operation.propertyPath} on ${target.element.name}`,
+					);
+				}
+
+				if (
+					operation.type === "upsert_keyframe" &&
+					range &&
+					(element.startTime + operation.time < range.startTime ||
+						element.startTime + operation.time > range.endTime)
+				) {
+					errors.push("upsert_keyframe time is outside the selected range");
+				}
+
+				if (
+					operation.type === "upsert_keyframe" &&
+					isAnimationPath(operation.propertyPath) &&
+					target?.element
+				) {
+					const animationTarget = resolveAnimationTarget({
+						element: target.element,
+						path: operation.propertyPath,
+					});
+					if (
+						animationTarget &&
+						animationTarget.coerceValue({
+							value: operation.value as ParamValue,
+						}) === null
+					) {
+						errors.push(
+							`upsert_keyframe value is invalid for ${operation.propertyPath}`,
+						);
+					}
+				}
+
+				if (
+					operation.type === "remove_keyframe" &&
+					!element.keyframes?.some(
+						(keyframe) =>
+							keyframe.propertyPath === operation.propertyPath &&
+							keyframe.keyframeId === operation.keyframeId,
+					)
+				) {
+					errors.push(
+						`remove_keyframe references a missing keyframe ${operation.keyframeId}`,
+					);
+				}
 			}
 		}
 
@@ -398,16 +723,28 @@ function getRangeGuardErrors({
 		) {
 			errors.push("split_element splitTime is outside the selected range");
 		}
-		if (
-			range &&
-			operation.type === "upsert_keyframe" &&
-			(operation.time < range.startTime || operation.time > range.endTime)
-		) {
-			errors.push("upsert_keyframe time is outside the selected range");
-		}
 	}
 
 	return errors;
+}
+
+function findTrackAndElement({
+	tracks,
+	trackId,
+	elementId,
+}: {
+	tracks: ReturnType<typeof getDisplayTracks>;
+	trackId: string;
+	elementId: string;
+}): {
+	track: ReturnType<typeof getDisplayTracks>[number];
+	element: TimelineElement;
+} | null {
+	const track = tracks.find((candidate) => candidate.id === trackId);
+	const element = track?.elements.find(
+		(candidate) => candidate.id === elementId,
+	);
+	return track && element ? { track, element } : null;
 }
 
 function getOperationElementRefs(
@@ -415,6 +752,13 @@ function getOperationElementRefs(
 ): Array<{ trackId: string; elementId: string }> {
 	switch (operation.type) {
 		case "insert_text_element":
+		case "insert_media_element":
+		case "insert_graphic_element":
+		case "insert_html_element":
+		case "add_track":
+		case "remove_track":
+		case "reorder_track":
+		case "set_track_state":
 			return [];
 		case "move_element":
 			return [
@@ -423,6 +767,163 @@ function getOperationElementRefs(
 		default:
 			return [{ trackId: operation.trackId, elementId: operation.elementId }];
 	}
+}
+
+function getInsertOperationErrors({
+	operation,
+	index,
+	displayTracks,
+	range,
+	mediaAssets,
+}: {
+	operation: Extract<
+		AiEditOperation,
+		{
+			type:
+				| "insert_media_element"
+				| "insert_graphic_element"
+				| "insert_html_element";
+		}
+	>;
+	index: ReturnType<typeof buildTimelineContextIndex>;
+	displayTracks: ReturnType<typeof getDisplayTracks>;
+	range?: AiTimelineRange | null;
+	mediaAssets?: MediaAsset[];
+}): string[] {
+	const errors: string[] = [];
+
+	let mediaAsset: MediaAsset | undefined;
+	if (operation.type === "insert_media_element") {
+		mediaAsset = mediaAssets?.find((asset) => asset.id === operation.mediaId);
+		if (mediaAssets && !mediaAsset) {
+			errors.push(
+				`insert_media_element references a missing media asset ${operation.mediaId}`,
+			);
+		}
+	}
+
+	if (operation.type === "insert_graphic_element") {
+		registerDefaultGraphics();
+		if (!graphicsRegistry.has(operation.definitionId)) {
+			errors.push(
+				`insert_graphic_element references an unknown graphic definition ${operation.definitionId}`,
+			);
+		}
+	}
+
+	if (operation.type === "insert_html_element" && !operation.html.trim()) {
+		errors.push("insert_html_element requires non-empty html");
+	}
+
+	if (operation.trackId) {
+		const layer = index.layersById.get(operation.trackId);
+		const track = displayTracks.find(
+			(candidate) => candidate.id === operation.trackId,
+		);
+		if (!layer || !track) {
+			errors.push(
+				`${operation.type} references a missing track ${operation.trackId}`,
+			);
+		} else {
+			const element = buildElementForInsertOperation({
+				operation,
+				mediaAsset,
+			});
+			if (element) {
+				const validation = validateElementTrackCompatibility({
+					element: element as TimelineElement,
+					track,
+				});
+				if (!validation.isValid) {
+					errors.push(
+						validation.errorMessage ??
+							`${operation.type} cannot target track ${operation.trackId}`,
+					);
+				}
+			}
+		}
+	}
+
+	if (range) {
+		const duration =
+			operation.type === "insert_media_element"
+				? (operation.duration ??
+					(mediaAsset
+						? getMediaAssetDefaultDuration({ mediaAsset })
+						: (0 as MediaTime)))
+				: operation.duration;
+		const endTime = operation.startTime + (duration ?? 0);
+		if (operation.startTime < range.startTime || endTime > range.endTime) {
+			errors.push(`${operation.type} is outside the selected range`);
+		}
+	}
+
+	return errors;
+}
+
+function getMediaAssetDefaultDuration({
+	mediaAsset,
+}: {
+	mediaAsset: MediaAsset;
+}): MediaTime {
+	if (mediaAsset.duration && mediaAsset.duration > 0) {
+		return mediaTimeFromSeconds({ seconds: mediaAsset.duration });
+	}
+	return DEFAULT_NEW_ELEMENT_DURATION;
+}
+
+function buildElementForInsertOperation({
+	operation,
+	mediaAsset,
+}: {
+	operation: Extract<
+		AiEditOperation,
+		{
+			type:
+				| "insert_media_element"
+				| "insert_graphic_element"
+				| "insert_html_element";
+		}
+	>;
+	mediaAsset?: MediaAsset;
+}): CreateTimelineElement | null {
+	if (operation.type === "insert_media_element") {
+		if (!mediaAsset) {
+			return null;
+		}
+		const element = buildElementFromMedia({
+			mediaId: mediaAsset.id,
+			mediaType: mediaAsset.type,
+			name: operation.name ?? mediaAsset.name,
+			duration:
+				operation.duration ?? getMediaAssetDefaultDuration({ mediaAsset }),
+			startTime: operation.startTime,
+		});
+		return element;
+	}
+
+	if (operation.type === "insert_graphic_element") {
+		const element = buildGraphicElement({
+			definitionId: operation.definitionId,
+			name: operation.name,
+			startTime: operation.startTime,
+			params: operation.params,
+		});
+		return { ...element, duration: operation.duration };
+	}
+
+	const element = buildGraphicElement({
+		definitionId: HYPERFRAME_DEFINITION_ID,
+		name: operation.name ?? "AI HTML frame",
+		startTime: operation.startTime,
+		params: {
+			...(operation.params ?? {}),
+			html: operation.html,
+			sourceWidth: operation.sourceWidth ?? DEFAULT_HYPERFRAME_WIDTH,
+			sourceHeight: operation.sourceHeight ?? DEFAULT_HYPERFRAME_HEIGHT,
+		},
+	});
+	return { ...element, duration: operation.duration };
 }
 
 function applyOperation({
@@ -563,6 +1064,137 @@ function applyOperation({
 				],
 			});
 			return;
+		case "add_track":
+			editor.timeline.addTrack({
+				type: operation.trackType,
+				index: operation.index,
+			});
+			return;
+		case "remove_track":
+			editor.timeline.removeTrack({ trackId: operation.trackId });
+			return;
+		case "reorder_track":
+			editor.timeline.reorderTrack({
+				trackId: operation.trackId,
+				toIndex: operation.toIndex,
+			});
+			return;
+		case "set_track_state":
+			{
+				const track = editor.timeline.getTrackById({
+					trackId: operation.trackId,
+				});
+				if (!track) return;
+				if (
+					operation.muted !== undefined &&
+					"muted" in track &&
+					track.muted !== operation.muted
+				) {
+					editor.timeline.toggleTrackMute({ trackId: operation.trackId });
+				}
+				if (
+					operation.hidden !== undefined &&
+					"hidden" in track &&
+					track.hidden !== operation.hidden
+				) {
+					editor.timeline.toggleTrackVisibility({
+						trackId: operation.trackId,
+					});
+				}
+			}
+			return;
+		case "insert_media_element":
+			{
+				const mediaAsset = editor.media
+					.getAssets()
+					.find((asset) => asset.id === operation.mediaId);
+				const element = buildElementForInsertOperation({
+					operation,
+					mediaAsset,
+				});
+				if (!element) {
+					throw new Error(
+						`Media asset ${operation.mediaId} was not found in the project`,
+					);
+				}
+				editor.timeline.insertElement({
+					element,
+					placement: operation.trackId
+						? { mode: "explicit", trackId: operation.trackId }
+						: {
+								mode: "auto",
+								trackType: element.type === "audio" ? "audio" : "video",
+							},
+				});
+			}
+			return;
+		case "insert_graphic_element":
+		case "insert_html_element":
+			{
+				const element = buildElementForInsertOperation({ operation });
+				if (!element) return;
+				editor.timeline.insertElement({
+					element,
+					placement: operation.trackId
+						? { mode: "explicit", trackId: operation.trackId }
+						: { mode: "auto", trackType: "video" },
+				});
+			}
+			return;
+		case "duplicate_element":
+			editor.timeline.duplicateElements({
+				elements: [
+					{ trackId: operation.trackId, elementId: operation.elementId },
+				],
+			});
+			return;
+		case "apply_transition":
+			editor.timeline.applyTransitions({
+				applications: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						presetId: operation.presetId,
+						side: operation.side,
+						percent: operation.percent,
+					},
+				],
+			});
+			return;
+		case "set_element_state":
+			{
+				const target = editor.timeline
+					.getTrackById({ trackId: operation.trackId })
+					?.elements.find((element) => element.id === operation.elementId);
+				if (!target) return;
+				const refs = [
+					{ trackId: operation.trackId, elementId: operation.elementId },
+				];
+				if (
+					operation.hidden !== undefined &&
+					"hidden" in target &&
+					Boolean(target.hidden) !== operation.hidden
+				) {
+					editor.timeline.toggleElementsVisibility({ elements: refs });
+				}
+				if (
+					operation.muted !== undefined &&
+					Boolean(target.params.muted) !== operation.muted
+				) {
+					editor.timeline.toggleElementsMuted({ elements: refs });
+				}
+			}
+			return;
+		case "retime_element":
+			editor.timeline.updateElementRetime({
+				trackId: operation.trackId,
+				elementId: operation.elementId,
+				retime: {
+					rate: operation.rate,
+					maintainPitch: operation.maintainPitch,
+				},
+			});
+			return;
 		default: {
 			const exhaustive: never = operation;
 			return exhaustive;
@@ -660,8 +1292,7 @@ export function buildCustomEditEffectParams({
 					elementId: operation.elementId,
 				},
 				timing:
-					operation.startTime !== undefined &&
-					operation.duration !== undefined
+					operation.startTime !== undefined && operation.duration !== undefined
 						? {
 								startTime: operation.startTime,
 								duration: operation.duration,

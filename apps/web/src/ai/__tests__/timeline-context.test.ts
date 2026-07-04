@@ -141,7 +141,7 @@ describe("timeline context index", () => {
 		expect(parsed.elements[0]?.inActiveRange).toBe(true);
 	});
 
-	test("includes a timeline document in the prompt", () => {
+	test("includes timeline source in the prompt", () => {
 		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- test fixture only implements the editor APIs this prompt builder reads.
 		const editor = {
 			scenes: {
@@ -171,8 +171,7 @@ describe("timeline context index", () => {
 
 		expect(prompt).toContain("Timeline summary:");
 		expect(prompt).toContain("Active range summary: 2 layers and 2 elements");
-		expect(prompt).toContain("OPENCUT_TIMELINE_DOCUMENT:");
-		expect(prompt).toContain('"format":"opencut_timeline_document"');
-		expect(prompt).toContain('"elementId":"word-2"');
+		expect(prompt).toContain("OPENCUT_TIMELINE_SOURCE");
+		expect(prompt).toContain('el {"id":"word-2"');
 	});
 });

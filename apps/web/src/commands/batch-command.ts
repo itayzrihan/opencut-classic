@@ -5,6 +5,10 @@ export class BatchCommand extends Command {
 		super();
 	}
 
+	get canPersistHistory(): boolean {
+		return this.commands.every((command) => command.canPersistHistory);
+	}
+
 	execute(): CommandResult | undefined {
 		let latestSelectionResult: CommandResult | undefined;
 

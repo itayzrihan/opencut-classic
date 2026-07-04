@@ -11,6 +11,7 @@ import type {
 	TextFontStyle,
 	TextFontWeight,
 } from "@/text/primitives";
+import type { BlendMode } from "@/rendering";
 
 export type ElementRef = {
 	trackId: string;
@@ -135,6 +136,7 @@ export interface AppliedElementTransition {
 	presetId: string;
 	placement: "in" | "out" | "cut-left" | "cut-right";
 	duration: MediaTime;
+	startTime?: MediaTime;
 	createdAt: string;
 }
 
@@ -166,6 +168,7 @@ export interface TextElement extends BaseTimelineElement {
 	hidden?: boolean;
 	effects?: Effect[];
 	wordRuns?: TextWordRun[];
+	textRowOverrides?: TextRowOverride[];
 	captionWordAnimationId?: string;
 	captionRevealMode?: TextCaptionRevealMode;
 	captionTransitionIn?: TextWordTransitionIn;
@@ -180,6 +183,7 @@ export type TextCaptionRevealMode =
 	| "spoken-word-keep"
 	| "emphasize-spoken"
 	| "emphasize-spoken-keep"
+	| "letter-by-letter"
 	| "growing-row";
 
 export type TextWordTransitionIn =
@@ -207,6 +211,8 @@ export interface TextWordStyle {
 	lineHeight?: number;
 	opacity?: number;
 	scale?: number;
+	scaleX?: number;
+	scaleY?: number;
 	rotate?: number;
 	blur?: number;
 	shadowBlur?: number;
@@ -214,15 +220,36 @@ export interface TextWordStyle {
 	characterReveal?: boolean;
 	offsetX?: number;
 	offsetY?: number;
+	blendMode?: BlendMode;
+	backgroundEnabled?: boolean;
+	backgroundColor?: string;
+	backgroundCornerRadius?: number;
+	backgroundPaddingX?: number;
+	backgroundPaddingY?: number;
+	backgroundOffsetX?: number;
+	backgroundOffsetY?: number;
 }
 
-export interface TextWordRun {
+export interface TextWordOverrideSettings {
+	style?: TextWordStyle;
+	revealMode?: TextCaptionRevealMode;
+	transitionIn?: TextWordTransitionIn;
+	wordAnimationId?: string;
+	accentColor?: string;
+	wordDirection?: TextWordDirection;
+}
+
+export interface TextRowOverride extends TextWordOverrideSettings {
+	id: string;
+	lineIndex: number;
+}
+
+export interface TextWordRun extends TextWordOverrideSettings {
 	id: string;
 	text: string;
 	lineIndex: number;
 	startTime?: MediaTime;
 	endTime?: MediaTime;
-	style?: TextWordStyle;
 }
 
 export interface StickerElement extends BaseTimelineElement {

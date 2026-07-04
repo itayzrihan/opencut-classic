@@ -49,15 +49,27 @@ export function DraggableItem({
 	const [isDragging, setIsDragging] = useState(false);
 	const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
 	const dragRef = useRef<HTMLDivElement>(null);
+	const emptyDragImageRef = useRef<HTMLImageElement | null>(null);
 	const editor = useEditor();
 
 	const handleAddToTimeline = () => {
 		onAddToTimeline?.({ currentTime: editor.playback.getCurrentTime() });
 	};
 
-	const emptyImg = new window.Image();
-	emptyImg.src =
-		"data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=";
+	const getEmptyDragImage = () => {
+		if (typeof window === "undefined") {
+			return null;
+		}
+
+		if (!emptyDragImageRef.current) {
+			const image = new window.Image();
+			image.src =
+				"data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=";
+			emptyDragImageRef.current = image;
+		}
+
+		return emptyDragImageRef.current;
+	};
 
 	useEffect(() => {
 		if (!isDragging) return;
@@ -74,7 +86,10 @@ export function DraggableItem({
 	}, [isDragging]);
 
 	const handleDragStart = (event: React.DragEvent) => {
-		event.dataTransfer.setDragImage(emptyImg, 0, 0);
+		const emptyDragImage = getEmptyDragImage();
+		if (emptyDragImage) {
+			event.dataTransfer.setDragImage(emptyDragImage, 0, 0);
+		}
 
 		editor.timeline.dragSource.begin({
 			dataTransfer: event.dataTransfer,
@@ -101,7 +116,7 @@ export function DraggableItem({
 				>
 					<div
 						className={cn(
-							"relative flex h-auto w-full cursor-default flex-col gap-1 p-",
+							"relative flex h-auto w-full cursor-default flex-col gap-1 p-0",
 							className,
 						)}
 					>
@@ -172,8 +187,8 @@ export function DraggableItem({
 					<div
 						className="pointer-events-none fixed z-9999"
 						style={{
-							left: dragPosition.x - 40,
-							top: dragPosition.y - 40,
+							left: dragPosition.x + 8,
+							top: dragPosition.y + 8,
 						}}
 					>
 						<div className="w-[80px]">

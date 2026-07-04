@@ -13,13 +13,11 @@ export class RemoveMediaAssetCommand extends Command {
 	private savedTracks: SceneTracks | null = null;
 	private removedAsset: MediaAsset | null = null;
 
-	constructor({
-		projectId,
-		assetId,
-	}: {
-		projectId: string;
-		assetId: string;
-	}) {
+	get canPersistHistory(): boolean {
+		return false;
+	}
+
+	constructor({ projectId, assetId }: { projectId: string; assetId: string }) {
 		super();
 		this.projectId = projectId;
 		this.assetId = assetId;

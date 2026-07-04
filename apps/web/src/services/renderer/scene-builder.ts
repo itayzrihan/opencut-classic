@@ -1,4 +1,5 @@
 import type { SceneTracks, TimelineTrack } from "@/timeline";
+import { getDisplayTracks } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { RootNode } from "./nodes/root-node";
 import { VideoNode } from "./nodes/video-node";
@@ -17,6 +18,7 @@ import {
 	readBlendModeFromParams,
 	readOpacityFromParams,
 } from "@/rendering";
+import { buildTransitionAnimationsFromElement } from "@/transitions";
 
 const PREVIEW_MAX_IMAGE_SIZE = 2048;
 
@@ -77,7 +79,7 @@ function buildTrackNodes({
 							trimEnd: element.trimEnd,
 							retime: element.retime,
 							transform: buildTransformFromParams({ params: element.params }),
-							animations: element.animations,
+							animations: buildTransitionAnimationsFromElement({ element }),
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
@@ -94,7 +96,7 @@ function buildTrackNodes({
 							trimStart: element.trimStart,
 							trimEnd: element.trimEnd,
 							transform: buildTransformFromParams({ params: element.params }),
-							animations: element.animations,
+							animations: buildTransitionAnimationsFromElement({ element }),
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
@@ -112,6 +114,7 @@ function buildTrackNodes({
 					new TextNode({
 						...element,
 						transform: buildTransformFromParams({ params: element.params }),
+						animations: buildTransitionAnimationsFromElement({ element }),
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						canvasCenter: { x: canvasSize.width / 2, y: canvasSize.height / 2 },
@@ -133,7 +136,7 @@ function buildTrackNodes({
 						trimStart: element.trimStart,
 						trimEnd: element.trimEnd,
 						transform: buildTransformFromParams({ params: element.params }),
-						animations: element.animations,
+						animations: buildTransitionAnimationsFromElement({ element }),
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						effects: element.effects ?? [],
@@ -151,7 +154,7 @@ function buildTrackNodes({
 						trimStart: element.trimStart,
 						trimEnd: element.trimEnd,
 						transform: buildTransformFromParams({ params: element.params }),
-						animations: element.animations,
+						animations: buildTransitionAnimationsFromElement({ element }),
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						effects: element.effects ?? [],
@@ -234,10 +237,9 @@ export function buildScene({
 	const rootNode = new RootNode({ duration });
 	const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
 
-	const visibleTracks = [
-		...tracks.overlay.filter((track) => !("hidden" in track && track.hidden)),
-		...(!tracks.main.hidden ? [tracks.main] : []),
-	];
+	const visibleTracks = getDisplayTracks({ tracks }).filter(
+		(track) => !("hidden" in track && track.hidden) && track.type !== "audio",
+	);
 	const orderedTracksBottomToTop = visibleTracks.slice().reverse();
 	const mainTrack = tracks.main.hidden ? undefined : tracks.main;
 

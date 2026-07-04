@@ -23,6 +23,8 @@ import {
 	buildCaptionChunksFromSegments,
 	buildCaptionChunksFromWords,
 	buildSubtitleCuesFromWords,
+	getCaptionGridCell,
+	getCaptionPlacementGrid,
 	normalizeCaptionLayoutSettings,
 	splitCaptionCuesByLayer,
 	type CaptionLayoutSettings,
@@ -110,6 +112,7 @@ const CAPTION_REVEAL_MODES: Array<{
 	{ value: "spoken-word-keep", label: "Show word and keep previous" },
 	{ value: "emphasize-spoken", label: "Emphasize spoken word" },
 	{ value: "emphasize-spoken-keep", label: "Keep words emphasized" },
+	{ value: "letter-by-letter", label: "Letter by letter typing" },
 	{ value: "growing-row", label: "Growing row" },
 ];
 const CAPTION_TRANSITION_IN_OPTIONS: Array<{
@@ -154,7 +157,9 @@ function hasSameCaptionSource({
 }
 
 function textElementContent(element: TextElement) {
-	return typeof element.params.content === "string" ? element.params.content : "";
+	return typeof element.params.content === "string"
+		? element.params.content
+		: "";
 }
 
 function isPristineGeneratedCaption({
@@ -167,10 +172,12 @@ function isPristineGeneratedCaption({
 	if (!expected) return false;
 	return (
 		textElementContent(element) === expected.text &&
-		Math.abs(mediaTimeToSeconds({ time: element.startTime }) - expected.startTime) <=
-			TIMING_EPSILON_SECONDS &&
-		Math.abs(mediaTimeToSeconds({ time: element.duration }) - expected.duration) <=
-			TIMING_EPSILON_SECONDS &&
+		Math.abs(
+			mediaTimeToSeconds({ time: element.startTime }) - expected.startTime,
+		) <= TIMING_EPSILON_SECONDS &&
+		Math.abs(
+			mediaTimeToSeconds({ time: element.duration }) - expected.duration,
+		) <= TIMING_EPSILON_SECONDS &&
 		mediaTimeToSeconds({ time: element.trimStart }) === 0 &&
 		mediaTimeToSeconds({ time: element.trimEnd }) === 0
 	);
@@ -204,15 +211,17 @@ function buildEditedCaptionTracks({
 
 		if (editedElements.length === 0) return [];
 
-		return [{
-			...buildEmptyTrack({
-				id: generateUUID(),
-				type: "text",
-				name: `Edited ${track.name}`,
-			}),
-			hidden: track.hidden,
-			elements: editedElements,
-		}];
+		return [
+			{
+				...buildEmptyTrack({
+					id: generateUUID(),
+					type: "text",
+					name: `Edited ${track.name}`,
+				}),
+				hidden: track.hidden,
+				elements: editedElements,
+			},
+		];
 	});
 }
 
@@ -226,7 +235,8 @@ function rebuildCaptionTracksWithSettings({
 	canvasSize: { width: number; height: number };
 }) {
 	const firstSourceTrack = tracks.overlay.find(
-		(track): track is TextTrack => track.type === "text" && !!track.captionSource,
+		(track): track is TextTrack =>
+			track.type === "text" && !!track.captionSource,
 	);
 	const source = firstSourceTrack?.captionSource;
 	if (!source) return null;
@@ -281,10 +291,7 @@ function rebuildCaptionTracksWithSettings({
 			const replacement = replacementTracks[replacementIndex++];
 			const extras =
 				!insertedExtraTracks && replacementIndex === sourceTracks.length
-					? [
-							...replacementTracks.slice(sourceTracks.length),
-							...editedTracks,
-						]
+					? [...replacementTracks.slice(sourceTracks.length), ...editedTracks]
 					: [];
 			insertedExtraTracks = insertedExtraTracks || extras.length > 0;
 			return replacement ? [replacement, ...extras] : extras;
@@ -364,12 +371,13 @@ function loadSavedCaptionPresets(): SavedCaptionPreset[] {
 		const parsed = raw ? JSON.parse(raw) : [];
 		if (!Array.isArray(parsed)) return [];
 		return parsed
-			.filter((item) => (
-				item &&
-				typeof item.id === "string" &&
-				typeof item.name === "string" &&
-				item.settings
-			))
+			.filter(
+				(item) =>
+					item &&
+					typeof item.id === "string" &&
+					typeof item.name === "string" &&
+					item.settings,
+			)
 			.map((item) => ({
 				id: item.id,
 				name: item.name,
@@ -395,8 +403,8 @@ function saveSavedCaptionPresets({
 export function Captions() {
 	const [selectedLanguage, setSelectedLanguage] =
 		useState<TranscriptionLanguage>("he");
-	const [captionSettings, setCaptionSettings] = useState<CaptionLayoutSettings>(() =>
-		loadLastCaptionSettings(),
+	const [captionSettings, setCaptionSettings] = useState<CaptionLayoutSettings>(
+		() => loadLastCaptionSettings(),
 	);
 	const [savedPresets, setSavedPresets] = useState<SavedCaptionPreset[]>(() =>
 		loadSavedCaptionPresets(),
@@ -405,18 +413,27 @@ export function Captions() {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const editor = useEditor();
+	const canvasSize = useEditor(
+		(e) => e.project.getActive().settings.canvasSize,
+	);
 
 	const isProcessing = processing.status === "processing";
+	const placementGrid = getCaptionPlacementGrid({ canvasSize });
+	const selectedGridCell = getCaptionGridCell({
+		settings: captionSettings,
+		canvasSize,
+	});
 
 	const activeDiagnostics = useEditor((e) =>
 		e.diagnostics.getActive({ scope: TRANSCRIPTION_DIAGNOSTICS_SCOPE }),
 	);
-	const hasGeneratedCaptions = useEditor((e) =>
-		e.scenes
-			.getActiveSceneOrNull()
-			?.tracks.overlay.some(
-				(track) => track.type === "text" && !!track.captionSource,
-			) ?? false,
+	const hasGeneratedCaptions = useEditor(
+		(e) =>
+			e.scenes
+				.getActiveSceneOrNull()
+				?.tracks.overlay.some(
+					(track) => track.type === "text" && !!track.captionSource,
+				) ?? false,
 	);
 
 	useEffect(() => {
@@ -432,13 +449,32 @@ export function Captions() {
 			typeof insertCaptionChunksAsTextTrack
 		>[0]["captionSource"];
 	}): boolean => {
+		const settings = normalizeCaptionLayoutSettings({
+			settings: captionSettings,
+		});
 		const trackId = insertCaptionChunksAsTextTrack({
 			editor,
 			captions,
-			captionSource,
+			captionSource: captionSource ? { ...captionSource, settings } : undefined,
+			settings,
 			layerCount: captionSource ? CAPTION_LAYER_COUNT : 1,
 		});
 		return trackId.length > 0;
+	};
+
+	const updateCaptionSettings = ({
+		patch,
+	}: {
+		patch: Partial<CaptionLayoutSettings>;
+	}) => {
+		setCaptionSettings((current) =>
+			normalizeCaptionLayoutSettings({
+				settings: {
+					...current,
+					...patch,
+				},
+			}),
+		);
 	};
 
 	const updateCaptionSetting = ({
@@ -457,12 +493,33 @@ export function Captions() {
 						key === "transitionIn" ||
 						key === "wordAnimationId" ||
 						key === "accentColor" ||
-						key === "wordDirection"
+						key === "wordDirection" ||
+						key === "placementMode"
 							? value
 							: Number(value),
 				},
 			}),
 		);
+	};
+
+	const updateCaptionGridCell = ({
+		columnIndex,
+		rowIndex,
+	}: {
+		columnIndex: number;
+		rowIndex: number;
+	}) => {
+		updateCaptionSettings({
+			patch: {
+				placementMode: "grid",
+				placementGridX:
+					placementGrid.columns <= 1
+						? 0
+						: columnIndex / (placementGrid.columns - 1),
+				placementGridY:
+					placementGrid.rows <= 1 ? 0 : rowIndex / (placementGrid.rows - 1),
+			},
+		});
 	};
 
 	const saveCurrentPreset = () => {
@@ -484,7 +541,9 @@ export function Captions() {
 	const loadPreset = ({ presetId }: { presetId: string }) => {
 		const preset = savedPresets.find((item) => item.id === presetId);
 		if (!preset) return;
-		setCaptionSettings(normalizeCaptionLayoutSettings({ settings: preset.settings }));
+		setCaptionSettings(
+			normalizeCaptionLayoutSettings({ settings: preset.settings }),
+		);
 	};
 
 	const renamePreset = ({ presetId }: { presetId: string }) => {
@@ -546,7 +605,9 @@ export function Captions() {
 			});
 			if (!response.ok) {
 				const error = await response.json().catch(() => null);
-				throw new Error(error?.error || `Transcription failed: ${response.status}`);
+				throw new Error(
+					error?.error || `Transcription failed: ${response.status}`,
+				);
 			}
 			const result: TranscriptionResult = transcriptionResultSchema.parse(
 				await response.json(),
@@ -798,6 +859,103 @@ export function Captions() {
 								}
 							/>
 						</SectionField>
+						<SectionField label="Placement">
+							<Select
+								value={captionSettings.placementMode}
+								onValueChange={(value) =>
+									updateCaptionSetting({
+										key: "placementMode",
+										value,
+									})
+								}
+							>
+								<SelectTrigger>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="grid">Grid</SelectItem>
+									<SelectItem value="manual">Manual X/Y</SelectItem>
+								</SelectContent>
+							</Select>
+						</SectionField>
+						{captionSettings.placementMode === "grid" ? (
+							<SectionField
+								label={`Grid position (${placementGrid.columns}x${placementGrid.rows})`}
+							>
+								<div
+									className="grid gap-1"
+									style={{
+										gridTemplateColumns: `repeat(${placementGrid.columns}, minmax(0, 1fr))`,
+									}}
+								>
+									{Array.from({ length: placementGrid.rows }).flatMap(
+										(_, rowIndex) =>
+											Array.from({ length: placementGrid.columns }).map(
+												(__, columnIndex) => {
+													const isSelected =
+														selectedGridCell.columnIndex === columnIndex &&
+														selectedGridCell.rowIndex === rowIndex;
+													return (
+														<button
+															key={`${columnIndex}:${rowIndex}`}
+															type="button"
+															aria-label={`Place captions at column ${columnIndex + 1}, row ${rowIndex + 1}`}
+															className={`border-border bg-input hover:bg-accent focus-visible:ring-ring flex h-7 items-center justify-center rounded-sm border outline-none focus-visible:ring-2 ${
+																isSelected ? "border-primary bg-primary/15" : ""
+															}`}
+															onClick={() =>
+																updateCaptionGridCell({
+																	columnIndex,
+																	rowIndex,
+																})
+															}
+														>
+															<span
+																className={`size-1.5 rounded-full ${
+																	isSelected
+																		? "bg-primary"
+																		: "bg-muted-foreground/35"
+																}`}
+															/>
+														</button>
+													);
+												},
+											),
+									)}
+								</div>
+							</SectionField>
+						) : (
+							<SectionField label="Manual X/Y">
+								<div className="grid grid-cols-2 gap-2">
+									<Input
+										type="number"
+										step={1}
+										size="sm"
+										value={captionSettings.manualPositionX}
+										aria-label="Caption X position"
+										onChange={(event) =>
+											updateCaptionSetting({
+												key: "manualPositionX",
+												value: event.target.value,
+											})
+										}
+									/>
+									<Input
+										type="number"
+										step={1}
+										size="sm"
+										value={captionSettings.manualPositionY}
+										aria-label="Caption Y position"
+										onChange={(event) =>
+											updateCaptionSetting({
+												key: "manualPositionY",
+												value: event.target.value,
+											})
+										}
+									/>
+								</div>
+							</SectionField>
+						)}
 						<SectionField label="Timing">
 							<Select
 								value={captionSettings.revealMode}

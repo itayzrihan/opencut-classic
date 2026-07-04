@@ -19,6 +19,10 @@ export function createElementSelectionResult(
 }
 
 export abstract class Command {
+	get canPersistHistory(): boolean {
+		return true;
+	}
+
 	abstract execute(): CommandResult | undefined;
 
 	undo(): void {

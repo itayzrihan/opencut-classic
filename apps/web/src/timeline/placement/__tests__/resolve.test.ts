@@ -394,7 +394,7 @@ describe("resolveTrackPlacement", () => {
 		});
 	});
 
-	test("preferIndex creates a new overlay track above the main track", () => {
+	test("preferIndex creates a new visual track at the hovered display position", () => {
 		const tracks = buildSceneTracks({
 			main: buildTrack({ id: "video-main", type: "video" }),
 			audio: [buildTrack({ id: "audio-1", type: "audio" })],
@@ -414,12 +414,12 @@ describe("resolveTrackPlacement", () => {
 		).toEqual({
 			kind: "newTrack",
 			trackType: "graphic",
-			insertIndex: 0,
-			insertPosition: "above",
+			insertIndex: 2,
+			insertPosition: "below",
 		});
 	});
 
-	test("preferIndex keeps audio tracks below the main track", () => {
+	test("preferIndex allows audio tracks at any display position", () => {
 		const tracks = buildSceneTracks({
 			overlay: [buildTrack({ id: "text-1", type: "text" })],
 			main: buildTrack({ id: "video-main", type: "video" }),
@@ -441,8 +441,8 @@ describe("resolveTrackPlacement", () => {
 		).toEqual({
 			kind: "newTrack",
 			trackType: "audio",
-			insertIndex: 2,
-			insertPosition: "below",
+			insertIndex: 0,
+			insertPosition: "above",
 		});
 	});
 
@@ -527,7 +527,7 @@ describe("resolveTrackPlacement", () => {
 		).toEqual({
 			kind: "newTrack",
 			trackType: "audio",
-			insertIndex: 1,
+			insertIndex: 0,
 			insertPosition: null,
 		});
 
@@ -573,7 +573,7 @@ describe("resolveTrackPlacement", () => {
 		).toEqual({
 			kind: "newTrack",
 			trackType: "audio",
-			insertIndex: 1,
+			insertIndex: 0,
 			insertPosition: null,
 		});
 	});
@@ -594,8 +594,8 @@ describe("resolveTrackPlacement", () => {
 		).toEqual({
 			kind: "newTrack",
 			trackType: "video",
-			insertIndex: 0,
-			insertPosition: "above",
+			insertIndex: 1,
+			insertPosition: "below",
 		});
 
 		expect(
@@ -664,7 +664,7 @@ describe("resolveTrackPlacement", () => {
 		).toEqual({
 			kind: "newTrack",
 			trackType: "audio",
-			insertIndex: 2,
+			insertIndex: 1,
 			insertPosition: "below",
 		});
 	});

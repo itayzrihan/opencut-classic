@@ -1,11 +1,9 @@
 import { EditorCore } from "@/core";
 import { Command, type CommandResult } from "@/commands/base-command";
 import type { SceneTracks, TimelineElement } from "@/timeline";
-import {
-	findTrackInSceneTracks,
-	updateElementInSceneTracks,
-} from "@/timeline";
+import { findTrackInSceneTracks, updateElementInSceneTracks } from "@/timeline";
 import { applyElementUpdate } from "@/timeline/update-pipeline";
+import { syncCaptionSourceWordsFromElements } from "@/subtitles/caption-source-sync";
 
 export class UpdateElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -61,6 +59,11 @@ export class UpdateElementsCommand extends Command {
 				update: () => nextElement,
 			});
 		}
+
+		updatedTracks = syncCaptionSourceWordsFromElements({
+			tracks: updatedTracks,
+			updates: this.updates,
+		});
 
 		editor.timeline.updateTracks(updatedTracks);
 		return undefined;

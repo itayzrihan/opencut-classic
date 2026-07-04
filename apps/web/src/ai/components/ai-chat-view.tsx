@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Check, LogOut, Send } from "lucide-react";
+import { LogOut, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,7 +10,11 @@ import { useEditor } from "@/editor/use-editor";
 import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import { getSelectedTimelineRange } from "@/timeline/range-selection";
 import { useTimelineStore } from "@/timeline/timeline-store";
-import { applyAiEditPlan, validateAiEditPlan } from "@/ai/edit-plan";
+import {
+	applyAiEditPlan,
+	extractAiEditPlanFromText,
+	validateAiEditPlan,
+} from "@/ai/edit-plan";
 import { runAiAgent } from "@/ai/client-agent";
 import type { AiEditPlan } from "@/ai/types";
 import {
@@ -20,6 +24,21 @@ import {
 } from "@/ai/timeline-tools";
 import { AiPlanReview } from "./ai-plan-review";
 import { useAiOAuthStatus } from "./use-ai-oauth-status";
+
+function readPlanHeading({ text }: { text: string }): {
+	title?: string;
+	summary?: string;
+} | null {
+	const extracted = extractAiEditPlanFromText(text);
+	if (typeof extracted !== "object" || extracted === null) {
+		return null;
+	}
+	const record = extracted as Record<string, unknown>;
+	return {
+		title: typeof record.title === "string" ? record.title : undefined,
+		summary: typeof record.summary === "string" ? record.summary : undefined,
+	};
+}
 
 type ContextOption =
 	| "playhead"
@@ -58,6 +77,13 @@ export function AiChatView() {
 	const [pendingPlan, setPendingPlan] = useState<AiEditPlan | null>(null);
 	const [planErrors, setPlanErrors] = useState<string[]>([]);
 	const [isApplying, setIsApplying] = useState(false);
+	const abortControllerRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		return () => {
+			abortControllerRef.current?.abort();
+		};
+	}, []);
 
 	const identityLabel = useMemo(
 		() =>
@@ -99,6 +125,7 @@ export function AiChatView() {
 		setPendingPlan(null);
 		setPlanErrors([]);
 		const controller = new AbortController();
+		abortControllerRef.current = controller;
 		try {
 			const toolRuntime = createTimelineToolRuntime({
 				editor,
@@ -137,38 +164,92 @@ export function AiChatView() {
 						].join("\n\n"),
 					},
 				],
-				tools:
-					enabled.has("layers") || enabled.has("preview")
-						? toolRuntime.tools
-						: [],
+				tools: toolRuntime.tools,
 				executeTool: toolRuntime.executeTool,
 				signal: controller.signal,
+				preferDirectPlan: false,
 				onStep: setAgentStatus,
 			});
 			setResponseText(result.text);
-			const validation = validateAiEditPlan({
-				value: result.editPlan,
-				tracks: scene.tracks,
-				range: activeRange,
-			});
-			setPendingPlan(validation.plan);
-			setPlanErrors(validation.errors);
-			if (!validation.plan) {
-				toast.error(result.error ?? "The AI did not return a valid edit plan");
+			const sourcePlan = toolRuntime.getSourceEditPlan();
+			if (sourcePlan) {
+				const heading = readPlanHeading({ text: result.text });
+				const validation = validateAiEditPlan({
+					value: {
+						...sourcePlan,
+						title: heading?.title ?? sourcePlan.title,
+						summary: heading?.summary ?? sourcePlan.summary,
+					},
+					tracks: scene.tracks,
+					range: activeRange,
+					mediaAssets: editor.media.getAssets(),
+				});
+				setPendingPlan(validation.plan);
+				setPlanErrors(validation.errors);
+				if (!validation.plan) {
+					toast.error("Timeline changed while the AI was working. Try again.");
+				}
+			} else {
+				const validation = validateAiEditPlan({
+					value: result.editPlan,
+					tracks: scene.tracks,
+					range: activeRange,
+					mediaAssets: editor.media.getAssets(),
+				});
+				setPendingPlan(validation.plan);
+				setPlanErrors(validation.errors);
+				if (!validation.plan) {
+					toast.error(
+						result.error ?? "The AI did not return a valid edit plan",
+					);
+				}
 			}
 		} catch (error) {
-			toast.error(error instanceof Error ? error.message : "AI request failed");
+			if (error instanceof DOMException && error.name === "AbortError") {
+				toast.info("AI request cancelled");
+			} else {
+				toast.error(
+					error instanceof Error ? error.message : "AI request failed",
+				);
+			}
 		} finally {
+			if (abortControllerRef.current === controller) {
+				abortControllerRef.current = null;
+			}
 			setIsRunning(false);
 			setAgentStatus("");
 		}
 	};
 
+	const handleCancel = () => {
+		abortControllerRef.current?.abort();
+	};
+
 	const handleApply = () => {
 		if (!pendingPlan || planErrors.length > 0) return;
+		const scene = editor.scenes.getActiveSceneOrNull();
+		if (!scene) {
+			toast.error("No active scene");
+			return;
+		}
+		const validation = validateAiEditPlan({
+			value: pendingPlan,
+			tracks: scene.tracks,
+			range: activeRange,
+			mediaAssets: editor.media.getAssets(),
+		});
+		setPendingPlan(validation.plan);
+		setPlanErrors(validation.errors);
+		if (!validation.plan || validation.errors.length > 0) {
+			toast.error(
+				"Timeline changed. Review the AI plan again before applying.",
+			);
+			return;
+		}
+
 		setIsApplying(true);
 		try {
-			applyAiEditPlan({ editor, plan: pendingPlan });
+			applyAiEditPlan({ editor, plan: validation.plan });
 			setPendingPlan(null);
 			setResponseText("");
 			setMessage("");
@@ -266,18 +347,21 @@ export function AiChatView() {
 			</div>
 
 			<div className="border-t p-3">
-				<Button
-					className="w-full"
-					disabled={!message.trim() || isRunning}
-					onClick={handleSend}
-				>
-					{isRunning ? (
-						<Check className="size-4" />
-					) : (
+				{isRunning ? (
+					<Button className="w-full" variant="secondary" onClick={handleCancel}>
+						<X className="size-4" />
+						Cancel
+					</Button>
+				) : (
+					<Button
+						className="w-full"
+						disabled={!message.trim()}
+						onClick={handleSend}
+					>
 						<Send className="size-4" />
-					)}
-					{isRunning ? "Working" : "Send"}
-				</Button>
+						Send
+					</Button>
+				)}
 			</div>
 		</div>
 	);

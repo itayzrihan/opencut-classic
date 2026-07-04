@@ -50,7 +50,13 @@ import {
 import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
-import { addMediaTime, type MediaTime, TICKS_PER_SECOND } from "@/wasm";
+import {
+	addMediaTime,
+	mediaTime,
+	mediaTimeFromSeconds,
+	type MediaTime,
+	TICKS_PER_SECOND,
+} from "@/wasm";
 import {
 	getActionDefinition,
 	type TAction,
@@ -89,9 +95,11 @@ import {
 	getExpansionHeight,
 	type ExpandedRow,
 } from "./expanded-layout";
+import { getTransitionPreset } from "@/transitions";
 
 const KEYFRAME_INDICATOR_MIN_WIDTH_PX = 40;
 const ELEMENT_RING_WIDTH_PX = 1.5;
+const MIN_TRANSITION_SEGMENT_SECONDS = 0.1;
 
 const PixelsPerSecondContext = createContext<number | null>(null);
 const THUMBNAIL_ASPECT_RATIO = 16 / 9;
@@ -403,6 +411,7 @@ export function TimelineElement({
 							onElementMouseDown={onElementMouseDown}
 							onResizeStart={onResizeStart}
 							isDropTarget={isDropTarget}
+							zoomLevel={zoomLevel}
 						/>
 						{isSelected && (
 							<div
@@ -523,6 +532,7 @@ function ElementInner({
 	onElementMouseDown,
 	onResizeStart,
 	isDropTarget = false,
+	zoomLevel,
 }: {
 	element: TimelineElementType;
 	displayElement?: TimelineElementType;
@@ -546,6 +556,7 @@ function ElementInner({
 		side: "left" | "right";
 	}) => void;
 	isDropTarget?: boolean;
+	zoomLevel: number;
 }) {
 	const visibleElement = displayElement ?? element;
 	const isReducedOpacity =
@@ -598,6 +609,12 @@ function ElementInner({
 							<div className="flex flex-1 min-h-0 h-full items-center overflow-hidden">
 								<ElementContent element={visibleElement} track={track} />
 							</div>
+							<TransitionSegments
+								element={element}
+								trackId={track.id}
+								zoomLevel={zoomLevel}
+								baseTrackHeight={baseTrackHeight}
+							/>
 						</div>
 						{expandedContent}
 					</div>
@@ -621,6 +638,218 @@ function ElementInner({
 				</>
 			)}
 		</div>
+	);
+}
+
+function TransitionSegments({
+	element,
+	trackId,
+	zoomLevel,
+	baseTrackHeight,
+}: {
+	element: TimelineElementType;
+	trackId: string;
+	zoomLevel: number;
+	baseTrackHeight: number;
+}) {
+	const editor = useEditor();
+	const transitions = element.transitions;
+	if (!transitions || element.type === "audio" || element.type === "effect") {
+		return null;
+	}
+
+	const updateDuration = ({
+		side,
+		duration,
+	}: {
+		side: "in" | "out";
+		duration: MediaTime;
+	}) => {
+		const currentTransition = transitions[side];
+		if (!currentTransition) return;
+		const nextDuration = mediaTime({
+			ticks: Math.round(
+				Math.max(
+					mediaTimeFromSeconds({ seconds: MIN_TRANSITION_SEGMENT_SECONDS }),
+					Math.min(element.duration, duration),
+				),
+			),
+		});
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch: {
+						transitions: {
+							...transitions,
+							[side]: {
+								...currentTransition,
+								duration: nextDuration,
+								startTime:
+									side === "out" ? element.duration - nextDuration : 0,
+							},
+						},
+					},
+				},
+			],
+		});
+	};
+
+	const removeTransition = ({ side }: { side: "in" | "out" }) => {
+		const nextTransitions = { ...transitions };
+		delete nextTransitions[side];
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch: {
+						transitions:
+							nextTransitions.in || nextTransitions.out
+								? nextTransitions
+								: undefined,
+					},
+				},
+			],
+		});
+	};
+
+	return (
+		<div className="pointer-events-none absolute inset-0">
+			{transitions.in && (
+				<TransitionSegment
+					side="in"
+					elementDuration={element.duration}
+					duration={transitions.in.duration}
+					presetId={transitions.in.presetId}
+					zoomLevel={zoomLevel}
+					baseTrackHeight={baseTrackHeight}
+					onDurationChange={(duration) =>
+						updateDuration({ side: "in", duration })
+					}
+					onRemove={() => removeTransition({ side: "in" })}
+				/>
+			)}
+			{transitions.out && (
+				<TransitionSegment
+					side="out"
+					elementDuration={element.duration}
+					duration={transitions.out.duration}
+					presetId={transitions.out.presetId}
+					zoomLevel={zoomLevel}
+					baseTrackHeight={baseTrackHeight}
+					onDurationChange={(duration) =>
+						updateDuration({ side: "out", duration })
+					}
+					onRemove={() => removeTransition({ side: "out" })}
+				/>
+			)}
+		</div>
+	);
+}
+
+function TransitionSegment({
+	side,
+	elementDuration,
+	duration,
+	presetId,
+	zoomLevel,
+	baseTrackHeight,
+	onDurationChange,
+	onRemove,
+}: {
+	side: "in" | "out";
+	elementDuration: MediaTime;
+	duration: MediaTime;
+	presetId: string;
+	zoomLevel: number;
+	baseTrackHeight: number;
+	onDurationChange: (duration: MediaTime) => void;
+	onRemove: () => void;
+}) {
+	const preset = getTransitionPreset({ id: presetId });
+	const widthPx = Math.max(
+		8,
+		timelineTimeToPixels({ time: Math.min(duration, elementDuration), zoomLevel }),
+	);
+	const leftPx =
+		side === "out"
+			? timelineTimeToPixels({
+					time: Math.max(0, elementDuration - duration),
+					zoomLevel,
+				})
+			: 0;
+	const height = Math.max(14, Math.floor(baseTrackHeight / 2));
+
+	const handlePointerDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const startX = event.clientX;
+		const startDuration = duration;
+		const pixelsPerSecond = getTimelinePixelsPerSecond({ zoomLevel });
+
+		const handleMouseMove = (moveEvent: MouseEvent) => {
+			const deltaSeconds = (moveEvent.clientX - startX) / pixelsPerSecond;
+			const deltaTime = mediaTimeFromSeconds({
+				seconds: side === "in" ? deltaSeconds : -deltaSeconds,
+			});
+			onDurationChange(addMediaTime({ a: startDuration, b: deltaTime }));
+		};
+		const handleMouseUp = () => {
+			window.removeEventListener("mousemove", handleMouseMove);
+			window.removeEventListener("mouseup", handleMouseUp);
+		};
+
+		window.addEventListener("mousemove", handleMouseMove);
+		window.addEventListener("mouseup", handleMouseUp);
+	};
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<div
+					role="button"
+					tabIndex={-1}
+					className="pointer-events-auto absolute bottom-1 z-10 overflow-hidden rounded-sm border border-white/30 bg-black/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] backdrop-blur-sm"
+					style={{
+						left: leftPx,
+						width: widthPx,
+						height,
+					}}
+					onMouseDown={(event) => event.stopPropagation()}
+					onClick={(event) => event.stopPropagation()}
+					onKeyDown={(event) => event.stopPropagation()}
+					title={`${side === "in" ? "In" : "Out"} transition: ${preset.label}`}
+				>
+					<div className="flex h-full items-center gap-1 px-1.5 text-[0.6rem] leading-none text-white/90">
+						<HugeiconsIcon icon={MagicWand05Icon} className="size-3 shrink-0" />
+						<span className="truncate">{preset.label}</span>
+					</div>
+					<button
+						type="button"
+						className={cn(
+							"absolute top-0 h-full w-2 cursor-ew-resize bg-white/10 hover:bg-white/25",
+							side === "in" ? "right-0" : "left-0",
+						)}
+						onMouseDown={handlePointerDown}
+						aria-label={`Resize ${side} transition`}
+					/>
+				</div>
+			</ContextMenuTrigger>
+			<ContextMenuContent className="w-44">
+				<ContextMenuItem
+					icon={<HugeiconsIcon icon={Delete02Icon} />}
+					variant="destructive"
+					onClick={(event: React.MouseEvent) => {
+						event.stopPropagation();
+						onRemove();
+					}}
+				>
+					Remove transition
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 

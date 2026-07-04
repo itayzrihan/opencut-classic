@@ -15,6 +15,10 @@ import type {
 	TextFontStyle,
 	TextFontWeight,
 } from "@/text/primitives";
+import {
+	getCaptionGridCell,
+	type CaptionLayoutSettings,
+} from "./caption-layout";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
 
 const SUBTITLE_MAX_WIDTH_RATIO = 0.8;
@@ -253,6 +257,77 @@ function resolvePositionY({
 	);
 }
 
+function resolveGridPosition({
+	canvasSize,
+	settings,
+	visualRect,
+}: {
+	canvasSize: { width: number; height: number };
+	settings: CaptionLayoutSettings;
+	visualRect: { left: number; top: number; width: number; height: number };
+}): { x: number; y: number } {
+	const { columnIndex, rowIndex, columns, rows } = getCaptionGridCell({
+		settings,
+		canvasSize,
+	});
+	const targetCenterX = ((columnIndex + 0.5) / columns) * canvasSize.width;
+	const targetCenterY = ((rowIndex + 0.5) / rows) * canvasSize.height;
+
+	return {
+		x:
+			targetCenterX -
+			(visualRect.left + visualRect.width / 2) -
+			canvasSize.width / 2,
+		y:
+			targetCenterY -
+			(visualRect.top + visualRect.height / 2) -
+			canvasSize.height / 2,
+	};
+}
+
+function resolveSubtitlePosition({
+	canvasSize,
+	textAlign,
+	placement,
+	visualRect,
+	layoutSettings,
+}: {
+	canvasSize: { width: number; height: number };
+	textAlign: TextAlign;
+	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
+	visualRect: { left: number; top: number; width: number; height: number };
+	layoutSettings?: CaptionLayoutSettings;
+}): { x: number; y: number } {
+	if (layoutSettings?.placementMode === "manual") {
+		return {
+			x: layoutSettings.manualPositionX,
+			y: layoutSettings.manualPositionY,
+		};
+	}
+
+	if (layoutSettings?.placementMode === "grid") {
+		return resolveGridPosition({
+			canvasSize,
+			settings: layoutSettings,
+			visualRect,
+		});
+	}
+
+	return {
+		x: resolvePositionX({
+			canvasWidth: canvasSize.width,
+			textAlign,
+			placement,
+			visualRect,
+		}),
+		y: resolvePositionY({
+			canvasHeight: canvasSize.height,
+			placement,
+			visualRect,
+		}),
+	};
+}
+
 export function buildSubtitleTextElement({
 	index,
 	caption,
@@ -262,6 +337,7 @@ export function buildSubtitleTextElement({
 	wordAnimationId,
 	accentColor,
 	wordDirection,
+	layoutSettings,
 }: {
 	index: number;
 	caption: SubtitleCue;
@@ -271,6 +347,7 @@ export function buildSubtitleTextElement({
 	wordAnimationId?: string;
 	accentColor?: string;
 	wordDirection?: CreateTextElement["captionWordDirection"];
+	layoutSettings?: CaptionLayoutSettings;
 }): CreateTextElement {
 	const ctx = createMeasurementContext();
 	const style = resolveSubtitleStyle({
@@ -290,8 +367,14 @@ export function buildSubtitleTextElement({
 	});
 
 	let content = caption.text;
-	let positionX = 0;
-	let positionY = 0;
+	let positionX =
+		layoutSettings?.placementMode === "manual"
+			? layoutSettings.manualPositionX
+			: 0;
+	let positionY =
+		layoutSettings?.placementMode === "manual"
+			? layoutSettings.manualPositionY
+			: 0;
 
 	if (ctx) {
 		ctx.font = fontString;
@@ -310,17 +393,15 @@ export function buildSubtitleTextElement({
 			fontSize: style.fontSize,
 			lineHeight: style.lineHeight,
 		});
-		positionX = resolvePositionX({
-			canvasWidth: canvasSize.width,
+		const position = resolveSubtitlePosition({
+			canvasSize,
 			textAlign: style.textAlign,
 			placement: style.placement,
 			visualRect: measurement.visualRect,
+			layoutSettings,
 		});
-		positionY = resolvePositionY({
-			canvasHeight: canvasSize.height,
-			placement: style.placement,
-			visualRect: measurement.visualRect,
-		});
+		positionX = position.x;
+		positionY = position.y;
 	}
 	const wordRuns = buildWordRunsFromCaption({
 		caption,
@@ -396,12 +477,9 @@ function buildWordRunsFromCaption({
 	}
 
 	const lineIndexes: number[] = [];
-	const lineWordCounts = content.split("\n").map((line) =>
-		line
-			.trim()
-			.split(/\s+/)
-			.filter(Boolean).length,
-	);
+	const lineWordCounts = content
+		.split("\n")
+		.map((line) => line.trim().split(/\s+/).filter(Boolean).length);
 	for (let lineIndex = 0; lineIndex < lineWordCounts.length; lineIndex++) {
 		for (let i = 0; i < lineWordCounts[lineIndex]; i++) {
 			lineIndexes.push(lineIndex);

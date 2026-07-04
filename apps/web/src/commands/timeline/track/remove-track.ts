@@ -1,6 +1,7 @@
 import { Command, type CommandResult } from "@/commands/base-command";
 import { EditorCore } from "@/core";
 import type { SceneTracks } from "@/timeline";
+import { withRemovedTrackOrder } from "@/timeline";
 
 export class RemoveTrackCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -12,11 +13,14 @@ export class RemoveTrackCommand extends Command {
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
 		this.savedState = editor.scenes.getActiveScene().tracks;
-		const updatedTracks: SceneTracks = {
+		const updatedTracks: SceneTracks = withRemovedTrackOrder({
+			trackId: this.trackId,
+			tracks: {
 			...this.savedState,
 			overlay: this.savedState.overlay.filter((track) => track.id !== this.trackId),
 			audio: this.savedState.audio.filter((track) => track.id !== this.trackId),
-		};
+			},
+		});
 		editor.timeline.updateTracks(updatedTracks);
 		return undefined;
 	}

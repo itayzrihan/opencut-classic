@@ -15,7 +15,7 @@ import type {
 	ScalarGraphKeyframeContext,
 	SelectedKeyframeRef,
 } from "@/animation/types";
-import type { SceneTracks, TimelineElement } from "@/timeline";
+import { getDisplayTracks, type SceneTracks, type TimelineElement } from "@/timeline";
 
 const GRAPH_LINEAR_CURVE: NormalizedCubicBezier = [0, 0, 1, 1];
 const FLAT_VALUE_EPSILON = 1e-6;
@@ -113,7 +113,7 @@ function findElementByKeyframe({
 	tracks: SceneTracks;
 	keyframe: SelectedKeyframeRef;
 }): { element: TimelineElement; trackId: string; elementId: string } | null {
-	for (const track of [...tracks.overlay, tracks.main, ...tracks.audio]) {
+	for (const track of getDisplayTracks({ tracks })) {
 		if (track.id !== keyframe.trackId) {
 			continue;
 		}

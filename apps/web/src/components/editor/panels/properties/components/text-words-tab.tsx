@@ -1,9 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ColorPicker } from "@/components/ui/color-picker";
-import { Input } from "@/components/ui/input";
 import {
 	Select,
 	SelectContent,
@@ -11,105 +8,138 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Section, SectionContent, SectionField, SectionFields } from "@/components/section";
+import {
+	Section,
+	SectionContent,
+	SectionField,
+	SectionFields,
+} from "@/components/section";
 import { useEditor } from "@/editor/use-editor";
-import type {
-	TextCaptionRevealMode,
-	TextElement,
-	TextWordDirection,
-	TextWordRun,
-	TextWordStyle,
-	TextWordTransitionIn,
-} from "@/timeline";
+import type { TextElement } from "@/timeline";
 import {
 	CAPTION_ACCENT_COLORS,
 	CAPTION_WORD_ANIMATIONS,
 } from "@/text/caption-presets";
 import type { ElementWithTrackForParams } from "./element-params-tab";
-
-const REVEAL_MODES: Array<{ value: TextCaptionRevealMode; label: string }> = [
-	{ value: "determined-by-preset", label: "Determined by preset" },
-	{ value: "row", label: "Whole row" },
-	{ value: "spoken-word", label: "Spoken word only" },
-	{ value: "spoken-word-keep", label: "Spoken word, keep previous" },
-	{ value: "emphasize-spoken", label: "Emphasize spoken" },
-	{ value: "emphasize-spoken-keep", label: "Keep emphasized" },
-	{ value: "growing-row", label: "Growing row" },
-];
-
-const TRANSITION_IN_OPTIONS: Array<{ value: TextWordTransitionIn; label: string }> = [
-	{ value: "none", label: "None" },
-	{ value: "fade", label: "Fade" },
-	{ value: "blur", label: "Blur build" },
-	{ value: "zoom", label: "Zoom" },
-	{ value: "blur-zoom", label: "Blur zoom" },
-	{ value: "rise", label: "Rise" },
-	{ value: "slide", label: "Slide" },
-	{ value: "typewriter", label: "Type letter by letter" },
-	{ value: "glow-dissolve", label: "Glow blur dissolve" },
-];
-
-const WORD_DIRECTIONS: Array<{ value: TextWordDirection; label: string }> = [
-	{ value: "auto", label: "Auto" },
-	{ value: "rtl", label: "Right to left" },
-	{ value: "ltr", label: "Left to right" },
-];
+import {
+	buildScopedTextPatch,
+	clearScopedTextOverride,
+	getScopedSettings,
+	getWordRuns,
+	hasScopedTextOverride,
+	type TextOverrideScope,
+	type TextScopedSettings,
+} from "../text-scope";
+import {
+	REVEAL_MODES,
+	TRANSITION_IN_OPTIONS,
+	WORD_DIRECTIONS,
+	toRevealMode,
+	toTransitionIn,
+	toWordDirection,
+	usesTransitionIn,
+} from "../text-word-controls";
 
 export function TextWordsTab({
 	element,
 	trackId,
 	elementsWithTracks,
+	textScope,
 }: {
 	element: TextElement;
 	trackId: string;
 	elementsWithTracks?: ElementWithTrackForParams[];
+	textScope?: TextOverrideScope;
 }) {
 	const editor = useEditor();
-	const wordRuns = useMemo(() => getWordRuns({ element }), [element]);
-	const [selectedWordId, setSelectedWordId] = useState(wordRuns[0]?.id ?? "");
-	const selectedWord = wordRuns.find((word) => word.id === selectedWordId) ?? wordRuns[0];
+	const scope = textScope ?? { type: "layer" as const };
 	const bulkTextEntries = (elementsWithTracks ?? []).filter(
 		(entry): entry is ElementWithTrackForParams & { element: TextElement } =>
 			entry.element.type === "text",
 	);
 	const isBulk = bulkTextEntries.length > 1;
+	const effectiveScope = isBulk ? ({ type: "layer" } as const) : scope;
+	const settings = getScopedSettings({ element, scope: effectiveScope });
+	const values = {
+		wordAnimationId:
+			settings.wordAnimationId ?? CAPTION_WORD_ANIMATIONS[0]?.id ?? "",
+		revealMode: settings.revealMode ?? "emphasize-spoken",
+		transitionIn: settings.transitionIn ?? "blur-zoom",
+		accentColor: settings.accentColor ?? CAPTION_ACCENT_COLORS[0]?.value ?? "",
+		wordDirection: settings.wordDirection ?? "auto",
+	};
+	const hasOverride =
+		effectiveScope.type !== "layer" &&
+		hasScopedTextOverride({ element, scope: effectiveScope });
 
-	const updateElement = (patch: Partial<TextElement>) => {
-		editor.timeline.updateElements({
-			updates: [{ trackId, elementId: element.id, patch }],
+	const applyPatchToElement = ({
+		targetElement,
+		scope,
+		patch,
+	}: {
+		targetElement: TextElement;
+		scope: TextOverrideScope;
+		patch: TextScopedSettings;
+	}) => {
+		const scopedPatch = buildScopedTextPatch({
+			element: targetElement,
+			scope,
+			patch,
 		});
+		if (scope.type === "layer") {
+			return {
+				...scopedPatch,
+				wordRuns: getWordRuns({ element: targetElement }),
+			};
+		}
+		return scopedPatch;
 	};
 
-	const updateSharedSettings = (patch: Partial<TextElement>) => {
-		if (!isBulk) {
-			updateElement({ ...patch, wordRuns });
+	const updateScopedSettings = (patch: TextScopedSettings) => {
+		if (isBulk) {
+			editor.timeline.updateElements({
+				updates: bulkTextEntries.map((entry) => ({
+					trackId: entry.track.id,
+					elementId: entry.element.id,
+					patch: applyPatchToElement({
+						targetElement: entry.element,
+						scope: { type: "layer" },
+						patch,
+					}),
+				})),
+			});
 			return;
 		}
+
 		editor.timeline.updateElements({
-			updates: bulkTextEntries.map((entry) => ({
-				trackId: entry.track.id,
-				elementId: entry.element.id,
-				patch: {
-					...patch,
-					wordRuns: getWordRuns({ element: entry.element }),
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch: applyPatchToElement({
+						targetElement: element,
+						scope: effectiveScope,
+						patch,
+					}),
 				},
-			})),
+			],
 		});
 	};
 
-	const updateWordStyle = (stylePatch: TextWordStyle) => {
-		if (!selectedWord) return;
-		updateElement({
-			wordRuns: wordRuns.map((word) =>
-				word.id === selectedWord.id
-					? { ...word, style: { ...(word.style ?? {}), ...stylePatch } }
-					: word,
-			),
+	const clearOverride = () => {
+		if (effectiveScope.type === "layer") return;
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch: clearScopedTextOverride({
+						element,
+						scope: effectiveScope,
+					}),
+				},
+			],
 		});
-	};
-
-	const enableWordControls = () => {
-		updateSharedSettings({});
 	};
 
 	return (
@@ -118,14 +148,10 @@ export function TextWordsTab({
 				<SectionFields>
 					<SectionField label="Word animation">
 						<Select
-							value={element.captionWordAnimationId ?? CAPTION_WORD_ANIMATIONS[0].id}
-							onValueChange={(captionWordAnimationId) => {
-								updateSharedSettings({
-									captionWordAnimationId,
-									captionAccentColor:
-										element.captionAccentColor ?? CAPTION_ACCENT_COLORS[0].value,
-								});
-							}}
+							value={values.wordAnimationId}
+							onValueChange={(wordAnimationId) =>
+								updateScopedSettings({ wordAnimationId })
+							}
 						>
 							<SelectTrigger>
 								<SelectValue />
@@ -139,12 +165,13 @@ export function TextWordsTab({
 							</SelectContent>
 						</Select>
 					</SectionField>
+
 					<SectionField label="Reveal">
 						<Select
-							value={element.captionRevealMode ?? "emphasize-spoken"}
-							onValueChange={(captionRevealMode) =>
-								updateSharedSettings({
-									captionRevealMode: toRevealMode(captionRevealMode),
+							value={values.revealMode}
+							onValueChange={(revealMode) =>
+								updateScopedSettings({
+									revealMode: toRevealMode(revealMode),
 								})
 							}
 						>
@@ -160,13 +187,14 @@ export function TextWordsTab({
 							</SelectContent>
 						</Select>
 					</SectionField>
-					{usesTransitionIn(element.captionRevealMode ?? "emphasize-spoken") && (
+
+					{usesTransitionIn(values.revealMode) && (
 						<SectionField label="Transition in">
 							<Select
-								value={element.captionTransitionIn ?? "blur-zoom"}
-								onValueChange={(captionTransitionIn) =>
-									updateSharedSettings({
-										captionTransitionIn: toTransitionIn(captionTransitionIn),
+								value={values.transitionIn}
+								onValueChange={(transitionIn) =>
+									updateScopedSettings({
+										transitionIn: toTransitionIn(transitionIn),
 									})
 								}
 							>
@@ -183,13 +211,12 @@ export function TextWordsTab({
 							</Select>
 						</SectionField>
 					)}
+
 					<SectionField label="Accent">
 						<Select
-							value={element.captionAccentColor ?? CAPTION_ACCENT_COLORS[0].value}
-							onValueChange={(captionAccentColor) =>
-								updateSharedSettings({
-									captionAccentColor,
-								})
+							value={values.accentColor}
+							onValueChange={(accentColor) =>
+								updateScopedSettings({ accentColor })
 							}
 						>
 							<SelectTrigger>
@@ -204,12 +231,13 @@ export function TextWordsTab({
 							</SelectContent>
 						</Select>
 					</SectionField>
+
 					<SectionField label="Direction">
 						<Select
-							value={element.captionWordDirection ?? "auto"}
-							onValueChange={(captionWordDirection) =>
-								updateSharedSettings({
-									captionWordDirection: toWordDirection(captionWordDirection),
+							value={values.wordDirection}
+							onValueChange={(wordDirection) =>
+								updateScopedSettings({
+									wordDirection: toWordDirection(wordDirection),
 								})
 							}
 						>
@@ -225,150 +253,31 @@ export function TextWordsTab({
 							</SelectContent>
 						</Select>
 					</SectionField>
-					{!isBulk && (
-						<SectionField label="Word">
-							<Select
-								value={selectedWord?.id}
-								onValueChange={setSelectedWordId}
-							>
-								<SelectTrigger>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{wordRuns.map((word) => (
-										<SelectItem key={word.id} value={word.id}>
-											{word.text}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</SectionField>
-					)}
+
 					{(!element.wordRuns?.length || isBulk) && (
-						<Button type="button" variant="outline" onClick={enableWordControls}>
-							{isBulk ? "Apply word controls to selected layers" : "Enable word controls"}
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => updateScopedSettings({})}
+						>
+							{isBulk
+								? "Apply word controls to selected layers"
+								: "Enable word controls"}
 						</Button>
 					)}
-					{!isBulk && selectedWord && (
-						<>
-							<SectionField label="Word color">
-								<ColorPicker
-									value={String(selectedWord.style?.color ?? element.params.color ?? "#ffffff").replace(/^#/, "").toUpperCase()}
-									onChange={(color) => updateWordStyle({ color: `#${color}` })}
-									onChangeEnd={(color) => updateWordStyle({ color: `#${color}` })}
-								/>
-							</SectionField>
-							<SectionField label="Word size">
-								<Input
-									type="number"
-									min={1}
-									step={1}
-									value={selectedWord.style?.fontSize ?? Number(element.params.fontSize ?? 15)}
-									onChange={(event) =>
-										updateWordStyle({ fontSize: Number(event.currentTarget.value) })
-									}
-								/>
-							</SectionField>
-							<SectionField label="Weight">
-								<Select
-									value={selectedWord.style?.fontWeight ?? String(element.params.fontWeight ?? "normal")}
-									onValueChange={(fontWeight) =>
-										updateWordStyle({ fontWeight: fontWeight === "bold" ? "bold" : "normal" })
-									}
-								>
-									<SelectTrigger>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="normal">Normal</SelectItem>
-										<SelectItem value="bold">Bold</SelectItem>
-									</SelectContent>
-								</Select>
-							</SectionField>
-							<SectionField label="Style">
-								<Select
-									value={selectedWord.style?.fontStyle ?? String(element.params.fontStyle ?? "normal")}
-									onValueChange={(fontStyle) =>
-										updateWordStyle({ fontStyle: fontStyle === "italic" ? "italic" : "normal" })
-									}
-								>
-									<SelectTrigger>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="normal">Normal</SelectItem>
-										<SelectItem value="italic">Italic</SelectItem>
-									</SelectContent>
-								</Select>
-							</SectionField>
-							<SectionField label="Scale">
-								<Input
-									type="number"
-									min={0.1}
-									step={0.05}
-									value={selectedWord.style?.scale ?? 1}
-									onChange={(event) =>
-										updateWordStyle({ scale: Number(event.currentTarget.value) })
-									}
-								/>
-							</SectionField>
-						</>
+
+					{effectiveScope.type !== "layer" && (
+						<Button
+							type="button"
+							variant="outline"
+							disabled={!hasOverride}
+							onClick={clearOverride}
+						>
+							Clear {effectiveScope.type} override
+						</Button>
 					)}
 				</SectionFields>
 			</SectionContent>
 		</Section>
-	);
-}
-
-function toWordDirection(value: string): TextWordDirection {
-	return value === "rtl" || value === "ltr" ? value : "auto";
-}
-
-function toRevealMode(value: string): TextCaptionRevealMode {
-	return value === "determined-by-preset" ||
-		value === "row" ||
-		value === "spoken-word" ||
-		value === "spoken-word-keep" ||
-		value === "emphasize-spoken" ||
-		value === "emphasize-spoken-keep" ||
-		value === "growing-row"
-		? value
-		: "emphasize-spoken";
-}
-
-function toTransitionIn(value: string): TextWordTransitionIn {
-	return value === "none" ||
-		value === "fade" ||
-		value === "blur" ||
-		value === "zoom" ||
-		value === "blur-zoom" ||
-		value === "rise" ||
-		value === "slide" ||
-		value === "typewriter" ||
-		value === "glow-dissolve"
-		? value
-		: "blur-zoom";
-}
-
-function usesTransitionIn(revealMode: TextCaptionRevealMode): boolean {
-	return revealMode === "spoken-word" || revealMode === "spoken-word-keep";
-}
-
-function getWordRuns({ element }: { element: TextElement }): TextWordRun[] {
-	if (element.wordRuns?.length) {
-		return element.wordRuns;
-	}
-	const content = typeof element.params.content === "string" ? element.params.content : "";
-	let index = 0;
-	return content.split("\n").flatMap((line, lineIndex) =>
-		line
-			.trim()
-			.split(/\s+/)
-			.filter(Boolean)
-			.map((text) => ({
-				id: `word-${index++}`,
-				text,
-				lineIndex,
-			})),
 	);
 }

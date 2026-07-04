@@ -3,6 +3,7 @@ import type {
 	TextCanvasContext,
 	TextLayoutMeasurementContext,
 } from "@/text/layout";
+import type { BlendMode } from "@/rendering";
 import { DEFAULTS } from "@/timeline/defaults";
 import { clamp } from "@/utils/math";
 import { CORNER_RADIUS_MAX, CORNER_RADIUS_MIN } from "./background";
@@ -55,6 +56,7 @@ export interface MeasuredWordGlyph {
 	x: number;
 	y: number;
 	width: number;
+	layoutWidth: number;
 	metrics: TextMetrics;
 	fontString: string;
 	scaledFontSize: number;
@@ -62,12 +64,24 @@ export interface MeasuredWordGlyph {
 	color: string;
 	opacity: number;
 	scale: number;
+	scaleX: number;
+	scaleY: number;
 	rotate: number;
 	blur: number;
 	shadowBlur: number;
 	shadowColor: string;
 	offsetX: number;
 	offsetY: number;
+	blendMode: BlendMode;
+	background?: {
+		enabled: boolean;
+		color: string;
+		paddingX: number;
+		paddingY: number;
+		offsetX: number;
+		offsetY: number;
+		cornerRadius: number;
+	};
 	direction: CanvasDirection;
 	textDecoration: TextDecoration;
 }
@@ -240,12 +254,18 @@ export function drawMeasuredTextLayout({
 		for (const line of layout.wordLines) {
 			for (const word of line.words) {
 				if (word.opacity <= 0) continue;
+				const drawTextAlign: CanvasTextAlign =
+					word.direction === "rtl" ? "right" : "left";
+				const drawTextX = word.direction === "rtl" ? word.width : 0;
 				ctx.save();
 				ctx.font = word.fontString;
-				ctx.textAlign = "left";
+				ctx.textAlign = drawTextAlign;
 				ctx.textBaseline = textBaseline;
 				ctx.direction = word.direction;
 				ctx.fillStyle = word.color;
+				ctx.globalCompositeOperation = toCanvasCompositeOperation(
+					word.blendMode,
+				);
 				ctx.globalAlpha *= word.opacity;
 				if (word.blur > 0) {
 					ctx.filter = `blur(${word.blur}px)`;
@@ -255,14 +275,17 @@ export function drawMeasuredTextLayout({
 					ctx.shadowColor = word.shadowColor;
 				}
 				setCanvasLetterSpacing({ ctx, letterSpacingPx: word.letterSpacing });
-				const x = word.x + word.offsetX + word.width / 2;
+				const x = word.x + word.offsetX + word.layoutWidth / 2;
 				const y = word.y + word.offsetY;
 				ctx.translate(x, y);
 				if (word.rotate) {
 					ctx.rotate((word.rotate * Math.PI) / 180);
 				}
-				ctx.scale(word.scale, word.scale);
+				ctx.scale(word.scaleX, word.scaleY);
 				ctx.translate(-word.width / 2, 0);
+				drawWordBackground({ ctx, word });
+				ctx.save();
+				ctx.translate(drawTextX, 0);
 				ctx.fillText(word.drawText, 0, 0);
 				drawTextDecoration({
 					ctx,
@@ -271,8 +294,9 @@ export function drawMeasuredTextLayout({
 					lineY: 0,
 					metrics: word.metrics,
 					scaledFontSize: word.scaledFontSize,
-					textAlign: "left",
+					textAlign: drawTextAlign,
 				});
+				ctx.restore();
 				ctx.restore();
 			}
 		}
@@ -292,6 +316,59 @@ export function drawMeasuredTextLayout({
 			textAlign: layout.textAlign,
 		});
 	}
+}
+
+function drawWordBackground({
+	ctx,
+	word,
+}: {
+	ctx: TextCanvasContext;
+	word: MeasuredWordGlyph;
+}): void {
+	const background = word.background;
+	if (
+		!background?.enabled ||
+		!background.color ||
+		background.color === "transparent"
+	) {
+		return;
+	}
+
+	const ascent =
+		word.metrics.actualBoundingBoxAscent || word.scaledFontSize * 0.8;
+	const descent =
+		word.metrics.actualBoundingBoxDescent || word.scaledFontSize * 0.2;
+	const left = background.offsetX - background.paddingX;
+	const top = background.offsetY - ascent - background.paddingY;
+	const width = word.width + background.paddingX * 2;
+	const height = ascent + descent + background.paddingY * 2;
+	if (width <= 0 || height <= 0) return;
+
+	const radiusPercent =
+		clamp({
+			value: background.cornerRadius,
+			min: CORNER_RADIUS_MIN,
+			max: CORNER_RADIUS_MAX,
+		}) / 100;
+	const radius = (Math.min(width, height) / 2) * radiusPercent;
+	ctx.save();
+	ctx.fillStyle = background.color;
+	ctx.beginPath();
+	ctx.roundRect(left, top, width, height, radius);
+	ctx.fill();
+	ctx.restore();
+}
+
+function toCanvasCompositeOperation(
+	blendMode: BlendMode | undefined,
+): GlobalCompositeOperation {
+	if (!blendMode || blendMode === "normal") {
+		return "source-over";
+	}
+	if (blendMode === "plus-lighter") {
+		return "lighter";
+	}
+	return blendMode as GlobalCompositeOperation;
 }
 
 export function strokeMeasuredTextLayout({

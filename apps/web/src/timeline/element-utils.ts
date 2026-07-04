@@ -3,6 +3,7 @@ import {
 	MASKABLE_ELEMENT_TYPES,
 	RETIMABLE_ELEMENT_TYPES,
 	VISUAL_ELEMENT_TYPES,
+	getDisplayTracks,
 	type CreateEffectElement,
 	type CreateGraphicElement,
 	type CreateTimelineElement,
@@ -373,7 +374,7 @@ export function getElementsAtTime({
 	time: number;
 }): { trackId: string; elementId: string }[] {
 	const result: { trackId: string; elementId: string }[] = [];
-	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
+	const orderedTracks = getDisplayTracks({ tracks });
 
 	for (const track of orderedTracks) {
 		for (const element of track.elements) {
@@ -395,7 +396,7 @@ export function getElementFontFamilies({
 	tracks: SceneTracks;
 }): string[] {
 	const families = new Set<string>();
-	for (const track of [...tracks.overlay, tracks.main, ...tracks.audio]) {
+	for (const track of getDisplayTracks({ tracks })) {
 		for (const element of track.elements) {
 			if (element.type === "text" && typeof element.params.fontFamily === "string") {
 				families.add(element.params.fontFamily);

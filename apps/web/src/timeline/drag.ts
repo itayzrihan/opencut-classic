@@ -31,6 +31,13 @@ export interface GraphicDragData extends BaseDragData {
 export interface EffectDragData extends BaseDragData {
 	type: "effect";
 	effectType: string;
+	params?: Partial<ParamValues>;
+	targetElementTypes: VisualElement["type"][];
+}
+
+export interface TransitionDragData extends BaseDragData {
+	type: "transition";
+	transitionId: string;
 	targetElementTypes: VisualElement["type"][];
 }
 
@@ -39,4 +46,5 @@ export type TimelineDragData =
 	| TextDragData
 	| StickerDragData
 	| GraphicDragData
-	| EffectDragData;
+	| EffectDragData
+	| TransitionDragData;

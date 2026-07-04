@@ -6,9 +6,10 @@ import type {
 	TextTrack,
 	TrackType,
 } from "@/timeline";
+import { TICKS_PER_SECOND } from "@/wasm";
 import type { AiTimelineRange, AiToolCall, AiToolDefinition } from "./types";
+import { listAiSkills, loadAiSkill } from "./skills";
 import {
-	buildTimelineDocument,
 	buildTimelineContextIndex,
 	getElementsInRange,
 	getLayersInRange,
@@ -16,6 +17,14 @@ import {
 	searchLayers,
 } from "./timeline-context";
 import { validateAiEditPlan } from "./edit-plan";
+import {
+	diffTimelineSource,
+	parseTimelineSource,
+	serializeTimelineSource,
+	type TimelineSourceState,
+} from "./timeline-source";
+import { applySourceEdits, type SourceEdit } from "./source-edits";
+import type { AiEditPlan } from "./types";
 
 export interface TimelineToolContextOptions {
 	range?: AiTimelineRange | null;
@@ -27,6 +36,8 @@ export interface TimelineToolContextOptions {
 export interface TimelineToolRuntime {
 	tools: AiToolDefinition[];
 	executeTool: (toolCall: AiToolCall) => Promise<unknown>;
+	/** Plan accumulated from timeline.edit_source calls, if any succeeded. */
+	getSourceEditPlan: () => AiEditPlan | null;
 }
 
 export function createTimelineToolRuntime({
@@ -41,11 +52,34 @@ export function createTimelineToolRuntime({
 		if (tool.name === "preview.capture_frame") {
 			return options.includePreviewImage === true;
 		}
-		if (tool.name === "timeline.propose_edit_plan") {
+		if (
+			tool.name === "timeline.propose_edit_plan" ||
+			tool.name === "timeline.edit_source" ||
+			tool.name === "timeline.read_source" ||
+			tool.name === "timeline.list_media" ||
+			tool.name === "skills.list" ||
+			tool.name === "skills.load"
+		) {
 			return true;
 		}
 		return includeLayerAccess;
 	});
+
+	let sourceState: (TimelineSourceState & { currentText: string }) | null =
+		null;
+	let sourceEditPlan: AiEditPlan | null = null;
+	const getSourceState = () => {
+		if (!sourceState) {
+			const scene = editor.scenes.getActiveSceneOrNull();
+			if (!scene) {
+				throw new Error("No active scene");
+			}
+			const serialized = serializeTimelineSource({ tracks: scene.tracks });
+			sourceState = { ...serialized, currentText: serialized.text };
+		}
+		return sourceState;
+	};
+
 	const executeTool = async (toolCall: AiToolCall) => {
 		const scene = editor.scenes.getActiveSceneOrNull();
 		if (!scene) {
@@ -59,6 +93,57 @@ export function createTimelineToolRuntime({
 		});
 
 		switch (toolCall.name) {
+			case "timeline.read_source": {
+				return { source: getSourceState().currentText };
+			}
+			case "timeline.edit_source": {
+				const state = getSourceState();
+				const edits = getSourceEditsArg({ args: toolCall.arguments });
+				const editedText = applySourceEdits({
+					content: state.currentText,
+					edits,
+				});
+				const before = parseTimelineSource({ text: state.text });
+				const after = parseTimelineSource({ text: editedText });
+				const diff = diffTimelineSource({
+					before,
+					after,
+					idMap: state.idMap,
+				});
+				if (diff.errors.length > 0) {
+					throw new Error(
+						`Source edits were not applied:\n${diff.errors.join("\n")}`,
+					);
+				}
+				const validation = validateAiEditPlan({
+					value: {
+						title: "Timeline source edits",
+						summary: "",
+						operations: diff.operations,
+					},
+					tracks: scene.tracks,
+					range: options.range,
+					mediaAssets,
+				});
+				if (!validation.success || !validation.plan) {
+					throw new Error(
+						`Source edits were not applied because the resulting operations failed validation:\n${validation.errors.join("\n")}`,
+					);
+				}
+				state.currentText = editedText;
+				sourceEditPlan = validation.plan;
+				return {
+					success: true,
+					appliedEdits: edits.length,
+					pendingOperations: validation.plan.operations.length,
+					operationTypes: validation.plan.operations.map(
+						(operation) => operation.type,
+					),
+					notes: diff.notes,
+					message:
+						'Edits staged. They apply when the user approves the plan. Make further timeline.edit_source calls to refine, then reply with a short JSON {"title":...,"summary":...} and no operations.',
+				};
+			}
 			case "timeline.search_layers":
 				return searchLayers({
 					index,
@@ -113,6 +198,37 @@ export function createTimelineToolRuntime({
 			}
 			case "timeline.get_visible_state":
 				return getVisibleState({ editor, range: options.range });
+			case "timeline.list_media":
+				return {
+					mediaAssets: mediaAssets.map((asset) => ({
+						id: asset.id,
+						name: asset.name,
+						type: asset.type,
+						durationSeconds: asset.duration,
+						durationTicks: asset.duration
+							? Math.round(asset.duration * TICKS_PER_SECOND)
+							: undefined,
+						width: asset.width,
+						height: asset.height,
+					})),
+				};
+			case "skills.list":
+				return { skills: listAiSkills() };
+			case "skills.load": {
+				const name = requireStringArg({
+					args: toolCall.arguments,
+					key: "name",
+				});
+				const skill = loadAiSkill({ name });
+				if (!skill) {
+					throw new Error(
+						`Unknown skill ${name}. Available: ${listAiSkills()
+							.map((candidate) => candidate.name)
+							.join(", ")}`,
+					);
+				}
+				return skill;
+			}
 			case "preview.capture_frame":
 				return capturePreviewFrame({ editor });
 			case "timeline.propose_edit_plan": {
@@ -120,6 +236,7 @@ export function createTimelineToolRuntime({
 					value: toolCall.arguments.plan ?? toolCall.arguments,
 					tracks: scene.tracks,
 					range: options.range,
+					mediaAssets,
 				});
 				return validation;
 			}
@@ -128,7 +245,54 @@ export function createTimelineToolRuntime({
 		}
 	};
 
-	return { tools, executeTool };
+	return {
+		tools,
+		executeTool,
+		getSourceEditPlan: () => sourceEditPlan,
+	};
+}
+
+function getSourceEditsArg({
+	args,
+}: {
+	args: Record<string, unknown>;
+}): SourceEdit[] {
+	const raw = args.edits;
+	if (!Array.isArray(raw) || raw.length === 0) {
+		throw new Error(
+			'timeline.edit_source needs edits: [{"oldText":"...","newText":"..."}].',
+		);
+	}
+	return raw.map((entry, index) => {
+		if (typeof entry !== "object" || entry === null) {
+			throw new Error(
+				`edits[${index}] must be an object with oldText and newText.`,
+			);
+		}
+		const record = entry as Record<string, unknown>;
+		const oldText =
+			typeof record.oldText === "string"
+				? record.oldText
+				: typeof record.old_str === "string"
+					? record.old_str
+					: typeof record.old_string === "string"
+						? record.old_string
+						: null;
+		const newText =
+			typeof record.newText === "string"
+				? record.newText
+				: typeof record.new_str === "string"
+					? record.new_str
+					: typeof record.new_string === "string"
+						? record.new_string
+						: null;
+		if (oldText === null || newText === null) {
+			throw new Error(
+				`edits[${index}] must have string oldText and newText fields.`,
+			);
+		}
+		return { oldText, newText };
+	});
 }
 
 export function createTimelineToolDefinitions(): AiToolDefinition[] {
@@ -202,6 +366,62 @@ export function createTimelineToolDefinitions(): AiToolDefinition[] {
 		},
 		{
 			type: "function",
+			name: "timeline.edit_source",
+			description:
+				'PRIMARY editing tool. Apply exact-text replacements to OPENCUT_TIMELINE_SOURCE, like editing a code file. Each edit is {oldText, newText}; oldText must match the source exactly and uniquely (copy lines verbatim). Edit values in place, delete lines to delete, add lines with id "new" to insert. The staged changes become the edit plan the user approves.',
+			parameters: objectSchema({
+				properties: {
+					edits: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: {
+								oldText: { type: "string" },
+								newText: { type: "string" },
+							},
+							required: ["oldText", "newText"],
+							additionalProperties: false,
+						},
+					},
+				},
+				required: ["edits"],
+			}),
+		},
+		{
+			type: "function",
+			name: "timeline.read_source",
+			description:
+				"Return the current timeline source text (including your staged edits). Use it to re-check exact line content before editing.",
+			parameters: objectSchema({ properties: {} }),
+		},
+		{
+			type: "function",
+			name: "timeline.list_media",
+			description:
+				"List the project's imported media assets (id, name, type, duration, dimensions) usable with insert_media_element.",
+			parameters: objectSchema({ properties: {} }),
+		},
+		{
+			type: "function",
+			name: "skills.list",
+			description:
+				"List available editing skills (name + description). Skills contain authoring recipes for HTML frames, motion graphics, text effects, and video workflows.",
+			parameters: objectSchema({ properties: {} }),
+		},
+		{
+			type: "function",
+			name: "skills.load",
+			description:
+				"Load the full instructions of one skill by name. ALWAYS load hyperframe-authoring before using insert_html_element.",
+			parameters: objectSchema({
+				properties: {
+					name: { type: "string" },
+				},
+				required: ["name"],
+			}),
+		},
+		{
+			type: "function",
 			name: "preview.capture_frame",
 			description:
 				"Capture the current preview frame as a compact data URL for visual context.",
@@ -224,21 +444,31 @@ export function createTimelineToolDefinitions(): AiToolDefinition[] {
 
 export function buildAiSystemPrompt(): string {
 	return [
-		"You are an in-app video editing agent for OpenCut.",
-		"The user message includes OPENCUT_TIMELINE_DOCUMENT, a code-like JSON snapshot of the current timeline.",
-		"Prefer producing a complete AiEditPlan directly from that document in one model turn.",
-		"Use timeline tools only when the timeline document is truncated, an element is missing, or visual preview context is needed.",
-		"Never invent trackId, elementId, effectId, or keyframeId values. Use ids from the timeline document or fetch them with tools first.",
-		"Keep edits inside the selected range when a range is active.",
-		"Supported operations: update_element, insert_text_element, trim_element, move_element, split_element, delete_element, add_clip_effect, attach_custom_edit, update_clip_effect_params, upsert_keyframe, remove_keyframe.",
-		'For update_element, put element changes under patch, for example {"type":"update_element","trackId":"...","elementId":"...","patch":{"params":{"content":"New text"}}}.',
-		"For insert_text_element, provide content, startTime, duration, and optional trackId, name, params, and reason.",
-		'For add_clip_effect, known built-in effect types include "blur"; include params such as {"intensity": 30} when useful. AI-applied effects are inserted as visible effect layers timed to the target element, never as hidden clip-attached effects.',
-		"Use update_clip_effect_params only when the user asks to adjust an existing clip-attached effect; it clones the updated result into a visible effect layer for review/removal instead of mutating the hidden clip effect.",
-		'When the requested edit is not representable by built-in operations, use attach_custom_edit with explicit trackId/elementId, a short label, kind such as "effect", "transition", "style", or "animation", optional startTime/duration for the visible AI edit layer, an intent sentence, and a structured spec object. This creates a timeline effect layer for review/edit/delete; blur-like specs render immediately, and other specs are hosted for later interpretation.',
-		"You may call timeline.propose_edit_plan to validate uncertain plans, but do not call tools just to restate information already in OPENCUT_TIMELINE_DOCUMENT.",
-		'Your final answer must be JSON only and match this shape: {"title":"...","summary":"...","operations":[],"notes":[]}.',
-		"Return an empty operations array when no edit is needed.",
+		"You are an in-app video editing agent for OpenCut. You can perform any edit the app supports: cut, trim, split, move, rearrange, duplicate, delete, insert text/media/graphics/HTML motion graphics, manage tracks (layers), apply effects, transitions, keyframe animations, retiming, and mute/hide state.",
+		"",
+		"WORKFLOW - the timeline is a code file. The user message includes OPENCUT_TIMELINE_SOURCE: one JSON object per line (track / el / kf lines), times in SECONDS. Treat it exactly like source code:",
+		"1. Read the relevant lines. Do NOT regenerate or restate the timeline.",
+		'2. Call timeline.edit_source with small, surgical {oldText, newText} replacements - change a value in place, delete a line to delete the thing, add an el/kf line with "id":"new" to insert. oldText must be copied verbatim from the source and be unique; the full line including its unique "id" is the safest unit.',
+		"3. The tool validates and stages your changes as the edit plan. Repeat with more edits if needed; each call re-diffs against the original, so the staged plan is always the total change.",
+		'4. When done, reply with ONLY {"title":"...","summary":"..."} - a short human title and summary. Do not repeat the operations.',
+		"Multiple similar edits (e.g. restyling 12 captions) = one timeline.edit_source call with 12 line replacements. This is much faster than any other approach.",
+		"",
+		"SOURCE FIELDS - el: track, at (start s), dur (s), name, text (text content), html, w/h (html render size), media (asset id), graphic (definition id), params (element params object), hidden, muted, rate (speed 0.1-10), tin/tout (transition preset in/out), tinDur/toutDur (s). kf: el (element id), path (animation path), at (s, element-local), v (value), interp (linear|hold).",
+		'Insertable element types: text (needs "text"), html (needs "html"), graphic (needs "graphic": rectangle, ellipse, polygon, star, preset-background), media (needs "media" asset id from the media summary or timeline.list_media).',
+		"Transition presets: fade, slide-left/right/up/down, push-left/right/up/down, zoom-in, zoom-out, pop, shrink, grow, flip-x, flip-y, spin-left/right, tilt-left/right, rise-soft, drop-soft, drift-left/right, corner-tl/tr/bl/br, none (removes).",
+		"Keyframable paths: opacity, transform.positionX, transform.positionY, transform.scaleX, transform.scaleY, transform.rotate, color, background.color (text only).",
+		"",
+		'html elements render a self-contained HTML+CSS fragment (a hyperframe) as video - use them for designed motion graphics, kinetic typography, lower-thirds, stat hits, animated cards, charts, and any visual the built-in elements cannot express. BEFORE writing html, call skills.load with name "hyperframe-authoring" and follow its contract exactly (CSS keyframes only, --hf-delay for stagger, self-contained, no scripts or external URLs). Transparent backgrounds composite over the video below. Other skills: motion-graphics, text-effects, video-workflows (call skills.list).',
+		"",
+		"RULES:",
+		'- Never invent ids. Use ids from OPENCUT_TIMELINE_SOURCE; never edit or reuse an existing "id" value.',
+		"- Keep edits inside the selected range when a range is active.",
+		"- Elements on the same track must not overlap in time.",
+		"- Splitting a clip: not expressible as a source edit; fall back to a JSON plan with a split_element operation (see below).",
+		"",
+		'FALLBACK - JSON edit plan. If timeline.edit_source cannot express the change (split_element, add_clip_effect, attach_custom_edit, update_clip_effect_params, duplicate_element), reply instead with JSON only: {"title":"...","summary":"...","operations":[...],"notes":[]} using tick times (120000 ticks = 1 second) and full ids from tools. Supported operation types: update_element, insert_text_element, insert_media_element, insert_graphic_element, insert_html_element, trim_element, move_element, split_element, delete_element, duplicate_element, set_element_state, retime_element, apply_transition, add_track, remove_track, reorder_track, set_track_state, add_clip_effect, attach_custom_edit, update_clip_effect_params, upsert_keyframe (propertyPath, time, value), remove_keyframe. You may validate a JSON plan with timeline.propose_edit_plan.',
+		"",
+		'If no edit is needed, reply {"title":"No changes","summary":"<why>"}.',
 	].join("\n");
 }
 
@@ -272,9 +502,6 @@ export function buildTimelineContextPrompt({
 	const parts: string[] = [`Project: ${project.metadata.name}`];
 	const mediaAssets = editor.media.getAssets();
 	const documentRange = includeActiveRange ? range : null;
-	const documentSelectedElements = includeSelectedElements
-		? selectedElements
-		: [];
 	const displayTracks = [
 		...scene.tracks.overlay,
 		scene.tracks.main,
@@ -288,11 +515,14 @@ export function buildTimelineContextPrompt({
 		`Timeline summary: ${scene.tracks.overlay.length} overlay layers, 1 main layer, ${scene.tracks.audio.length} audio layers, ${elementCount} total elements.`,
 	);
 	if (includePlayheadTime) {
-		parts.push(`Playhead time ticks: ${editor.playback.getCurrentTime()}`);
+		const playheadTicks = editor.playback.getCurrentTime();
+		parts.push(
+			`Playhead: ${(playheadTicks / TICKS_PER_SECOND).toFixed(3)}s (${playheadTicks} ticks)`,
+		);
 	}
 	if (documentRange) {
 		parts.push(
-			`Active range ticks: ${documentRange.startTime} to ${documentRange.endTime}`,
+			`Active range: ${(documentRange.startTime / TICKS_PER_SECOND).toFixed(3)}s to ${(documentRange.endTime / TICKS_PER_SECOND).toFixed(3)}s (${documentRange.startTime} to ${documentRange.endTime} ticks). Keep all edits inside this range.`,
 		);
 		const index = buildTimelineContextIndex({
 			tracks: scene.tracks,
@@ -301,7 +531,7 @@ export function buildTimelineContextPrompt({
 		const rangeLayers = getLayersInRange({ index, range: documentRange });
 		const rangeElements = getElementsInRange({ index, range: documentRange });
 		parts.push(
-			`Active range summary: ${rangeLayers.length} layers and ${rangeElements.length} elements overlap this range. Their ids are included in OPENCUT_TIMELINE_DOCUMENT when within the document budget.`,
+			`Active range summary: ${rangeLayers.length} layers and ${rangeElements.length} elements overlap this range.`,
 		);
 	}
 	if (includeSelectedElements) {
@@ -338,21 +568,9 @@ export function buildTimelineContextPrompt({
 	}
 	parts.push(
 		[
-			"OPENCUT_TIMELINE_DOCUMENT:",
-			"```json",
-			buildTimelineDocument({
-				tracks: scene.tracks,
-				projectName: project.metadata.name,
-				mediaAssets,
-				range: documentRange,
-				selectedElements: documentSelectedElements,
-				currentTime: includePlayheadTime
-					? editor.playback.getCurrentTime()
-					: undefined,
-				bookmarks: includeBookmarks ? scene.bookmarks : [],
-				includeMediaSummary,
-				includeCaptions,
-			}),
+			"OPENCUT_TIMELINE_SOURCE (edit with timeline.edit_source):",
+			"```",
+			serializeTimelineSource({ tracks: scene.tracks }).text.trimEnd(),
 			"```",
 		].join("\n"),
 	);

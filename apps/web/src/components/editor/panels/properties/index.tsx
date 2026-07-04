@@ -3,6 +3,13 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import {
 	Tooltip,
 	TooltipContent,
 	TooltipProvider,
@@ -14,6 +21,9 @@ import { usePropertiesStore } from "./stores/properties-store";
 import { getPropertiesConfig } from "./registry";
 import { cn } from "@/utils/ui";
 import { EmptyView } from "./empty-view";
+import type { TextElement, TimelineElement } from "@/timeline";
+import { getTextRows, getWordRuns, type TextOverrideScope } from "./text-scope";
+import { useMemo, useState } from "react";
 
 export function PropertiesPanel() {
 	const editor = useEditor();
@@ -25,6 +35,10 @@ export function PropertiesPanel() {
 	const elementsWithTracks = editor.timeline.getElementsWithTracks({
 		elements: selectedElements,
 	});
+	const [textScopeMode, setTextScopeMode] =
+		useState<TextOverrideScope["type"]>("layer");
+	const [selectedLineIndex, setSelectedLineIndex] = useState(0);
+	const [selectedWordId, setSelectedWordId] = useState("");
 
 	if (selectedElements.length === 0) {
 		return (
@@ -40,7 +54,9 @@ export function PropertiesPanel() {
 			firstElement &&
 			firstElement.type === "text" &&
 			elementsWithTracks.length === selectedElements.length &&
-			elementsWithTracks.every((entry) => entry.element.type === firstElement.type);
+			elementsWithTracks.every(
+				(entry) => entry.element.type === firstElement.type,
+			);
 
 		if (!canBulkEdit || !firstElement) {
 			return (
@@ -110,6 +126,12 @@ export function PropertiesPanel() {
 	const { element, track } = elementWithTrack;
 	const config = getPropertiesConfig({ element, mediaAssets });
 	const visibleTabs = config.tabs;
+	const textScope = buildTextScope({
+		element,
+		mode: textScopeMode,
+		selectedLineIndex,
+		selectedWordId,
+	});
 
 	const storedTabId = activeTabPerType[element.type];
 	const isStoredTabVisible = visibleTabs.some((t) => t.id === storedTabId);
@@ -151,8 +173,134 @@ export function PropertiesPanel() {
 				</div>
 			</TooltipProvider>
 			<ScrollArea className="flex-1 scrollbar-hidden">
-				{activeTab.content({ trackId: track.id, elementsWithTracks })}
+				{element.type === "text" && (
+					<TextScopeBar
+						element={element}
+						mode={textScopeMode}
+						onModeChange={setTextScopeMode}
+						selectedLineIndex={selectedLineIndex}
+						onLineChange={setSelectedLineIndex}
+						selectedWordId={selectedWordId}
+						onWordChange={setSelectedWordId}
+					/>
+				)}
+				{activeTab.content({
+					trackId: track.id,
+					elementsWithTracks,
+					textScope,
+				})}
 			</ScrollArea>
+		</div>
+	);
+}
+
+function buildTextScope({
+	element,
+	mode,
+	selectedLineIndex,
+	selectedWordId,
+}: {
+	element: TimelineElement;
+	mode: TextOverrideScope["type"];
+	selectedLineIndex: number;
+	selectedWordId: string;
+}): TextOverrideScope | undefined {
+	if (element.type !== "text") return undefined;
+	if (mode === "row") {
+		const rows = getTextRows({ wordRuns: getWordRuns({ element }) });
+		const lineIndex = rows.some((row) => row.lineIndex === selectedLineIndex)
+			? selectedLineIndex
+			: (rows[0]?.lineIndex ?? 0);
+		return { type: "row", lineIndex };
+	}
+	if (mode === "word") {
+		const wordRuns = getWordRuns({ element });
+		const wordId = wordRuns.some((word) => word.id === selectedWordId)
+			? selectedWordId
+			: (wordRuns[0]?.id ?? "");
+		return { type: "word", wordId };
+	}
+	return { type: "layer" };
+}
+
+function TextScopeBar({
+	element,
+	mode,
+	onModeChange,
+	selectedLineIndex,
+	onLineChange,
+	selectedWordId,
+	onWordChange,
+}: {
+	element: TextElement;
+	mode: TextOverrideScope["type"];
+	onModeChange: (mode: TextOverrideScope["type"]) => void;
+	selectedLineIndex: number;
+	onLineChange: (lineIndex: number) => void;
+	selectedWordId: string;
+	onWordChange: (wordId: string) => void;
+}) {
+	const wordRuns = useMemo(() => getWordRuns({ element }), [element]);
+	const rows = useMemo(() => getTextRows({ wordRuns }), [wordRuns]);
+	const firstWordId = wordRuns[0]?.id ?? "";
+	const effectiveWordId = selectedWordId || firstWordId;
+	const effectiveLineIndex = rows.some(
+		(row) => row.lineIndex === selectedLineIndex,
+	)
+		? selectedLineIndex
+		: (rows[0]?.lineIndex ?? 0);
+
+	return (
+		<div className="sticky top-0 z-10 border-b bg-background/95 px-3 py-2 backdrop-blur">
+			<div className="flex items-center gap-2">
+				<span className="text-muted-foreground text-xs">Scope</span>
+				<Select
+					value={mode}
+					onValueChange={(value) =>
+						onModeChange(value === "row" || value === "word" ? value : "layer")
+					}
+				>
+					<SelectTrigger className="h-8 min-w-28">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="layer">Layer</SelectItem>
+						<SelectItem value="row">Row</SelectItem>
+						<SelectItem value="word">Word</SelectItem>
+					</SelectContent>
+				</Select>
+				{mode === "row" && (
+					<Select
+						value={String(effectiveLineIndex)}
+						onValueChange={(value) => onLineChange(Number(value))}
+					>
+						<SelectTrigger className="h-8 min-w-0 flex-1">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{rows.map((row) => (
+								<SelectItem key={row.lineIndex} value={String(row.lineIndex)}>
+									{row.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				)}
+				{mode === "word" && (
+					<Select value={effectiveWordId} onValueChange={onWordChange}>
+						<SelectTrigger className="h-8 min-w-0 flex-1">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{wordRuns.map((word) => (
+								<SelectItem key={word.id} value={word.id}>
+									{`Row ${word.lineIndex + 1}: ${word.text}`}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				)}
+			</div>
 		</div>
 	);
 }

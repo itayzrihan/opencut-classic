@@ -1,7 +1,7 @@
 import { CORNER_RADIUS_MIN } from "@/text/background";
 import { DEFAULTS } from "@/timeline/defaults";
 import type { TextElement } from "@/timeline";
-import type { TextWordRun, TextWordStyle } from "@/timeline";
+import type { TextRowOverride, TextWordRun, TextWordStyle } from "@/timeline";
 import type { TextCaptionRevealMode, TextWordTransitionIn } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
@@ -50,8 +50,16 @@ class FallbackTextMetrics implements TextMetrics {
 	alphabeticBaseline = 0;
 	ideographicBaseline = 0;
 
-	constructor({ text, fontSize }: { text: string; fontSize: number }) {
-		this.width = text.length * fontSize * 0.6;
+	constructor({
+		text,
+		fontSize,
+		width,
+	}: {
+		text: string;
+		fontSize: number;
+		width?: number;
+	}) {
+		this.width = width ?? text.length * fontSize * 0.6;
 		this.actualBoundingBoxRight = this.width;
 		this.fontBoundingBoxAscent = fontSize * 0.8;
 		this.fontBoundingBoxDescent = fontSize * 0.2;
@@ -200,16 +208,6 @@ function measureWordRunsLayout({
 		return measuredLayout;
 	}
 
-	const legacyElement = element as TextElement & { captionPresetId?: string };
-	const preset = getCaptionWordAnimation({
-		wordAnimationId:
-			element.captionWordAnimationId ?? legacyElement.captionPresetId,
-	});
-	const revealMode = resolveRevealMode({
-		elementMode: element.captionRevealMode,
-		presetMode: preset.revealMode,
-	});
-	const direction = resolveWordDirection({ element });
 	const lineGroups = new Map<number, TextWordRun[]>();
 	for (const run of element.wordRuns) {
 		const line = run.lineIndex ?? 0;
@@ -217,66 +215,130 @@ function measureWordRunsLayout({
 	}
 
 	const lineIndexes = [...lineGroups.keys()].sort((a, b) => a - b);
-	const spaceWidth = measureStyledWord({
-		ctx,
-		text: " ",
-		style: text,
-		canvasHeight,
-	}).metrics.width;
 	const wordLines: MeasuredWordLine[] = [];
 	const lineMetrics: TextMetrics[] = [];
 	const lineHeightPx = measuredLayout.lineHeightPx;
 	let maxWidth = 0;
+	let y = 0;
+	let firstLineHeightPx = lineHeightPx;
 
-	for (let visualLineIndex = 0; visualLineIndex < lineIndexes.length; visualLineIndex++) {
+	for (
+		let visualLineIndex = 0;
+		visualLineIndex < lineIndexes.length;
+		visualLineIndex++
+	) {
 		const lineIndex = lineIndexes[visualLineIndex];
-		const sourceWords = direction === "rtl"
-			? [...(lineGroups.get(lineIndex) ?? [])].reverse()
-			: (lineGroups.get(lineIndex) ?? []);
+		const rowOverride = getRowOverride({ element, lineIndex });
+		const rowStyle = rowOverride?.style;
+		const rowTextStyle = { ...text, ...rowStyle };
+		const spaceMetrics = measureStyledWord({
+			ctx,
+			text: " ",
+			style: rowTextStyle,
+			canvasHeight,
+		}).metrics;
+		const spaceWidth =
+			spaceMetrics.width *
+			Math.max(0.01, rowTextStyle.scaleX ?? rowTextStyle.scale ?? 1);
+		const lineRuns = lineGroups.get(lineIndex) ?? [];
+		const lineText = lineRuns.map((run) => run.text).join(" ");
+		const lineDirection = resolveWordDirection({
+			element,
+			override: rowOverride?.wordDirection,
+			text: lineText,
+		});
+		const sourceWords =
+			lineDirection === "rtl" ? [...lineRuns].reverse() : lineRuns;
 		const measuredWords = sourceWords.map((run) => {
+			const wordAnimationId = resolveWordAnimationId({
+				element,
+				rowOverride,
+				run,
+			});
+			const preset = getCaptionWordAnimation({ wordAnimationId });
+			const revealMode = resolveRevealMode({
+				elementMode:
+					run.revealMode ??
+					rowOverride?.revealMode ??
+					element.captionRevealMode,
+				presetMode: preset.revealMode,
+			});
+			const direction = resolveWordDirection({
+				element,
+				override: run.wordDirection ?? rowOverride?.wordDirection,
+				text: run.text,
+			});
 			const style = resolveWordStyle({
 				base: text,
+				rowStyle,
 				run,
 				localTime,
 				revealMode,
-				transitionIn: element.captionTransitionIn ?? "blur-zoom",
+				transitionIn:
+					run.transitionIn ??
+					rowOverride?.transitionIn ??
+					element.captionTransitionIn ??
+					"blur-zoom",
 				preset,
-				accentColor: element.captionAccentColor,
-				baseColor: typeof element.params.color === "string" ? element.params.color : undefined,
+				accentColor:
+					run.accentColor ??
+					rowOverride?.accentColor ??
+					element.captionAccentColor,
+				baseColor:
+					typeof element.params.color === "string"
+						? element.params.color
+						: undefined,
+			});
+			const measuredWord = measureStyledWord({
+				ctx,
+				text: run.text,
+				style,
+				canvasHeight,
 			});
 			return {
 				run,
+				direction,
 				style,
 				drawText: resolveDrawText({
 					run,
 					style,
 					localTime,
-					direction,
 				}),
-				...measureStyledWord({
-					ctx,
-					text: run.text,
-					style,
-					canvasHeight,
-				}),
+				layoutWidth:
+					measuredWord.metrics.width *
+					Math.max(0.01, style.scaleX ?? style.scale ?? 1),
+				...measuredWord,
 			};
 		});
+		const rowLineHeightPx = Math.max(
+			lineHeightPx,
+			...measuredWords.map(
+				(word) =>
+					word.scaledFontSize *
+					(word.style.lineHeight ??
+						rowTextStyle.lineHeight ??
+						DEFAULTS.text.lineHeight),
+			),
+		);
+		if (visualLineIndex === 0) {
+			firstLineHeightPx = rowLineHeightPx;
+		}
 		const width = measuredWords.reduce(
 			(total, word, index) =>
-				total + word.metrics.width + (index > 0 ? spaceWidth : 0),
+				total + word.layoutWidth + (index > 0 ? spaceWidth : 0),
 			0,
 		);
 		maxWidth = Math.max(maxWidth, width);
 
 		let x = 0;
-		if (text.textAlign === "center") x = -width / 2;
-		if (text.textAlign === "right") x = -width;
+		const textAlign = rowStyle?.textAlign ?? text.textAlign;
+		if (textAlign === "center") x = -width / 2;
+		if (textAlign === "right") x = -width;
 
-		const y = visualLineIndex * lineHeightPx;
 		const words: MeasuredWordGlyph[] = measuredWords.map((word, index) => {
 			if (index > 0) x += spaceWidth;
 			const glyphX = x;
-			x += word.metrics.width;
+			x += word.layoutWidth;
 			return {
 				id: word.run.id,
 				text: word.run.text,
@@ -284,36 +346,64 @@ function measureWordRunsLayout({
 				x: glyphX,
 				y,
 				width: word.metrics.width,
+				layoutWidth: word.layoutWidth,
 				metrics: word.metrics,
 				fontString: word.fontString,
 				scaledFontSize: word.scaledFontSize,
-				letterSpacing: word.style.letterSpacing ?? text.letterSpacing ?? DEFAULTS.text.letterSpacing,
+				letterSpacing:
+					word.style.letterSpacing ??
+					text.letterSpacing ??
+					DEFAULTS.text.letterSpacing,
 				color: word.style.color ?? "#ffffff",
 				opacity: word.style.opacity ?? 1,
 				scale: word.style.scale ?? 1,
+				scaleX: word.style.scaleX ?? word.style.scale ?? 1,
+				scaleY: word.style.scaleY ?? word.style.scale ?? 1,
 				rotate: word.style.rotate ?? 0,
 				blur: word.style.blur ?? 0,
 				shadowBlur: word.style.shadowBlur ?? 0,
 				shadowColor: word.style.shadowColor ?? word.style.color ?? "#ffffff",
 				offsetX: word.style.offsetX ?? 0,
 				offsetY: word.style.offsetY ?? 0,
-				direction,
-				textDecoration: word.style.textDecoration ?? text.textDecoration ?? "none",
+				blendMode: word.style.blendMode ?? "normal",
+				background: {
+					enabled: word.style.backgroundEnabled ?? false,
+					color: word.style.backgroundColor ?? "#000000",
+					paddingX:
+						(word.style.backgroundPaddingX ??
+							DEFAULTS.text.background.paddingX) *
+						((word.style.fontSize ?? text.fontSize) / 15),
+					paddingY:
+						(word.style.backgroundPaddingY ??
+							DEFAULTS.text.background.paddingY) *
+						((word.style.fontSize ?? text.fontSize) / 15),
+					offsetX: word.style.backgroundOffsetX ?? 0,
+					offsetY: word.style.backgroundOffsetY ?? 0,
+					cornerRadius:
+						word.style.backgroundCornerRadius ??
+						DEFAULTS.text.background.cornerRadius,
+				},
+				direction: word.direction,
+				textDecoration:
+					word.style.textDecoration ?? text.textDecoration ?? "none",
 			};
 		});
 		wordLines.push({ y, width, words });
-		lineMetrics.push({ width } as TextMetrics);
+		lineMetrics.push(new FallbackTextMetrics({ text: "", fontSize: 0, width }));
+		y += rowLineHeightPx;
 	}
 
 	const block = {
 		maxWidth,
-		height: Math.max(1, wordLines.length) * lineHeightPx,
-		visualCenterOffset: ((Math.max(1, wordLines.length) - 1) * lineHeightPx) / 2,
+		height: Math.max(1, y),
+		visualCenterOffset: y / 2 - firstLineHeightPx / 2,
 	};
 
 	return {
 		...measuredLayout,
-		lines: wordLines.map((line) => line.words.map((word) => word.text).join(" ")),
+		lines: wordLines.map((line) =>
+			line.words.map((word) => word.text).join(" "),
+		),
 		lineMetrics,
 		block,
 		wordLines: wordLines.map((line) => ({
@@ -329,6 +419,7 @@ function measureWordRunsLayout({
 
 function resolveWordStyle({
 	base,
+	rowStyle,
 	run,
 	localTime,
 	revealMode,
@@ -338,6 +429,7 @@ function resolveWordStyle({
 	baseColor,
 }: {
 	base: TextLayoutParams;
+	rowStyle: TextWordStyle | undefined;
 	run: TextWordRun;
 	localTime: number;
 	revealMode: TextCaptionRevealMode;
@@ -360,6 +452,7 @@ function resolveWordStyle({
 		effectiveRevealMode === "row" ||
 		isActive ||
 		((effectiveRevealMode === "growing-row" ||
+			effectiveRevealMode === "letter-by-letter" ||
 			effectiveRevealMode === "spoken-word-keep" ||
 			effectiveRevealMode === "emphasize-spoken-keep") &&
 			(isSpoken || isActive)) ||
@@ -386,23 +479,65 @@ function resolveWordStyle({
 			: isSpoken && preset.useAccentOnSpoken
 				? (accentColor ?? presetStyle.color ?? baseColor)
 				: presetStyle.color;
-
-	return {
+	const wordStyle = run.style;
+	const animationScale = isPresetDriven
+		? (presetStyle.scale ?? 1)
+		: (revealStyle.scale ?? presetStyle.scale ?? 1);
+	const scopedScale = (rowStyle?.scale ?? 1) * (wordStyle?.scale ?? 1);
+	const scopedScaleX =
+		(rowStyle?.scaleX ?? rowStyle?.scale ?? 1) *
+		(wordStyle?.scaleX ?? wordStyle?.scale ?? 1);
+	const scopedScaleY =
+		(rowStyle?.scaleY ?? rowStyle?.scale ?? 1) *
+		(wordStyle?.scaleY ?? wordStyle?.scale ?? 1);
+	const animationOpacity = isPresetDriven
+		? (presetStyle.opacity ?? 1)
+		: (revealStyle.opacity ?? 1);
+	const scopedOpacity = wordStyle?.opacity ?? rowStyle?.opacity ?? 1;
+	const animationOffsetX = isPresetDriven
+		? (presetStyle.offsetX ?? 0)
+		: (revealStyle.offsetX ?? presetStyle.offsetX ?? 0);
+	const animationOffsetY = isPresetDriven
+		? (presetStyle.offsetY ?? 0)
+		: (revealStyle.offsetY ?? presetStyle.offsetY ?? 0);
+	const animationBlur = isPresetDriven
+		? (presetStyle.blur ?? 0)
+		: (revealStyle.blur ?? presetStyle.blur ?? 0);
+	const animationShadowBlur = isPresetDriven
+		? (presetStyle.shadowBlur ?? 0)
+		: (revealStyle.shadowBlur ?? presetStyle.shadowBlur ?? 0);
+	const finalStyle = {
 		...base,
 		...presetStyle,
+		...rowStyle,
+		...wordStyle,
 		...revealStyle,
-		...run.style,
-		color: run.style?.color ?? color ?? baseColor ?? "#ffffff",
+	};
+
+	return {
+		...finalStyle,
+		color:
+			wordStyle?.color ?? rowStyle?.color ?? color ?? baseColor ?? "#ffffff",
 		shadowColor:
-			run.style?.shadowColor ??
+			wordStyle?.shadowColor ??
+			rowStyle?.shadowColor ??
 			((presetStyle.shadowBlur ?? 0) > 0
 				? (accentColor ?? color ?? baseColor ?? "#ffffff")
 				: presetStyle.shadowColor),
-		opacity:
-			run.style?.opacity ??
-			revealStyle.opacity ??
-			(isPresetDriven ? presetStyle.opacity : undefined) ??
-			1,
+		opacity: animationOpacity * scopedOpacity,
+		scale: animationScale * scopedScale,
+		scaleX: animationScale * scopedScaleX,
+		scaleY: animationScale * scopedScaleY,
+		offsetX:
+			animationOffsetX + (rowStyle?.offsetX ?? 0) + (wordStyle?.offsetX ?? 0),
+		offsetY:
+			animationOffsetY + (rowStyle?.offsetY ?? 0) + (wordStyle?.offsetY ?? 0),
+		blur: Math.max(animationBlur, rowStyle?.blur ?? 0, wordStyle?.blur ?? 0),
+		shadowBlur: Math.max(
+			animationShadowBlur,
+			rowStyle?.shadowBlur ?? 0,
+			wordStyle?.shadowBlur ?? 0,
+		),
 	};
 }
 
@@ -455,7 +590,16 @@ function resolveRevealStyle({
 			: { opacity: isSpoken ? 1 : 0 };
 	}
 
-	if (revealMode === "emphasize-spoken" || revealMode === "emphasize-spoken-keep") {
+	if (revealMode === "letter-by-letter") {
+		return isActive
+			? { opacity: 1, characterReveal: true }
+			: { opacity: isSpoken ? 1 : 0 };
+	}
+
+	if (
+		revealMode === "emphasize-spoken" ||
+		revealMode === "emphasize-spoken-keep"
+	) {
 		if (isActive) {
 			return { opacity: 1, scale: 1.18, fontWeight: "bold", ...activeEntrance };
 		}
@@ -486,11 +630,19 @@ function resolveTransitionInStyle({
 		case "zoom":
 			return { opacity: eased, scale: 0.72 + eased * 0.28 };
 		case "blur-zoom":
-			return { opacity: eased, blur: (1 - eased) * 14, scale: 0.72 + eased * 0.28 };
+			return {
+				opacity: eased,
+				blur: (1 - eased) * 14,
+				scale: 0.72 + eased * 0.28,
+			};
 		case "rise":
 			return { opacity: eased, offsetY: (1 - eased) * 20 };
 		case "slide":
-			return { opacity: eased, offsetX: (1 - eased) * -28, blur: (1 - eased) * 6 };
+			return {
+				opacity: eased,
+				offsetX: (1 - eased) * -28,
+				blur: (1 - eased) * 6,
+			};
 		case "typewriter":
 			return { opacity: 1, characterReveal: true };
 		case "glow-dissolve":
@@ -507,12 +659,10 @@ function resolveDrawText({
 	run,
 	style,
 	localTime,
-	direction,
 }: {
 	run: TextWordRun;
 	style: TextWordStyle & TextLayoutParams;
 	localTime: number;
-	direction: CanvasDirection;
 }) {
 	if (!style.characterReveal) {
 		return run.text;
@@ -525,26 +675,93 @@ function resolveDrawText({
 	if (localTime >= end) {
 		return run.text;
 	}
-	const progress = Math.max(0, Math.min(1, (localTime - start) / Math.max(0.001, end - start)));
+	const progress = Math.max(
+		0,
+		Math.min(1, (localTime - start) / Math.max(0.001, end - start)),
+	);
 	const characters = Array.from(run.text);
 	const visibleCount = Math.max(1, Math.ceil(characters.length * progress));
-	if (direction === "rtl") {
-		return characters.slice(0, visibleCount).join("");
-	}
 	return characters.slice(0, visibleCount).join("");
+}
+
+const STRONG_RTL_CHARACTER_REGEX =
+	/[\u0590-\u05ff\u0600-\u08ff\ufb1d-\ufdff\ufe70-\ufeff\u{10800}-\u{10fff}\u{1e800}-\u{1e95f}]/u;
+const LETTER_CHARACTER_REGEX = /\p{Letter}/u;
+
+export function resolveAutoTextDirection(text: string): CanvasDirection {
+	for (const character of text) {
+		if (
+			STRONG_RTL_CHARACTER_REGEX.test(character) &&
+			LETTER_CHARACTER_REGEX.test(character)
+		) {
+			return "rtl";
+		}
+		if (LETTER_CHARACTER_REGEX.test(character)) {
+			return "ltr";
+		}
+	}
+	return "ltr";
 }
 
 function resolveWordDirection({
 	element,
+	override,
+	text,
 }: {
 	element: TextElement;
+	override?: TextElement["captionWordDirection"];
+	text?: string;
 }): CanvasDirection {
-	if (element.captionWordDirection === "ltr" || element.captionWordDirection === "rtl") {
+	if (override === "ltr" || override === "rtl") {
+		return override;
+	}
+	if (override === "auto") {
+		return resolveAutoTextDirection(text ?? getElementText(element));
+	}
+	if (
+		element.captionWordDirection === "ltr" ||
+		element.captionWordDirection === "rtl"
+	) {
 		return element.captionWordDirection;
 	}
-	const text = element.wordRuns?.map((word) => word.text).join(" ") ??
-		(typeof element.params.content === "string" ? element.params.content : "");
-	return /[\u0590-\u05ff\u0600-\u06ff]/.test(text) ? "rtl" : "ltr";
+	return resolveAutoTextDirection(text ?? getElementText(element));
+}
+
+function getElementText(element: TextElement): string {
+	return (
+		element.wordRuns?.map((word) => word.text).join(" ") ??
+		(typeof element.params.content === "string" ? element.params.content : "")
+	);
+}
+
+function getRowOverride({
+	element,
+	lineIndex,
+}: {
+	element: TextElement;
+	lineIndex: number;
+}): TextRowOverride | undefined {
+	return element.textRowOverrides?.find(
+		(override) => override.lineIndex === lineIndex,
+	);
+}
+
+function resolveWordAnimationId({
+	element,
+	rowOverride,
+	run,
+}: {
+	element: TextElement;
+	rowOverride: TextRowOverride | undefined;
+	run: TextWordRun;
+}) {
+	const legacyElement = element as TextElement & { captionPresetId?: string };
+	return (
+		run.wordAnimationId ??
+		rowOverride?.wordAnimationId ??
+		element.captionWordAnimationId ??
+		legacyElement.captionPresetId
+	);
 }
 
 function measureStyledWord({

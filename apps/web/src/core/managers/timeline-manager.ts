@@ -32,12 +32,14 @@ import { BatchCommand } from "@/commands";
 import {
 	AddTrackCommand,
 	RemoveTrackCommand,
+	ReorderTrackCommand,
 	ToggleTrackMuteCommand,
 	ToggleTrackVisibilityCommand,
 	InsertElementCommand,
 	DeleteElementsCommand,
 	DuplicateElementsCommand,
 	UpdateElementsCommand,
+	ApplyTransitionCommand,
 	SplitElementsCommand,
 	MoveElementCommand,
 	TracksSnapshotCommand,
@@ -63,6 +65,7 @@ import type {
 	PlannedElementMove,
 	PlannedTrackCreation,
 } from "@/timeline/group-move";
+import { withNormalizedTrackOrder } from "@/timeline";
 
 export class TimelineManager {
 	private listeners = new Set<() => void>();
@@ -80,6 +83,17 @@ export class TimelineManager {
 
 	removeTrack({ trackId }: { trackId: string }): void {
 		const command = new RemoveTrackCommand(trackId);
+		this.editor.command.execute({ command });
+	}
+
+	reorderTrack({
+		trackId,
+		toIndex,
+	}: {
+		trackId: string;
+		toIndex: number;
+	}): void {
+		const command = new ReorderTrackCommand({ trackId, toIndex });
 		this.editor.command.execute({ command });
 	}
 
@@ -295,6 +309,19 @@ export class TimelineManager {
 		} else {
 			command.execute();
 		}
+	}
+
+	applyTransitions({
+		applications,
+	}: {
+		applications: ConstructorParameters<typeof ApplyTransitionCommand>[0];
+	}): void {
+		if (applications.length === 0) {
+			return;
+		}
+		this.editor.command.execute({
+			command: new ApplyTransitionCommand(applications),
+		});
 	}
 
 	addClipEffect({
@@ -756,10 +783,11 @@ export class TimelineManager {
 			before: committedTracks,
 			after: afterTracks,
 		});
-		this.editor.command.push({ command });
+		const beforeSnapshot = this.editor.command.captureProjectSnapshot();
 		this.previewOverlay.clear();
 		this.previewTracks = null;
 		this.updateTracks(afterTracks);
+		this.editor.command.push({ command, beforeSnapshot });
 	}
 
 	discardPreview(): void {
@@ -793,6 +821,7 @@ export class TimelineManager {
 		};
 
 		return {
+			...tracks,
 			overlay: tracks.overlay.map((track) => applyTrackOverlay(track)),
 			main: applyTrackOverlay(tracks.main),
 			audio: tracks.audio.map((track) => applyTrackOverlay(track)),
@@ -844,7 +873,9 @@ export class TimelineManager {
 	}): void {
 		const shouldMute = elements.some(({ trackId, elementId }) => {
 			const element = this.getElementByRef({ trackId, elementId });
-			return element && canElementHaveAudio(element) && !isElementMuted({ element });
+			return (
+				element && canElementHaveAudio(element) && !isElementMuted({ element })
+			);
 		});
 
 		const nextUpdates = elements.flatMap(({ trackId, elementId }) => {
@@ -932,7 +963,9 @@ export class TimelineManager {
 	updateTracks(newTracks: SceneTracks): void {
 		this.previewOverlay.clear();
 		this.previewTracks = null;
-		this.editor.scenes.updateSceneTracks({ tracks: newTracks });
+		this.editor.scenes.updateSceneTracks({
+			tracks: withNormalizedTrackOrder({ tracks: newTracks }),
+		});
 		this.notify();
 	}
 }

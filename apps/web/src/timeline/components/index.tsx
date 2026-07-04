@@ -3,6 +3,8 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Delete02Icon,
+	ArrowDownIcon,
+	ArrowUpIcon,
 	MagicWand05Icon,
 	MusicNote03Icon,
 	TaskAdd02Icon,
@@ -52,6 +54,7 @@ import {
 	canTrackBeHidden,
 	getTimelineZoomMin,
 	getTimelinePaddingPx,
+	getDisplayTracks,
 } from "@/timeline";
 import { timelineTimeToPixels } from "@/timeline/pixel-utils";
 import {
@@ -72,6 +75,7 @@ import { useElementSelection } from "@/timeline/hooks/element/use-element-select
 import { useTimelineSeek } from "@/timeline/hooks/use-timeline-seek";
 import { useTimelineDragDrop } from "@/timeline/hooks/use-timeline-drag-drop";
 import { TimelineRuler } from "./timeline-ruler";
+import { DragLine } from "./drag-line";
 import {
 	TimelineBookmarksRow,
 	useBookmarkDrag,
@@ -83,13 +87,17 @@ import { useTimelineStore } from "@/timeline/timeline-store";
 import { useEditor } from "@/editor/use-editor";
 import { useScrollPosition } from "@/timeline/hooks/use-scroll-position";
 import { useTimelinePlayhead } from "@/timeline/hooks/use-timeline-playhead";
-import { DragLine } from "./drag-line";
 import { invokeAction } from "@/actions";
 import { resolveTimelineElementIntersections } from "./selection-hit-testing";
 import { cn } from "@/utils/ui";
 import { getMouseTimeFromClientX } from "@/timeline/drag-utils";
 import { getSelectedTimelineRange } from "@/timeline/range-selection";
 import { AiRangeDialog } from "@/ai/components/ai-range-dialog";
+import {
+	CAPTION_WORD_TIMING_TRACK_HEIGHT_PX,
+	CaptionWordTimingTrack,
+} from "./caption-word-timing-track";
+import { findCaptionSourceTrack } from "@/subtitles/caption-tracks";
 
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
@@ -137,12 +145,17 @@ export function Timeline() {
 		currentEditor.scenes.getActiveSceneOrNull(),
 	);
 	const tracks = useMemo<TimelineTrack[]>(
-		() =>
-			scene
-				? [...scene.tracks.overlay, scene.tracks.main, ...scene.tracks.audio]
-				: [],
+		() => (scene ? getDisplayTracks({ tracks: scene.tracks }) : []),
 		[scene],
 	);
+	const hasCaptionWordTimingTrack = !!(
+		scene && findCaptionSourceTrack({ tracks: scene.tracks })
+	);
+	const wordTimingTrackOffset = hasCaptionWordTimingTrack
+		? CAPTION_WORD_TIMING_TRACK_HEIGHT_PX + TIMELINE_TRACK_GAP_PX
+		: 0;
+	const tracksTopInsetPx =
+		TIMELINE_CONTENT_TOP_PADDING_PX + wordTimingTrackOffset;
 	const mainTrackId = scene?.tracks.main.id ?? null;
 	const seek = (time: MediaTime) => editor.playback.seek({ time });
 
@@ -317,6 +330,7 @@ export function Timeline() {
 			zoomLevel,
 			tracksContainerRef,
 			tracksScrollRef,
+			tracksTopInsetPx,
 			snappingEnabled,
 			onSnapPointChange: handleSnapPointChange,
 		});
@@ -345,8 +359,16 @@ export function Timeline() {
 	const { isDragOver, dropTarget, dragProps } = useTimelineDragDrop({
 		containerRef: tracksContainerRef,
 		tracksScrollRef,
+		tracksTopInsetPx,
 		zoomLevel,
 	});
+	const activeDropTarget =
+		dragView.kind === "dragging" ? dragView.dropTarget : dropTarget;
+	const showNewTrackDropLine = !!(
+		activeDropTarget &&
+		activeDropTarget.isNewTrack &&
+		!activeDropTarget.targetElement
+	);
 
 	const {
 		selectionBox,
@@ -456,7 +478,7 @@ export function Timeline() {
 				getTotalTracksHeight({
 					tracks,
 					getExtraHeight: getTrackExpansionHeight,
-				}),
+				}) + wordTimingTrackOffset,
 			),
 		) + TIMELINE_CONTENT_TOP_PADDING_PX;
 
@@ -561,19 +583,6 @@ export function Timeline() {
 							!isRangeSelectionLocked ? (selectionBox?.bounds ?? null) : null
 						}
 					/>
-					<DragLine
-						dropTarget={dropTarget}
-						tracks={tracks}
-						isVisible={isDragOver && !dropTarget?.targetElement}
-						headerHeight={timelineHeaderHeight}
-					/>
-					<DragLine
-						dropTarget={isElementDragging ? dragView.dropTarget : null}
-						tracks={tracks}
-						isVisible={isElementDragging}
-						headerHeight={timelineHeaderHeight}
-					/>
-
 					<div ref={rulerScrollRef} className="shrink-0 overflow-hidden">
 						<div
 							ref={timelineHeaderRef}
@@ -669,10 +678,31 @@ export function Timeline() {
 									height={tracksAreaHeight}
 									mode={aiRangeSelection.mode}
 								/>
+								{hasCaptionWordTimingTrack && (
+									<div
+										className="absolute right-0 left-0"
+										style={{ top: `${TIMELINE_CONTENT_TOP_PADDING_PX}px` }}
+									>
+										<CaptionWordTimingTrack
+											zoomLevel={zoomLevel}
+											dynamicTimelineWidth={dynamicTimelineWidth}
+											onMouseDown={(event) => {
+												if (handleRangeSelectionMouseDown(event)) return;
+												handleSelectionMouseDown(event);
+												handleTracksMouseDown(event);
+											}}
+											onMouseUp={(event) => {
+												if (isRangeSelectionLocked) return;
+												handleTracksClick(event);
+											}}
+										/>
+									</div>
+								)}
 								{tracks.length > 0 && (
 									<TimelineTrackRows
 										mainTrackId={mainTrackId}
 										zoomLevel={zoomLevel}
+										topOffset={wordTimingTrackOffset}
 										dragView={dragView}
 										onResizeStart={(params) => {
 											if (handleRangeSelectionMouseDown(params.event)) return;
@@ -704,6 +734,12 @@ export function Timeline() {
 										dropTarget={dropTarget}
 									/>
 								)}
+								<DragLine
+									dropTarget={activeDropTarget}
+									tracks={tracks}
+									isVisible={showNewTrackDropLine}
+									headerHeight={tracksTopInsetPx}
+								/>
 							</div>
 							<TimelineGutter
 								onMouseDown={(event) => {
@@ -796,18 +832,17 @@ function TrackLabelsPanel({
 	const editor = useEditor();
 	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
 	const tracks = useMemo<TimelineTrack[]>(
-		() =>
-			scene
-				? [...scene.tracks.overlay, scene.tracks.main, ...scene.tracks.audio]
-				: [],
+		() => (scene ? getDisplayTracks({ tracks: scene.tracks }) : []),
 		[scene],
+	);
+	const hasCaptionWordTimingTrack = !!(
+		scene && findCaptionSourceTrack({ tracks: scene.tracks })
 	);
 	const { selectedElements } = useElementSelection();
 	const tracksWithSelection = useMemo(
 		() => new Set(selectedElements.map((el) => el.trackId)),
 		[selectedElements],
 	);
-
 	const expandedElementIds = useTimelineStore((s) => s.expandedElementIds);
 	const trackExpandedRowsMap = useMemo(
 		() =>
@@ -833,6 +868,18 @@ function TrackLabelsPanel({
 							className="flex flex-col"
 							style={{ gap: `${TIMELINE_TRACK_GAP_PX}px` }}
 						>
+							{hasCaptionWordTimingTrack && (
+								<div
+									className="flex items-center justify-end border-b border-red-500/20 bg-red-950/10 px-3"
+									style={{
+										height: `${CAPTION_WORD_TIMING_TRACK_HEIGHT_PX}px`,
+									}}
+								>
+									<span className="truncate text-xs font-medium text-red-200/80">
+										Words
+									</span>
+								</div>
+							)}
 							{tracks.map((track, index) => {
 								const expandedRows = trackExpandedRowsMap[index];
 								const baseHeight = getTrackHeight({ type: track.type });
@@ -881,6 +928,38 @@ function TrackLabelsPanel({
 													}
 												/>
 											)}
+											<TrackToggleIcon
+												isOff={index === 0}
+												icons={{
+													on: ArrowUpIcon,
+													off: ArrowUpIcon,
+												}}
+												destructiveOff={false}
+												onClick={() => {
+													if (index > 0) {
+														editor.timeline.reorderTrack({
+															trackId: track.id,
+															toIndex: index - 1,
+														});
+													}
+												}}
+											/>
+											<TrackToggleIcon
+												isOff={index === tracks.length - 1}
+												icons={{
+													on: ArrowDownIcon,
+													off: ArrowDownIcon,
+												}}
+												destructiveOff={false}
+												onClick={() => {
+													if (index < tracks.length - 1) {
+														editor.timeline.reorderTrack({
+															trackId: track.id,
+															toIndex: index + 1,
+														});
+													}
+												}}
+											/>
 											<TrackIcon track={track} />
 										</div>
 										{expandedRows.length > 0 && (
@@ -906,6 +985,7 @@ function TrackLabelsPanel({
 function TimelineTrackRows({
 	mainTrackId,
 	zoomLevel,
+	topOffset,
 	dragView,
 	onResizeStart,
 	onElementMouseDown,
@@ -918,6 +998,7 @@ function TimelineTrackRows({
 }: {
 	mainTrackId: string | null;
 	zoomLevel: number;
+	topOffset: number;
 	dragView: ElementDragView;
 	onResizeStart: React.ComponentProps<
 		typeof TimelineTrackContent
@@ -937,10 +1018,7 @@ function TimelineTrackRows({
 	const timeline = useEditor((e) => e.timeline);
 	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
 	const tracks = useMemo<TimelineTrack[]>(
-		() =>
-			scene
-				? [...scene.tracks.overlay, scene.tracks.main, ...scene.tracks.audio]
-				: [],
+		() => (scene ? getDisplayTracks({ tracks: scene.tracks }) : []),
 		[scene],
 	);
 	const { selectedElements } = useElementSelection();
@@ -948,6 +1026,12 @@ function TimelineTrackRows({
 		() => new Set(selectedElements.map((el) => el.trackId)),
 		[selectedElements],
 	);
+	const hoveredTrackIndex =
+		dragView.kind === "dragging" && dragView.dropTarget?.isNewTrack === false
+			? dragView.dropTarget.trackIndex
+			: isDragOver && dropTarget?.isNewTrack === false
+				? dropTarget.trackIndex
+				: null;
 
 	const expandedElementIds = useTimelineStore((s) => s.expandedElementIds);
 
@@ -994,9 +1078,11 @@ function TimelineTrackRows({
 							className={cn(
 								"absolute right-0 left-0 transition-colors",
 								tracksWithSelection.has(track.id) && SELECTED_TRACK_ROW_CLASS,
+								hoveredTrackIndex === index &&
+									"bg-primary/10 ring-1 ring-primary/35",
 							)}
 							style={{
-								top: `${TIMELINE_CONTENT_TOP_PADDING_PX + getCumulativeHeightBefore({ tracks, trackIndex: index, getExtraHeight: getTrackExpansionHeight })}px`,
+								top: `${TIMELINE_CONTENT_TOP_PADDING_PX + topOffset + getCumulativeHeightBefore({ tracks, trackIndex: index, getExtraHeight: getTrackExpansionHeight })}px`,
 								height: `${getTrackHeight({ type: track.type }) + getTrackExpansionHeight(index)}px`,
 							}}
 						>
@@ -1028,28 +1114,28 @@ function TimelineTrackRows({
 						>
 							Paste elements
 						</ContextMenuItem>
-						<ContextMenuItem
-							icon={<HugeiconsIcon icon={VolumeHighIcon} />}
-							onClick={(event: React.MouseEvent) => {
-								event.stopPropagation();
-								timeline.toggleTrackMute({ trackId: track.id });
-							}}
-						>
-							{canTrackHaveAudio(track) && track.muted
-								? "Unmute track"
-								: "Mute track"}
-						</ContextMenuItem>
-						<ContextMenuItem
-							icon={<HugeiconsIcon icon={ViewIcon} />}
-							onClick={(event: React.MouseEvent) => {
-								event.stopPropagation();
-								timeline.toggleTrackVisibility({ trackId: track.id });
-							}}
-						>
-							{canTrackBeHidden(track) && track.hidden
-								? "Show track"
-								: "Hide track"}
-						</ContextMenuItem>
+						{canTrackHaveAudio(track) && (
+							<ContextMenuItem
+								icon={<HugeiconsIcon icon={VolumeHighIcon} />}
+								onClick={(event: React.MouseEvent) => {
+									event.stopPropagation();
+									timeline.toggleTrackMute({ trackId: track.id });
+								}}
+							>
+								{track.muted ? "Unmute track" : "Mute track"}
+							</ContextMenuItem>
+						)}
+						{canTrackBeHidden(track) && (
+							<ContextMenuItem
+								icon={<HugeiconsIcon icon={ViewIcon} />}
+								onClick={(event: React.MouseEvent) => {
+									event.stopPropagation();
+									timeline.toggleTrackVisibility({ trackId: track.id });
+								}}
+							>
+								{track.hidden ? "Show track" : "Hide track"}
+							</ContextMenuItem>
+						)}
 						{track.id !== mainTrackId && (
 							<ContextMenuItem
 								icon={<HugeiconsIcon icon={Delete02Icon} />}
@@ -1090,6 +1176,7 @@ function TrackToggleIcon({
 	isOff,
 	icons,
 	onClick,
+	destructiveOff = true,
 }: {
 	isOff: boolean;
 	icons: {
@@ -1097,13 +1184,17 @@ function TrackToggleIcon({
 		off: IconSvgElement;
 	};
 	onClick: () => void;
+	destructiveOff?: boolean;
 }) {
 	return (
 		<>
 			{isOff ? (
 				<HugeiconsIcon
 					icon={icons.off}
-					className="text-destructive size-4 cursor-pointer"
+					className={cn(
+						"size-4 cursor-pointer",
+						destructiveOff ? "text-destructive" : "text-muted-foreground/35",
+					)}
 					onClick={onClick}
 				/>
 			) : (

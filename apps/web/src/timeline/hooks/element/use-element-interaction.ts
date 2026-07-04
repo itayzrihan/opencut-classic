@@ -16,6 +16,7 @@ interface UseElementInteractionProps {
 	tracksContainerRef: RefObject<HTMLDivElement | null>;
 	tracksScrollRef: RefObject<HTMLDivElement | null>;
 	headerRef?: RefObject<HTMLElement | null>;
+	tracksTopInsetPx?: number;
 	snappingEnabled: boolean;
 	onSnapPointChange?: (snapPoint: SnapPoint | null) => void;
 }
@@ -25,6 +26,7 @@ export function useElementInteraction({
 	tracksContainerRef,
 	tracksScrollRef,
 	headerRef,
+	tracksTopInsetPx = 0,
 	snappingEnabled,
 	onSnapPointChange,
 }: UseElementInteractionProps) {
@@ -38,6 +40,7 @@ export function useElementInteraction({
 			getTracksScrollEl: () => tracksScrollRef.current,
 			getTracksContainerEl: () => tracksContainerRef.current,
 			getHeaderEl: () => headerRef?.current ?? null,
+			getTracksTopInsetPx: () => tracksTopInsetPx,
 		},
 		input: {
 			isShiftHeld: () => isShiftHeldRef.current,

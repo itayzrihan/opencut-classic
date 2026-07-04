@@ -30,6 +30,7 @@ import type {
 	TimelineElement,
 	TimelineTrack,
 } from "@/timeline";
+import { getDisplayTracks } from "@/timeline";
 
 const MOUSE_BUTTON_RIGHT = 2;
 
@@ -40,6 +41,7 @@ export interface ViewportAdapter {
 	getTracksScrollEl: () => HTMLDivElement | null;
 	getTracksContainerEl: () => HTMLDivElement | null;
 	getHeaderEl: () => HTMLElement | null;
+	getTracksTopInsetPx: () => number;
 }
 
 export interface InputAdapter {
@@ -151,7 +153,7 @@ function verticalDirection({
 }
 
 function orderedTracks(sceneTracks: SceneTracks): TimelineTrack[] {
-	return [...sceneTracks.overlay, sceneTracks.main, ...sceneTracks.audio];
+	return getDisplayTracks({ tracks: sceneTracks });
 }
 
 function movedPastDragThreshold({
@@ -233,7 +235,12 @@ function resolveDropTarget({
 	return computeDropTarget({
 		elementType: movingElement.type,
 		mouseX: clientX - scrollRect.left + scrollContainer.scrollLeft,
-		mouseY: clientY - scrollRect.top + scrollContainer.scrollTop - headerHeight,
+		mouseY:
+			clientY -
+			scrollRect.top +
+			scrollContainer.scrollTop -
+			headerHeight -
+			viewport.getTracksTopInsetPx(),
 		tracks,
 		playheadTime: snappedTime,
 		isExternalDrop: false,
@@ -520,10 +527,27 @@ export class ElementInteractionController {
 			: null;
 
 		drag.groupMoveResult = nextGroupMoveResult;
-		drag.dropTarget =
-			anchorDropTarget && (anchorDropTarget.isNewTrack || !nextGroupMoveResult)
-				? { ...anchorDropTarget, isNewTrack: true }
-				: null;
+		if (!anchorDropTarget || !nextGroupMoveResult) {
+			drag.dropTarget = null;
+			return;
+		}
+
+		if (nextGroupMoveResult.createTracks.length > 0) {
+			const firstCreatedTrack = nextGroupMoveResult.createTracks.reduce(
+				(firstTrack, track) =>
+					track.index < firstTrack.index ? track : firstTrack,
+			);
+			drag.dropTarget = {
+				...anchorDropTarget,
+				trackIndex: firstCreatedTrack.index,
+				isNewTrack: true,
+				insertPosition: anchorDropTarget.insertPosition ?? "above",
+				targetElement: null,
+			};
+			return;
+		}
+
+		drag.dropTarget = anchorDropTarget;
 	}
 
 	private handleMouseMove = ({ clientX, clientY }: MouseEvent): void => {

@@ -22,16 +22,22 @@ import {
 	MagicWand05Icon,
 	DashboardSpeed02Icon,
 	TransitionTopIcon,
+	GridViewIcon,
 } from "@hugeicons/core-free-icons";
 import { ElementParamsTab } from "./components/element-params-tab";
 import type { ElementWithTrackForParams } from "./components/element-params-tab";
-import { ClipEffectsTab, StandaloneEffectTab } from "@/effects/components/effects-tab";
+import {
+	ClipEffectsTab,
+	StandaloneEffectTab,
+} from "@/effects/components/effects-tab";
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
 import { TextTransitionsTab } from "./components/text-transitions-tab";
 import { TextWordsTab } from "./components/text-words-tab";
+import { TextPlacementTab } from "./components/text-placement-tab";
+import type { TextOverrideScope } from "./text-scope";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -66,6 +72,7 @@ const TEXT_PARAM_KEYS = [
 export type TabContentProps = {
 	trackId: string;
 	elementsWithTracks?: ElementWithTrackForParams[];
+	textScope?: TextOverrideScope;
 };
 
 export type PropertiesTabDef = {
@@ -89,13 +96,14 @@ function buildTransformTab({
 		id: "transform",
 		label: "Transform",
 		icon: <HugeiconsIcon icon={ArrowExpandIcon} size={16} />,
-		content: ({ trackId, elementsWithTracks }) => (
+		content: ({ trackId, elementsWithTracks, textScope }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
 				elementsWithTracks={elementsWithTracks}
 				paramKeys={TRANSFORM_PARAM_KEYS}
 				sectionKey="transform"
+				textScope={textScope}
 			/>
 		),
 	};
@@ -110,13 +118,14 @@ function buildBlendingTab({
 		id: "blending",
 		label: "Blending",
 		icon: <HugeiconsIcon icon={RainDropIcon} size={16} />,
-		content: ({ trackId, elementsWithTracks }) => (
+		content: ({ trackId, elementsWithTracks, textScope }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
 				elementsWithTracks={elementsWithTracks}
 				paramKeys={BLENDING_PARAM_KEYS}
 				sectionKey="blending"
+				textScope={textScope}
 			/>
 		),
 	};
@@ -189,13 +198,14 @@ function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 		id: "text",
 		label: "Text",
 		icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
-		content: ({ trackId, elementsWithTracks }) => (
+		content: ({ trackId, elementsWithTracks, textScope }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
 				elementsWithTracks={elementsWithTracks}
 				paramKeys={TEXT_PARAM_KEYS}
 				sectionKey="text"
+				textScope={textScope}
 			/>
 		),
 	};
@@ -210,11 +220,12 @@ function buildTextTransitionsTab({
 		id: "transitions",
 		label: "Transitions",
 		icon: <HugeiconsIcon icon={TransitionTopIcon} size={16} />,
-		content: ({ trackId, elementsWithTracks }) => (
+		content: ({ trackId, elementsWithTracks, textScope }) => (
 			<TextTransitionsTab
 				element={element}
 				trackId={trackId}
 				elementsWithTracks={elementsWithTracks}
+				textScope={textScope}
 			/>
 		),
 	};
@@ -229,11 +240,32 @@ function buildTextWordsTab({
 		id: "words",
 		label: "Words",
 		icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
-		content: ({ trackId, elementsWithTracks }) => (
+		content: ({ trackId, elementsWithTracks, textScope }) => (
 			<TextWordsTab
 				element={element}
 				trackId={trackId}
 				elementsWithTracks={elementsWithTracks}
+				textScope={textScope}
+			/>
+		),
+	};
+}
+
+function buildTextPlacementTab({
+	element,
+}: {
+	element: TextElement;
+}): PropertiesTabDef {
+	return {
+		id: "placement",
+		label: "Placement",
+		icon: <HugeiconsIcon icon={GridViewIcon} size={16} />,
+		content: ({ trackId, elementsWithTracks, textScope }) => (
+			<TextPlacementTab
+				element={element}
+				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
+				textScope={textScope}
 			/>
 		),
 	};
@@ -248,7 +280,9 @@ function buildGraphicTab({
 		id: "graphic",
 		label: "Graphic",
 		icon: <OcShapesIcon size={16} />,
-		content: ({ trackId }) => <GraphicTab element={element} trackId={trackId} />,
+		content: ({ trackId }) => (
+			<GraphicTab element={element} trackId={trackId} />
+		),
 	};
 }
 
@@ -276,6 +310,7 @@ function getTextConfig({
 		defaultTab: "text",
 		tabs: [
 			buildTextTab({ element }),
+			buildTextPlacementTab({ element }),
 			buildTextWordsTab({ element }),
 			buildTextTransitionsTab({ element }),
 			buildTransformTab({ element }),

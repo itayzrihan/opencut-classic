@@ -6,9 +6,9 @@ import type {
 	SceneTracks,
 	TextTrack,
 	TimelineElement,
-	TimelineTrack,
 	VideoTrack,
 } from "@/timeline";
+import { getDisplayTracks, splitTrackByType } from "@/timeline";
 import { generateUUID } from "@/utils/id";
 import { buildEmptyTrack } from "./track-factory";
 import type { PlacementResult } from "./types";
@@ -25,7 +25,7 @@ export function applyPlacement({
 	elements: TimelineElement[];
 	newTrackInsertIndexOverride?: number;
 }): { updatedTracks: SceneTracks; targetTrackId: string } | null {
-	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
+	const orderedTracks = getDisplayTracks({ tracks });
 	if (placementResult.kind === "existingTrack") {
 		const targetTrack = orderedTracks[placementResult.trackIndex];
 		if (!targetTrack) {
@@ -47,68 +47,22 @@ export function applyPlacement({
 	const newTrackId = generateUUID();
 	const insertIndex =
 		newTrackInsertIndexOverride ?? placementResult.insertIndex;
-	const updatedTracks =
-		placementResult.trackType === "audio"
-			? {
-					...tracks,
-					audio: insertIntoAudioTracks({
-						tracks,
-						insertIndex,
-						track: buildPlacedAudioTrack({
-							id: newTrackId,
-							elements,
-						}),
+	const updatedTracks = splitTrackByType({
+		tracks,
+		insertIndex,
+		track:
+			placementResult.trackType === "audio"
+				? buildPlacedAudioTrack({
+						id: newTrackId,
+						elements,
+					})
+				: buildPlacedOverlayTrack({
+						id: newTrackId,
+						type: placementResult.trackType,
+						elements,
 					}),
-				}
-			: {
-					...tracks,
-					overlay: insertIntoOverlayTracks({
-						tracks,
-						insertIndex,
-						track: buildPlacedOverlayTrack({
-							id: newTrackId,
-							type: placementResult.trackType,
-							elements,
-						}),
-					}),
-				};
+	});
 	return { updatedTracks, targetTrackId: newTrackId };
-}
-
-function insertIntoOverlayTracks({
-	tracks,
-	insertIndex,
-	track,
-}: {
-	tracks: SceneTracks;
-	insertIndex: number;
-	track: OverlayTrack;
-}): OverlayTrack[] {
-	const normalizedInsertIndex = Math.max(
-		0,
-		Math.min(insertIndex, tracks.overlay.length),
-	);
-	const nextTracks = [...tracks.overlay];
-	nextTracks.splice(normalizedInsertIndex, 0, track);
-	return nextTracks;
-}
-
-function insertIntoAudioTracks({
-	tracks,
-	insertIndex,
-	track,
-}: {
-	tracks: SceneTracks;
-	insertIndex: number;
-	track: AudioTrack;
-}): AudioTrack[] {
-	const audioInsertIndex = Math.max(
-		0,
-		Math.min(insertIndex - tracks.overlay.length - 1, tracks.audio.length),
-	);
-	const nextTracks = [...tracks.audio];
-	nextTracks.splice(audioInsertIndex, 0, track);
-	return nextTracks;
 }
 
 function buildPlacedAudioTrack({

@@ -1,6 +1,8 @@
 import { graphicsRegistry } from "../registry";
 import { ellipseGraphicDefinition } from "./ellipse";
+import { hyperframeGraphicDefinition } from "./hyperframe";
 import { polygonGraphicDefinition } from "./polygon";
+import { presetBackgroundGraphicDefinition } from "./preset-background";
 import { rectangleGraphicDefinition } from "./rectangle";
 import { starGraphicDefinition } from "./star";
 
@@ -9,6 +11,8 @@ const defaultGraphicDefinitions = [
 	ellipseGraphicDefinition,
 	polygonGraphicDefinition,
 	starGraphicDefinition,
+	presetBackgroundGraphicDefinition,
+	hyperframeGraphicDefinition,
 ];
 
 export function registerDefaultGraphics(): void {
@@ -25,7 +29,9 @@ export function registerDefaultGraphics(): void {
 
 export {
 	ellipseGraphicDefinition,
+	hyperframeGraphicDefinition,
 	polygonGraphicDefinition,
+	presetBackgroundGraphicDefinition,
 	rectangleGraphicDefinition,
 	starGraphicDefinition,
 };

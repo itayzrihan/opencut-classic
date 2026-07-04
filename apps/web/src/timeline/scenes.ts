@@ -24,6 +24,7 @@ export function buildDefaultScene({
 	name: string;
 	isMain: boolean;
 }): TScene {
+	const mainTrackId = generateUUID();
 	return {
 		id: generateUUID(),
 		name,
@@ -31,7 +32,7 @@ export function buildDefaultScene({
 		tracks: {
 			overlay: [],
 			main: {
-				id: generateUUID(),
+				id: mainTrackId,
 				name: MAIN_TRACK_NAME,
 				type: "video",
 				elements: [],
@@ -39,6 +40,7 @@ export function buildDefaultScene({
 				hidden: false,
 			},
 			audio: [],
+			order: [mainTrackId],
 		},
 		bookmarks: [],
 		createdAt: new Date(),

@@ -1,5 +1,6 @@
 import type { TimelineTrack, TimelineElement } from "@/timeline";
 import type { ComputeDropTargetParams, DropTarget } from "@/timeline";
+import { getDisplayTracks } from "@/timeline";
 import { resolveTrackPlacement } from "@/timeline/placement";
 import { TIMELINE_TRACK_GAP_PX } from "./layout";
 import { getTrackHeight } from "./track-layout";
@@ -115,8 +116,7 @@ export function computeDropTarget({
 	excludeElementId,
 	targetElementTypes,
 }: ComputeDropTargetParams): DropTarget {
-	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
-	const mainTrackIndex = tracks.overlay.length;
+	const orderedTracks = getDisplayTracks({ tracks });
 	const xPosition =
 		startTimeOverride !== undefined
 			? startTimeOverride

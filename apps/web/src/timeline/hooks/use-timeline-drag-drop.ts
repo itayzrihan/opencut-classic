@@ -10,6 +10,7 @@ interface UseTimelineDragDropProps {
 	containerRef: RefObject<HTMLDivElement | null>;
 	headerRef?: RefObject<HTMLElement | null>;
 	tracksScrollRef?: RefObject<HTMLDivElement | null>;
+	tracksTopInsetPx?: number;
 	zoomLevel: number;
 }
 
@@ -17,6 +18,7 @@ export function useTimelineDragDrop({
 	containerRef,
 	headerRef,
 	tracksScrollRef,
+	tracksTopInsetPx = 0,
 	zoomLevel,
 }: UseTimelineDragDropProps) {
 	const editor = useEditor();
@@ -26,6 +28,7 @@ export function useTimelineDragDrop({
 		getContainerEl: () => containerRef.current,
 		getHeaderEl: () => headerRef?.current ?? null,
 		getTracksScrollEl: () => tracksScrollRef?.current ?? null,
+		getTracksTopInsetPx: () => tracksTopInsetPx,
 		getActiveProjectFps: () => editor.project.getActive()?.settings.fps ?? null,
 		getActiveProjectId: () =>
 			editor.project.getActiveOrNull()?.metadata.id ?? null,
@@ -37,6 +40,7 @@ export function useTimelineDragDrop({
 		executeCommand: (command) => editor.command.execute({ command }),
 		insertElement: (args) => editor.timeline.insertElement(args),
 		addClipEffect: (args) => editor.timeline.addClipEffect(args),
+		applyTransitions: (args) => editor.timeline.applyTransitions(args),
 	};
 	const configRef = useCommittedRef(config);
 	const [controller] = useState(() => new DragDropController({ configRef }));

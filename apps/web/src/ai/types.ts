@@ -168,6 +168,92 @@ export type AiEditOperation =
 			propertyPath: string;
 			keyframeId: string;
 			reason?: string;
+	  }
+	| {
+			type: "add_track";
+			trackType: TrackType;
+			index?: number;
+			reason?: string;
+	  }
+	| {
+			type: "remove_track";
+			trackId: string;
+			reason?: string;
+	  }
+	| {
+			type: "reorder_track";
+			trackId: string;
+			toIndex: number;
+			reason?: string;
+	  }
+	| {
+			type: "set_track_state";
+			trackId: string;
+			muted?: boolean;
+			hidden?: boolean;
+			reason?: string;
+	  }
+	| {
+			type: "insert_media_element";
+			mediaId: string;
+			startTime: MediaTime;
+			trackId?: string;
+			duration?: MediaTime;
+			name?: string;
+			reason?: string;
+	  }
+	| {
+			type: "insert_graphic_element";
+			definitionId: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+			trackId?: string;
+			name?: string;
+			params?: Record<string, string | number | boolean>;
+			reason?: string;
+	  }
+	| {
+			type: "insert_html_element";
+			html: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+			trackId?: string;
+			name?: string;
+			sourceWidth?: number;
+			sourceHeight?: number;
+			params?: Record<string, string | number | boolean>;
+			reason?: string;
+	  }
+	| {
+			type: "duplicate_element";
+			trackId: string;
+			elementId: string;
+			reason?: string;
+	  }
+	| {
+			type: "apply_transition";
+			trackId: string;
+			elementId: string;
+			presetId: string;
+			side: "in" | "out";
+			percent?: number;
+			reason?: string;
+	  }
+	| {
+			type: "set_element_state";
+			trackId: string;
+			elementId: string;
+			hidden?: boolean;
+			muted?: boolean;
+			reason?: string;
+	  }
+	| {
+			type: "retime_element";
+			trackId: string;
+			elementId: string;
+			rate: number;
+			maintainPitch?: boolean;
+			reason?: string;
 	  };
 
 export interface AiToolCall {

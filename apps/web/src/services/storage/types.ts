@@ -4,6 +4,7 @@ import type {
 	TProjectMetadata,
 	TTimelineViewState,
 } from "@/project/types";
+import type { EditorSelectionSnapshot } from "@/selection/editor-selection";
 import type { TScene } from "@/timeline";
 
 export interface StorageAdapter<T> {
@@ -48,9 +49,32 @@ export type SerializedProject = Omit<TProject, "metadata" | "scenes"> & {
 	timelineViewState?: TTimelineViewState;
 };
 
+export type SerializedProjectHistorySnapshot = Omit<
+	SerializedProject,
+	"metadata"
+> & {
+	metadata: Omit<SerializedProjectMetadata, "thumbnail">;
+};
+
+export interface SerializedCommandHistoryEntry {
+	before: SerializedProjectHistorySnapshot;
+	after: SerializedProjectHistorySnapshot;
+	previousSelection: EditorSelectionSnapshot;
+	selectionOverride?: EditorSelectionSnapshot;
+}
+
+export interface SerializedCommandHistory {
+	projectId: string;
+	schemaVersion: number;
+	undoStack: SerializedCommandHistoryEntry[];
+	redoStack: SerializedCommandHistoryEntry[];
+	updatedAt: string;
+}
+
 export interface StorageConfig {
 	projectsDb: string;
 	mediaDb: string;
+	commandHistoryDb: string;
 	savedSoundsDb: string;
 	version: number;
 }

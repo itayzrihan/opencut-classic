@@ -15,7 +15,10 @@ import { UpdateProjectSettingsCommand } from "@/commands/project";
 import { DEFAULT_BACKGROUND_COLOR } from "@/background/color";
 import { DEFAULT_CANVAS_SIZE } from "@/canvas/sizes";
 import { DEFAULT_FPS } from "@/fps/defaults";
-import { buildDefaultScene, getProjectDurationFromScenes } from "@/timeline/scenes";
+import {
+	buildDefaultScene,
+	getProjectDurationFromScenes,
+} from "@/timeline/scenes";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
 import {
@@ -116,6 +119,9 @@ export class ProjectManager {
 
 		try {
 			await storageService.saveProject({ project: newProject });
+			await this.editor.command.initializeEmptyHistory({
+				projectId: newProject.metadata.id,
+			});
 			this.updateMetadata(newProject);
 
 			return newProject.metadata.id;
@@ -155,6 +161,7 @@ export class ProjectManager {
 			}
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
+			await this.editor.command.loadHistory({ projectId: id });
 
 			await loadFonts({
 				families: [
@@ -299,6 +306,7 @@ export class ProjectManager {
 				this.active = null;
 				this.editor.media.clearAllAssets();
 				this.editor.scenes.clearScenes();
+				this.editor.command.clearLoadedProject();
 			}
 
 			this.notify();
@@ -313,6 +321,7 @@ export class ProjectManager {
 
 		this.editor.media.clearAllAssets();
 		this.editor.scenes.clearScenes();
+		this.editor.command.clearLoadedProject();
 	}
 
 	async renameProject({
@@ -539,6 +548,7 @@ export class ProjectManager {
 			if (didUpdateThumbnail) {
 				await this.editor.save.flush();
 			}
+			await this.editor.command.flushHistory();
 		} catch (error) {
 			console.error("Failed to generate project thumbnail on exit:", error);
 		}

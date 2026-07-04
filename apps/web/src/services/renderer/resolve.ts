@@ -10,7 +10,7 @@ import type { Effect, EffectPass } from "@/effects/types";
 import { getSourceTimeAtClipTime } from "@/retime";
 import { CUSTOM_AI_EFFECT_TYPE } from "@/effects/custom-ai-effect";
 import {
-	DEFAULT_GRAPHIC_SOURCE_SIZE,
+	getGraphicDefinition,
 	resolveGraphicElementParamsAtTime,
 } from "@/graphics";
 import {
@@ -84,7 +84,7 @@ async function resolveNode({
 	} else if (node instanceof StickerNode) {
 		node.resolved = await resolveStickerNode({ node, context });
 	} else if (node instanceof GraphicNode) {
-		node.resolved = resolveGraphicNode({ node, context });
+		node.resolved = await resolveGraphicNode({ node, context });
 	} else if (node instanceof TextNode) {
 		node.resolved = resolveTextNode({ node, context });
 	} else if (node instanceof BlurBackgroundNode) {
@@ -289,29 +289,44 @@ async function resolveStickerNode({
 	};
 }
 
-function resolveGraphicNode({
+async function resolveGraphicNode({
 	node,
 	context,
 }: {
 	node: GraphicNode;
 	context: ResolveContext;
-}): ResolvedGraphicNodeState | null {
+}): Promise<ResolvedGraphicNodeState | null> {
+	const { width: sourceWidth, height: sourceHeight } = node.getSourceSize();
 	const visualState = resolveVisualState({
 		params: node.params,
 		context,
-		sourceWidth: DEFAULT_GRAPHIC_SOURCE_SIZE,
-		sourceHeight: DEFAULT_GRAPHIC_SOURCE_SIZE,
+		sourceWidth,
+		sourceHeight,
 	});
 	if (!visualState) {
 		return null;
 	}
 
+	const resolvedParams = resolveGraphicElementParamsAtTime({
+		element: node.params,
+		localTime: visualState.localTime,
+	});
+	const definition = getGraphicDefinition({
+		definitionId: node.params.definitionId,
+	});
+	await definition.prepare?.({
+		params: resolvedParams,
+		width: sourceWidth,
+		height: sourceHeight,
+		localTime: visualState.localTime,
+		duration: node.params.duration,
+	});
+
 	return {
 		...visualState,
-		resolvedParams: resolveGraphicElementParamsAtTime({
-			element: node.params,
-			localTime: visualState.localTime,
-		}),
+		resolvedParams,
+		sourceWidth,
+		sourceHeight,
 	};
 }
 
