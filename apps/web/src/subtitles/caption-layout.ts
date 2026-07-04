@@ -8,11 +8,15 @@ import type { SubtitleCue } from "./types";
 export const DEFAULT_CAPTION_LAYOUT = {
 	wordsPerRow: 4,
 	rows: 2,
+	inPaddingPercent: 0,
+	outPaddingPercent: 0,
 };
 
 export interface CaptionLayoutSettings {
 	wordsPerRow: number;
 	rows: number;
+	inPaddingPercent: number;
+	outPaddingPercent: number;
 }
 
 function clampInteger({
@@ -26,6 +30,19 @@ function clampInteger({
 }) {
 	if (!Number.isFinite(value)) return min;
 	return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function clampNumber({
+	value,
+	min,
+	max,
+}: {
+	value: number;
+	min: number;
+	max: number;
+}) {
+	if (!Number.isFinite(value)) return min;
+	return Math.min(max, Math.max(min, value));
 }
 
 export function normalizeCaptionLayoutSettings({
@@ -44,6 +61,37 @@ export function normalizeCaptionLayoutSettings({
 			min: 1,
 			max: 4,
 		}),
+		inPaddingPercent: clampNumber({
+			value: settings?.inPaddingPercent ?? DEFAULT_CAPTION_LAYOUT.inPaddingPercent,
+			min: 0,
+			max: 100,
+		}),
+		outPaddingPercent: clampNumber({
+			value: settings?.outPaddingPercent ?? DEFAULT_CAPTION_LAYOUT.outPaddingPercent,
+			min: 0,
+			max: 100,
+		}),
+	};
+}
+
+function paddedCaptionTime({
+	startTime,
+	endTime,
+	settings,
+}: {
+	startTime: number;
+	endTime: number;
+	settings: CaptionLayoutSettings;
+}) {
+	const duration = Math.max(0.001, endTime - startTime);
+	const paddedStart = Math.max(
+		0,
+		startTime - duration * (settings.inPaddingPercent / 100),
+	);
+	const paddedEnd = endTime + duration * (settings.outPaddingPercent / 100);
+	return {
+		startTime: paddedStart,
+		endTime: Math.max(paddedEnd, paddedStart + 0.001),
 	};
 }
 
@@ -72,8 +120,13 @@ export function buildCaptionChunksFromWords({
 			);
 		}
 
-		const startTime = group[0].start;
-		const endTime = Math.max(group[group.length - 1].end, startTime + 0.1);
+		const rawStartTime = group[0].start;
+		const rawEndTime = Math.max(group[group.length - 1].end, rawStartTime + 0.1);
+		const { startTime, endTime } = paddedCaptionTime({
+			startTime: rawStartTime,
+			endTime: rawEndTime,
+			settings: normalized,
+		});
 		captions.push({
 			text: lines.join("\n"),
 			startTime,
@@ -122,12 +175,21 @@ export function splitCaptionCuesByLayer({
 	captions: SubtitleCue[];
 	layerCount: number;
 }): SubtitleCue[][] {
-	const safeLayerCount = clampInteger({ value: layerCount, min: 1, max: 8 });
+	const safeLayerCount = clampInteger({ value: layerCount, min: 1, max: 16 });
 	const layers = Array.from({ length: safeLayerCount }, () => [] as SubtitleCue[]);
+	const layerEnds = Array.from({ length: safeLayerCount }, () => 0);
 
-	captions.forEach((caption, index) => {
-		layers[index % safeLayerCount].push(caption);
+	captions.forEach((caption) => {
+		const captionEnd = caption.startTime + caption.duration;
+		let layerIndex = layerEnds.findIndex((end) => end <= caption.startTime);
+		if (layerIndex === -1) {
+			layerIndex = layers.length;
+			layers.push([]);
+			layerEnds.push(0);
+		}
+		layers[layerIndex].push(caption);
+		layerEnds[layerIndex] = Math.max(layerEnds[layerIndex], captionEnd);
 	});
 
-	return layers;
+	return layers.filter((layer) => layer.length > 0);
 }

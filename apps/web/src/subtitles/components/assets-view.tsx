@@ -575,6 +575,38 @@ export function Captions() {
 								}
 							/>
 						</SectionField>
+						<SectionField label="In padding %">
+							<Input
+								type="number"
+								min={0}
+								max={100}
+								step={1}
+								size="sm"
+								value={captionSettings.inPaddingPercent}
+								onChange={(event) =>
+									updateCaptionSetting({
+										key: "inPaddingPercent",
+										value: event.target.value,
+									})
+								}
+							/>
+						</SectionField>
+						<SectionField label="Out padding %">
+							<Input
+								type="number"
+								min={0}
+								max={100}
+								step={1}
+								size="sm"
+								value={captionSettings.outPaddingPercent}
+								onChange={(event) =>
+									updateCaptionSetting({
+										key: "outPaddingPercent",
+										value: event.target.value,
+									})
+								}
+							/>
+						</SectionField>
 					</SectionFields>
 
 					<Button

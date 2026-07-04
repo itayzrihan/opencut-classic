@@ -21,6 +21,10 @@ export function PropertiesPanel() {
 	useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
 	const { activeTabPerType, setActiveTab } = usePropertiesStore();
+	const mediaAssets = editor.media.getAssets();
+	const elementsWithTracks = editor.timeline.getElementsWithTracks({
+		elements: selectedElements,
+	});
 
 	if (selectedElements.length === 0) {
 		return (
@@ -31,20 +35,74 @@ export function PropertiesPanel() {
 	}
 
 	if (selectedElements.length > 1) {
+		const firstElement = elementsWithTracks[0]?.element;
+		const canBulkEdit =
+			firstElement &&
+			firstElement.type === "text" &&
+			elementsWithTracks.length === selectedElements.length &&
+			elementsWithTracks.every((entry) => entry.element.type === firstElement.type);
+
+		if (!canBulkEdit || !firstElement) {
+			return (
+				<div className="panel bg-background flex h-full flex-col items-center justify-center overflow-hidden rounded-sm border">
+					<p className="text-muted-foreground text-sm">
+						{selectedElements.length} elements selected
+					</p>
+				</div>
+			);
+		}
+
+		const config = getPropertiesConfig({ element: firstElement, mediaAssets });
+		const visibleTabs = config.tabs;
+		const storedTabId = activeTabPerType[firstElement.type];
+		const isStoredTabVisible = visibleTabs.some((t) => t.id === storedTabId);
+		const activeTabId = isStoredTabVisible ? storedTabId : config.defaultTab;
+		const activeTab =
+			visibleTabs.find((t) => t.id === activeTabId) ?? visibleTabs[0];
+		const trackId = elementsWithTracks[0].track.id;
+
+		if (!activeTab) return null;
+
 		return (
-			<div className="panel bg-background flex h-full flex-col items-center justify-center overflow-hidden rounded-sm border">
-				<p className="text-muted-foreground text-sm">
-					{selectedElements.length} elements selected.0
-				</p>
+			<div className="panel bg-background flex h-full overflow-hidden rounded-sm border">
+				<TooltipProvider delayDuration={0}>
+					<div className="flex shrink-0 flex-col gap-0.5 border-r p-1 scrollbar-hidden overflow-y-auto">
+						{visibleTabs.map((tab) => (
+							<Tooltip key={tab.id}>
+								<TooltipTrigger asChild>
+									<Button
+										variant={tab.id === activeTab.id ? "secondary" : "ghost"}
+										size="icon"
+										onClick={() =>
+											setActiveTab({
+												elementType: firstElement.type,
+												tabId: tab.id,
+											})
+										}
+										aria-label={tab.label}
+										className={cn(
+											"shrink-0",
+											"h-8 w-8",
+											tab.id !== activeTab.id && "text-muted-foreground",
+										)}
+									>
+										{tab.icon}
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent side="right">{tab.label}</TooltipContent>
+							</Tooltip>
+						))}
+					</div>
+				</TooltipProvider>
+				<ScrollArea className="flex-1 scrollbar-hidden">
+					<div className="border-b px-3 py-2 text-muted-foreground text-xs">
+						{selectedElements.length} {firstElement.type} elements selected
+					</div>
+					{activeTab.content({ trackId, elementsWithTracks })}
+				</ScrollArea>
 			</div>
 		);
 	}
-
-	const mediaAssets = editor.media.getAssets();
-
-	const elementsWithTracks = editor.timeline.getElementsWithTracks({
-		elements: selectedElements,
-	});
 	const elementWithTrack = elementsWithTracks[0];
 
 	if (!elementWithTrack) return null;
@@ -93,7 +151,7 @@ export function PropertiesPanel() {
 				</div>
 			</TooltipProvider>
 			<ScrollArea className="flex-1 scrollbar-hidden">
-				{activeTab.content({ trackId: track.id })}
+				{activeTab.content({ trackId: track.id, elementsWithTracks })}
 			</ScrollArea>
 		</div>
 	);

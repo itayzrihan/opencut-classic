@@ -28,12 +28,14 @@ import { Textarea } from "@/components/ui/textarea";
 export function PropertyParamField({
 	param,
 	value,
+	isMixed = false,
 	onPreview,
 	onCommit,
 	keyframe,
 }: {
 	param: ParamDefinition;
 	value: ParamValue;
+	isMixed?: boolean;
 	onPreview: (value: ParamValue) => void;
 	onCommit: () => void;
 	keyframe?: {
@@ -44,7 +46,7 @@ export function PropertyParamField({
 }) {
 	return (
 		<SectionField
-			label={param.label}
+			label={isMixed ? `${param.label} (mixed)` : param.label}
 			beforeLabel={
 				keyframe && param.keyframable !== false ? (
 					<KeyframeToggle
@@ -61,6 +63,7 @@ export function PropertyParamField({
 				value={value}
 				onPreview={onPreview}
 				onCommit={onCommit}
+				isMixed={isMixed}
 			/>
 		</SectionField>
 	);
@@ -71,17 +74,20 @@ function ParamInput({
 	value,
 	onPreview,
 	onCommit,
+	isMixed,
 }: {
 	param: ParamDefinition;
 	value: ParamValue;
 	onPreview: (value: ParamValue) => void;
 	onCommit: () => void;
+	isMixed: boolean;
 }) {
 	if (param.type === "number") {
 		return (
 			<NumberParamField
 				param={param}
 				value={typeof value === "number" ? value : Number(value)}
+				isMixed={isMixed}
 				onPreview={onPreview}
 				onCommit={onCommit}
 			/>
@@ -91,7 +97,7 @@ function ParamInput({
 	if (param.type === "boolean") {
 		return (
 			<Switch
-				checked={Boolean(value)}
+				checked={isMixed ? false : Boolean(value)}
 				onCheckedChange={(checked) => {
 					onPreview(checked);
 					onCommit();
@@ -103,14 +109,14 @@ function ParamInput({
 	if (param.type === "select") {
 		return (
 			<Select
-				value={String(value)}
+				value={isMixed ? undefined : String(value)}
 				onValueChange={(selected) => {
 					onPreview(selected);
 					onCommit();
 				}}
 			>
 				<SelectTrigger className="w-full">
-					<SelectValue />
+					<SelectValue placeholder="Mixed values" />
 				</SelectTrigger>
 				<SelectContent>
 					{param.options.map((option) => (
@@ -139,7 +145,8 @@ function ParamInput({
 	if (param.type === "text") {
 		return (
 			<Textarea
-				value={String(value)}
+				value={isMixed ? "" : String(value)}
+				placeholder={isMixed ? "Mixed values" : undefined}
 				onChange={(event) => onPreview(event.currentTarget.value)}
 				onBlur={onCommit}
 			/>
@@ -150,7 +157,8 @@ function ParamInput({
 		return (
 			<input
 				className="border-input bg-accent h-9 w-full rounded-md border px-3 text-sm outline-none"
-				value={String(value)}
+				value={isMixed ? "" : String(value)}
+				placeholder={isMixed ? "Mixed values" : undefined}
 				onChange={(event) => onPreview(event.currentTarget.value)}
 				onBlur={onCommit}
 			/>
@@ -163,11 +171,13 @@ function ParamInput({
 function NumberParamField({
 	param,
 	value,
+	isMixed,
 	onPreview,
 	onCommit,
 }: {
 	param: NumberParamDefinition;
 	value: number;
+	isMixed: boolean;
 	onPreview: (value: number) => void;
 	onCommit: () => void;
 }) {
@@ -210,14 +220,15 @@ function NumberParamField({
 	return (
 		<NumberField
 			icon={param.shortLabel}
-			value={draft.displayValue}
+			value={isMixed ? "" : draft.displayValue}
+			placeholder={isMixed ? "Mixed values" : undefined}
 			dragSensitivity="slow"
-			isDefault={value === param.default}
+			isDefault={!isMixed && value === param.default}
 			onFocus={draft.onFocus}
 			onChange={draft.onChange}
 			onBlur={draft.onBlur}
-			onScrub={previewFromDisplay}
-			onScrubEnd={onCommit}
+			onScrub={isMixed ? undefined : previewFromDisplay}
+			onScrubEnd={isMixed ? undefined : onCommit}
 			onReset={handleReset}
 		/>
 	);

@@ -23,6 +23,7 @@ import {
 	DashboardSpeed02Icon,
 } from "@hugeicons/core-free-icons";
 import { ElementParamsTab } from "./components/element-params-tab";
+import type { ElementWithTrackForParams } from "./components/element-params-tab";
 import { ClipEffectsTab, StandaloneEffectTab } from "@/effects/components/effects-tab";
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
@@ -61,6 +62,7 @@ const TEXT_PARAM_KEYS = [
 
 export type TabContentProps = {
 	trackId: string;
+	elementsWithTracks?: ElementWithTrackForParams[];
 };
 
 export type PropertiesTabDef = {
@@ -84,10 +86,11 @@ function buildTransformTab({
 		id: "transform",
 		label: "Transform",
 		icon: <HugeiconsIcon icon={ArrowExpandIcon} size={16} />,
-		content: ({ trackId }) => (
+		content: ({ trackId, elementsWithTracks }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
 				paramKeys={TRANSFORM_PARAM_KEYS}
 				sectionKey="transform"
 			/>
@@ -104,10 +107,11 @@ function buildBlendingTab({
 		id: "blending",
 		label: "Blending",
 		icon: <HugeiconsIcon icon={RainDropIcon} size={16} />,
-		content: ({ trackId }) => (
+		content: ({ trackId, elementsWithTracks }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
 				paramKeys={BLENDING_PARAM_KEYS}
 				sectionKey="blending"
 			/>
@@ -124,10 +128,11 @@ function buildAudioTab({
 		id: "audio",
 		label: "Audio",
 		icon: <HugeiconsIcon icon={MusicNote03Icon} size={16} />,
-		content: ({ trackId }) => (
+		content: ({ trackId, elementsWithTracks }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
 				paramKeys={AUDIO_PARAM_KEYS}
 				sectionKey="audio"
 			/>
@@ -181,10 +186,11 @@ function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 		id: "text",
 		label: "Text",
 		icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
-		content: ({ trackId }) => (
+		content: ({ trackId, elementsWithTracks }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
+				elementsWithTracks={elementsWithTracks}
 				paramKeys={TEXT_PARAM_KEYS}
 				sectionKey="text"
 			/>

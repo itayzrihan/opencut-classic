@@ -2,6 +2,7 @@
 
 import { resolveAnimationPathValueAtTime } from "@/animation";
 import { Section, SectionContent, SectionFields } from "@/components/section";
+import { useEditor } from "@/editor/use-editor";
 import { useElementPlayhead } from "@/components/editor/panels/properties/hooks/use-element-playhead";
 import { useKeyframedParamProperty } from "@/components/editor/panels/properties/hooks/use-keyframed-param-property";
 import { PropertyParamField } from "@/components/editor/panels/properties/components/property-param-field";
@@ -15,14 +16,21 @@ import {
 import type { TimelineElement } from "@/timeline";
 import type { MediaTime } from "@/wasm";
 
+export type ElementWithTrackForParams = {
+	track: { id: string };
+	element: TimelineElement;
+};
+
 export function ElementParamsTab({
 	element,
 	trackId,
+	elementsWithTracks,
 	paramKeys,
 	sectionKey,
 }: {
 	element: TimelineElement;
 	trackId: string;
+	elementsWithTracks?: ElementWithTrackForParams[];
 	paramKeys?: readonly string[];
 	sectionKey: string;
 }) {
@@ -34,6 +42,10 @@ export function ElementParamsTab({
 		(param) => !paramKeys || paramKeys.includes(param.key),
 	);
 	const baseValues = buildValues({ element, params });
+	const bulkElements =
+		elementsWithTracks && elementsWithTracks.length > 1
+			? elementsWithTracks
+			: null;
 
 	return (
 		<Section sectionKey={`${element.id}:${sectionKey}`}>
@@ -46,8 +58,17 @@ export function ElementParamsTab({
 								key={param.key}
 								element={element}
 								trackId={trackId}
+								elementsWithTracks={bulkElements ?? undefined}
 								param={param}
 								baseValue={baseValues[param.key] ?? param.default}
+								isMixed={
+									bulkElements
+										? isMixedParamValue({
+												elementsWithTracks: bulkElements,
+												param,
+											})
+										: false
+								}
 								localTime={localTime}
 								isPlayheadWithinElementRange={isPlayheadWithinElementRange}
 							/>
@@ -61,15 +82,19 @@ export function ElementParamsTab({
 function ElementParamField({
 	element,
 	trackId,
+	elementsWithTracks,
 	param,
 	baseValue,
+	isMixed,
 	localTime,
 	isPlayheadWithinElementRange,
 }: {
 	element: TimelineElement;
 	trackId: string;
+	elementsWithTracks?: ElementWithTrackForParams[];
 	param: ElementParamDefinition;
 	baseValue: ParamValue;
+	isMixed: boolean;
 	localTime: MediaTime;
 	isPlayheadWithinElementRange: boolean;
 }) {
@@ -91,15 +116,39 @@ function ElementParamField({
 		buildBaseUpdates: ({ value }) =>
 			writeElementParamValue({ element, param, value }),
 	});
+	const editor = useEditor();
+	const isBulk = !!elementsWithTracks?.length;
+
+	const onPreview = (value: ParamValue) => {
+		if (!elementsWithTracks) {
+			animatedParam.onPreview(value);
+			return;
+		}
+
+		editor.timeline.previewElements({
+			updates: elementsWithTracks.map((entry) => ({
+				trackId: entry.track.id,
+				elementId: entry.element.id,
+				updates: writeElementParamValue({
+					element: entry.element,
+					param,
+					value,
+				}),
+			})),
+		});
+	};
+
+	const onCommit = () => editor.timeline.commitPreview();
 
 	return (
 		<PropertyParamField
 			param={param}
 			value={resolvedValue}
-			onPreview={animatedParam.onPreview}
-			onCommit={animatedParam.onCommit}
+			isMixed={isMixed}
+			onPreview={onPreview}
+			onCommit={isBulk ? onCommit : animatedParam.onCommit}
 			keyframe={
-				param.keyframable === false
+				isBulk || param.keyframable === false
 					? undefined
 					: {
 							isActive: animatedParam.isKeyframedAtTime,
@@ -126,6 +175,22 @@ function buildValues({
 		}
 	}
 	return values;
+}
+
+function isMixedParamValue({
+	elementsWithTracks,
+	param,
+}: {
+	elementsWithTracks: ElementWithTrackForParams[];
+	param: ElementParamDefinition;
+}) {
+	const first = readElementParamValue({
+		element: elementsWithTracks[0].element,
+		param,
+	});
+	return elementsWithTracks.some((entry) => (
+		readElementParamValue({ element: entry.element, param }) !== first
+	));
 }
 
 function isVisible({
