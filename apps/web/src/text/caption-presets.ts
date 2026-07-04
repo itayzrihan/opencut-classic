@@ -1,6 +1,6 @@
 import type { TextCaptionRevealMode, TextWordStyle } from "@/timeline";
 
-export interface CaptionWordPreset {
+export interface CaptionWordAnimation {
 	id: string;
 	name: string;
 	revealMode: TextCaptionRevealMode;
@@ -352,7 +352,7 @@ function mergeStyle(
 	};
 }
 
-export const CAPTION_WORD_PRESETS: CaptionWordPreset[] = families.flatMap(
+export const CAPTION_WORD_ANIMATIONS: CaptionWordAnimation[] = families.flatMap(
 	(family) =>
 		variants.map((variant) => ({
 			id: `${family.id}-${variant.id}`,
@@ -369,13 +369,13 @@ export const CAPTION_WORD_PRESETS: CaptionWordPreset[] = families.flatMap(
 		})),
 );
 
-export function getCaptionWordPreset({
-	presetId,
+export function getCaptionWordAnimation({
+	wordAnimationId,
 }: {
-	presetId: string | undefined;
-}): CaptionWordPreset {
+	wordAnimationId: string | undefined;
+}): CaptionWordAnimation {
 	return (
-		CAPTION_WORD_PRESETS.find((preset) => preset.id === presetId) ??
-		CAPTION_WORD_PRESETS[0]
+		CAPTION_WORD_ANIMATIONS.find((animation) => animation.id === wordAnimationId) ??
+		CAPTION_WORD_ANIMATIONS[0]
 	);
 }

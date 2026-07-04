@@ -166,7 +166,7 @@ export interface TextElement extends BaseTimelineElement {
 	hidden?: boolean;
 	effects?: Effect[];
 	wordRuns?: TextWordRun[];
-	captionPresetId?: string;
+	captionWordAnimationId?: string;
 	captionRevealMode?: TextCaptionRevealMode;
 	captionTransitionIn?: TextWordTransitionIn;
 	captionAccentColor?: string;

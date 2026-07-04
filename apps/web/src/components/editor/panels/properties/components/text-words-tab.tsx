@@ -23,7 +23,7 @@ import type {
 } from "@/timeline";
 import {
 	CAPTION_ACCENT_COLORS,
-	CAPTION_WORD_PRESETS,
+	CAPTION_WORD_ANIMATIONS,
 } from "@/text/caption-presets";
 import type { ElementWithTrackForParams } from "./element-params-tab";
 
@@ -116,12 +116,12 @@ export function TextWordsTab({
 		<Section sectionKey={`${element.id}:words`}>
 			<SectionContent className="pt-4">
 				<SectionFields>
-					<SectionField label="Preset">
+					<SectionField label="Word animation">
 						<Select
-							value={element.captionPresetId ?? CAPTION_WORD_PRESETS[0].id}
-							onValueChange={(captionPresetId) => {
+							value={element.captionWordAnimationId ?? CAPTION_WORD_ANIMATIONS[0].id}
+							onValueChange={(captionWordAnimationId) => {
 								updateSharedSettings({
-									captionPresetId,
+									captionWordAnimationId,
 									captionAccentColor:
 										element.captionAccentColor ?? CAPTION_ACCENT_COLORS[0].value,
 								});
@@ -131,9 +131,9 @@ export function TextWordsTab({
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								{CAPTION_WORD_PRESETS.map((preset) => (
-									<SelectItem key={preset.id} value={preset.id}>
-										{preset.name}
+								{CAPTION_WORD_ANIMATIONS.map((animation) => (
+									<SelectItem key={animation.id} value={animation.id}>
+										{animation.name}
 									</SelectItem>
 								))}
 							</SelectContent>

@@ -18,7 +18,7 @@ import {
 	type TextFontWeight,
 	type TextLayoutParams,
 } from "./primitives";
-import { getCaptionWordPreset } from "./caption-presets";
+import { getCaptionWordAnimation } from "./caption-presets";
 import { FONT_SIZE_SCALE_REFERENCE } from "./typography";
 
 export interface ResolvedTextBackground extends TextBackground {
@@ -200,7 +200,11 @@ function measureWordRunsLayout({
 		return measuredLayout;
 	}
 
-	const preset = getCaptionWordPreset({ presetId: element.captionPresetId });
+	const legacyElement = element as TextElement & { captionPresetId?: string };
+	const preset = getCaptionWordAnimation({
+		wordAnimationId:
+			element.captionWordAnimationId ?? legacyElement.captionPresetId,
+	});
 	const revealMode = resolveRevealMode({
 		elementMode: element.captionRevealMode,
 		presetMode: preset.revealMode,
@@ -338,7 +342,7 @@ function resolveWordStyle({
 	localTime: number;
 	revealMode: TextCaptionRevealMode;
 	transitionIn: TextWordTransitionIn;
-	preset: ReturnType<typeof getCaptionWordPreset>;
+	preset: ReturnType<typeof getCaptionWordAnimation>;
 	accentColor: string | undefined;
 	baseColor: string | undefined;
 }): TextWordStyle & TextLayoutParams {

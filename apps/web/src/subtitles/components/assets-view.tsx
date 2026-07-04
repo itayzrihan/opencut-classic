@@ -8,7 +8,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { extractTimelineAudio } from "@/media/mediabunny";
 import { useEditor } from "@/editor/use-editor";
 import { TRANSCRIPTION_DIAGNOSTICS_SCOPE } from "@/transcription/diagnostics";
@@ -57,7 +57,7 @@ import { mediaTimeToSeconds } from "@/wasm";
 import { z } from "zod";
 import {
 	CAPTION_ACCENT_COLORS,
-	CAPTION_WORD_PRESETS,
+	CAPTION_WORD_ANIMATIONS,
 } from "@/text/caption-presets";
 
 const DIAGNOSTIC_BUTTON_VARIANT: Record<
@@ -86,6 +86,14 @@ const IDLE_STATE: ProcessingState = {
 
 const CAPTION_LAYER_COUNT = 2;
 const TIMING_EPSILON_SECONDS = 0.002;
+const CAPTION_LAST_SETTINGS_STORAGE_KEY = "opencut.caption.lastSettings";
+const CAPTION_SAVED_PRESETS_STORAGE_KEY = "opencut.caption.savedPresets";
+
+interface SavedCaptionPreset {
+	id: string;
+	name: string;
+	settings: CaptionLayoutSettings;
+}
 const CAPTION_REVEAL_MODES: Array<{
 	value: TextCaptionRevealMode;
 	label: string;
@@ -236,14 +244,45 @@ function rebuildCaptionTracksWithSettings({
 		layerCount: CAPTION_LAYER_COUNT,
 		canvasSize,
 	});
+	const replacementTracks = regeneratedTracks.map((track, index) => {
+		const previousTrack = sourceTracks[index];
+		if (!previousTrack) return track;
+		return {
+			...track,
+			id: previousTrack.id,
+			name: previousTrack.name,
+			hidden: previousTrack.hidden,
+			captionSource: track.captionSource
+				? {
+						...track.captionSource,
+						layerIndex: previousTrack.captionSource?.layerIndex ?? index,
+						layerCount:
+							previousTrack.captionSource?.layerCount ??
+							track.captionSource.layerCount,
+					}
+				: undefined,
+		};
+	});
+	let replacementIndex = 0;
+	let insertedExtraTracks = false;
 
 	return {
 		...tracks,
-		overlay: [
-			...regeneratedTracks,
-			...editedTracks,
-			...tracks.overlay.filter((track) => !sourceTrackIds.has(track.id)),
-		],
+		overlay: tracks.overlay.flatMap((track) => {
+			if (!sourceTrackIds.has(track.id)) {
+				return [track];
+			}
+			const replacement = replacementTracks[replacementIndex++];
+			const extras =
+				!insertedExtraTracks && replacementIndex === sourceTracks.length
+					? [
+							...replacementTracks.slice(sourceTracks.length),
+							...editedTracks,
+						]
+					: [];
+			insertedExtraTracks = insertedExtraTracks || extras.length > 0;
+			return replacement ? [replacement, ...extras] : extras;
+		}),
 	};
 }
 
@@ -287,12 +326,75 @@ function processingReducer(
 }
 /* eslint-enable opencut/prefer-object-params */
 
+function loadLastCaptionSettings(): CaptionLayoutSettings {
+	if (typeof window === "undefined") {
+		return { ...DEFAULT_CAPTION_LAYOUT };
+	}
+	try {
+		const raw = window.localStorage.getItem(CAPTION_LAST_SETTINGS_STORAGE_KEY);
+		if (!raw) return { ...DEFAULT_CAPTION_LAYOUT };
+		return normalizeCaptionLayoutSettings({ settings: JSON.parse(raw) });
+	} catch {
+		return { ...DEFAULT_CAPTION_LAYOUT };
+	}
+}
+
+function saveLastCaptionSettings({
+	settings,
+}: {
+	settings: CaptionLayoutSettings;
+}) {
+	if (typeof window === "undefined") return;
+	window.localStorage.setItem(
+		CAPTION_LAST_SETTINGS_STORAGE_KEY,
+		JSON.stringify(settings),
+	);
+}
+
+function loadSavedCaptionPresets(): SavedCaptionPreset[] {
+	if (typeof window === "undefined") return [];
+	try {
+		const raw = window.localStorage.getItem(CAPTION_SAVED_PRESETS_STORAGE_KEY);
+		const parsed = raw ? JSON.parse(raw) : [];
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.filter((item) => (
+				item &&
+				typeof item.id === "string" &&
+				typeof item.name === "string" &&
+				item.settings
+			))
+			.map((item) => ({
+				id: item.id,
+				name: item.name,
+				settings: normalizeCaptionLayoutSettings({ settings: item.settings }),
+			}));
+	} catch {
+		return [];
+	}
+}
+
+function saveSavedCaptionPresets({
+	presets,
+}: {
+	presets: SavedCaptionPreset[];
+}) {
+	if (typeof window === "undefined") return;
+	window.localStorage.setItem(
+		CAPTION_SAVED_PRESETS_STORAGE_KEY,
+		JSON.stringify(presets),
+	);
+}
+
 export function Captions() {
 	const [selectedLanguage, setSelectedLanguage] =
 		useState<TranscriptionLanguage>("he");
-	const [captionSettings, setCaptionSettings] = useState<CaptionLayoutSettings>({
-		...DEFAULT_CAPTION_LAYOUT,
-	});
+	const [captionSettings, setCaptionSettings] = useState<CaptionLayoutSettings>(() =>
+		loadLastCaptionSettings(),
+	);
+	const [savedPresets, setSavedPresets] = useState<SavedCaptionPreset[]>(() =>
+		loadSavedCaptionPresets(),
+	);
 	const [processing, dispatch] = useReducer(processingReducer, IDLE_STATE);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -310,6 +412,10 @@ export function Captions() {
 				(track) => track.type === "text" && !!track.captionSource,
 			) ?? false,
 	);
+
+	useEffect(() => {
+		saveLastCaptionSettings({ settings: captionSettings });
+	}, [captionSettings]);
 
 	const insertCaptions = ({
 		captions,
@@ -343,7 +449,7 @@ export function Captions() {
 					[key]:
 						key === "revealMode" ||
 						key === "transitionIn" ||
-						key === "presetId" ||
+						key === "wordAnimationId" ||
 						key === "accentColor" ||
 						key === "wordDirection"
 							? value
@@ -351,6 +457,28 @@ export function Captions() {
 				},
 			}),
 		);
+	};
+
+	const saveCurrentPreset = () => {
+		const name = window.prompt("Preset name");
+		const trimmedName = name?.trim();
+		if (!trimmedName) return;
+		const nextPreset: SavedCaptionPreset = {
+			id: generateUUID(),
+			name: trimmedName,
+			settings: normalizeCaptionLayoutSettings({ settings: captionSettings }),
+		};
+		setSavedPresets((current) => {
+			const next = [...current, nextPreset];
+			saveSavedCaptionPresets({ presets: next });
+			return next;
+		});
+	};
+
+	const loadPreset = ({ presetId }: { presetId: string }) => {
+		const preset = savedPresets.find((item) => item.id === presetId);
+		if (!preset) return;
+		setCaptionSettings(normalizeCaptionLayoutSettings({ settings: preset.settings }));
 	};
 
 	const applyCaptionSettings = () => {
@@ -695,12 +823,28 @@ export function Captions() {
 								</Select>
 							</SectionField>
 						)}
-						<SectionField label="Preset">
+						{savedPresets.length > 0 && (
+							<SectionField label="Saved preset">
+								<Select onValueChange={(presetId) => loadPreset({ presetId })}>
+									<SelectTrigger>
+										<SelectValue placeholder="Choose saved preset" />
+									</SelectTrigger>
+									<SelectContent>
+										{savedPresets.map((preset) => (
+											<SelectItem key={preset.id} value={preset.id}>
+												{preset.name}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SectionField>
+						)}
+						<SectionField label="Word animation">
 							<Select
-								value={captionSettings.presetId}
+								value={captionSettings.wordAnimationId}
 								onValueChange={(value) =>
 									updateCaptionSetting({
-										key: "presetId",
+										key: "wordAnimationId",
 										value,
 									})
 								}
@@ -709,9 +853,9 @@ export function Captions() {
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-									{CAPTION_WORD_PRESETS.map((preset) => (
-										<SelectItem key={preset.id} value={preset.id}>
-											{preset.name}
+									{CAPTION_WORD_ANIMATIONS.map((animation) => (
+										<SelectItem key={animation.id} value={animation.id}>
+											{animation.name}
 										</SelectItem>
 									))}
 								</SelectContent>
@@ -761,6 +905,15 @@ export function Captions() {
 						</SectionField>
 					</SectionFields>
 
+					<Button
+						type="button"
+						variant="outline"
+						className="w-full"
+						onClick={saveCurrentPreset}
+						disabled={isProcessing}
+					>
+						Save preset
+					</Button>
 					<Button
 						type="button"
 						variant="outline"

@@ -17,7 +17,7 @@ export const DEFAULT_CAPTION_LAYOUT = {
 	outPaddingPercent: 0,
 	revealMode: "emphasize-spoken" as TextCaptionRevealMode,
 	transitionIn: "blur-zoom" as TextWordTransitionIn,
-	presetId: "kinetic-slam-1",
+	wordAnimationId: "kinetic-slam-1",
 	accentColor: "#c8ff4d",
 	wordDirection: "auto" as TextWordDirection,
 };
@@ -29,10 +29,14 @@ export interface CaptionLayoutSettings {
 	outPaddingPercent: number;
 	revealMode: TextCaptionRevealMode;
 	transitionIn: TextWordTransitionIn;
-	presetId: string;
+	wordAnimationId: string;
 	accentColor: string;
 	wordDirection: TextWordDirection;
 }
+
+type LegacyCaptionLayoutSettings = Partial<CaptionLayoutSettings> & {
+	presetId?: string;
+};
 
 function clampInteger({
 	value,
@@ -63,7 +67,7 @@ function clampNumber({
 export function normalizeCaptionLayoutSettings({
 	settings,
 }: {
-	settings: Partial<CaptionLayoutSettings> | undefined;
+	settings: LegacyCaptionLayoutSettings | undefined;
 }): CaptionLayoutSettings {
 	const revealMode =
 		settings?.revealMode === "determined-by-preset" ||
@@ -116,10 +120,13 @@ export function normalizeCaptionLayoutSettings({
 		}),
 		revealMode,
 		transitionIn,
-		presetId:
-			typeof settings?.presetId === "string" && settings.presetId.trim()
-				? settings.presetId
-				: DEFAULT_CAPTION_LAYOUT.presetId,
+		wordAnimationId:
+			typeof settings?.wordAnimationId === "string" &&
+			settings.wordAnimationId.trim()
+				? settings.wordAnimationId
+				: typeof settings?.presetId === "string" && settings.presetId.trim()
+					? settings.presetId
+					: DEFAULT_CAPTION_LAYOUT.wordAnimationId,
 		accentColor:
 			typeof settings?.accentColor === "string" && settings.accentColor.trim()
 				? settings.accentColor

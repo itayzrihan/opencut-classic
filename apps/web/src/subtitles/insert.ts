@@ -37,7 +37,7 @@ export function buildCaptionTextTracks({
 					canvasSize,
 					revealMode: captionSource?.settings.revealMode,
 					transitionIn: captionSource?.settings.transitionIn,
-					presetId: captionSource?.settings.presetId,
+					wordAnimationId: captionSource?.settings.wordAnimationId,
 					accentColor: captionSource?.settings.accentColor,
 					wordDirection: captionSource?.settings.wordDirection,
 				}),
