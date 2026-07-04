@@ -8,6 +8,7 @@ import {
 import { getEffectDefinition, resolveEffectPasses } from "@/effects";
 import type { Effect, EffectPass } from "@/effects/types";
 import { getSourceTimeAtClipTime } from "@/retime";
+import { CUSTOM_AI_EFFECT_TYPE } from "@/effects/custom-ai-effect";
 import {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
 	resolveGraphicElementParamsAtTime,
@@ -29,6 +30,7 @@ import {
 } from "./nodes/blur-background-node";
 import {
 	EffectLayerNode,
+	type EffectLayerOverlay,
 	type ResolvedEffectLayerNodeState,
 } from "./nodes/effect-layer-node";
 import {
@@ -46,7 +48,7 @@ import type {
 } from "./nodes/visual-node";
 
 type ResolveContext = {
-	renderer: CanvasRenderer;
+	renderer: Pick<CanvasRenderer, "width" | "height">;
 	time: number;
 };
 
@@ -56,7 +58,7 @@ export async function resolveRenderTree({
 	time,
 }: {
 	node: AnyBaseNode;
-	renderer: CanvasRenderer;
+	renderer: Pick<CanvasRenderer, "width" | "height">;
 	time: number;
 }): Promise<void> {
 	await resolveNode({
@@ -470,11 +472,68 @@ function resolveEffectLayerNode({
 		width: context.renderer.width,
 		height: context.renderer.height,
 	});
-	if (passes.length === 0) {
+	if (passes.length > 0) {
+		return {
+			passes,
+			overlay: null,
+		};
+	}
+
+	const overlay = buildCustomAiEffectOverlay({
+		effectType: node.params.effectType,
+		effectParams: node.params.effectParams,
+		definitionType: definition.type,
+	});
+	if (!overlay) {
 		return null;
 	}
 
 	return {
-		passes,
+		passes: [],
+		overlay,
 	};
+}
+
+function buildCustomAiEffectOverlay({
+	effectType,
+	effectParams,
+	definitionType,
+}: {
+	effectType: string;
+	effectParams: Record<string, unknown>;
+	definitionType: string;
+}): EffectLayerOverlay | null {
+	if (definitionType !== CUSTOM_AI_EFFECT_TYPE) {
+		return null;
+	}
+
+	const label =
+		readStringParam({ params: effectParams, key: "label" }) ||
+		readStringParam({ params: effectParams, key: "requestedType" }) ||
+		effectType ||
+		"Custom AI edit";
+	const intent =
+		readStringParam({ params: effectParams, key: "intent" }) ||
+		readStringParam({ params: effectParams, key: "kind" }) ||
+		undefined;
+
+	return {
+		label,
+		intent,
+	};
+}
+
+function readStringParam({
+	params,
+	key,
+}: {
+	params: Record<string, unknown>;
+	key: string;
+}): string | null {
+	const value = params[key];
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	return trimmed || null;
 }

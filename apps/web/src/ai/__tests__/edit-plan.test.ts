@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { SceneTracks } from "@/timeline";
 import {
+	buildAiClipEffectLayerElement,
+	buildAiUpdatedClipEffectLayerElement,
+	buildCustomEditEffectElement,
+	buildCustomEditEffectParams,
 	extractAiEditPlanFromText,
 	validateAiEditPlan,
 } from "@/ai/edit-plan";
+import { CUSTOM_AI_EFFECT_TYPE } from "@/effects/custom-ai-effect";
 import type { MediaTime } from "@/wasm";
 
 const t = (time: number) => {
@@ -28,6 +33,14 @@ const tracks: SceneTracks = {
 					trimStart: t(0),
 					trimEnd: t(0),
 					params: { text: "inside" },
+					effects: [
+						{
+							id: "effect-blur",
+							type: "blur",
+							enabled: true,
+							params: { intensity: 15 },
+						},
+					],
 				},
 				{
 					id: "outside",
@@ -50,7 +63,28 @@ const tracks: SceneTracks = {
 		muted: false,
 		elements: [],
 	},
-	audio: [],
+	audio: [
+		{
+			id: "audio-track",
+			name: "Audio",
+			type: "audio",
+			muted: false,
+			elements: [
+				{
+					id: "audio",
+					type: "audio",
+					name: "audio",
+					sourceType: "upload",
+					mediaId: "media-audio",
+					startTime: t(100),
+					duration: t(100),
+					trimStart: t(0),
+					trimEnd: t(0),
+					params: { volume: 0, muted: false },
+				},
+			],
+		},
+	],
 };
 
 describe("AI edit plan validation", () => {
@@ -215,5 +249,279 @@ describe("AI edit plan validation", () => {
 
 		expect(result.success).toBe(false);
 		expect(result.errors[0]).toContain("not a text track");
+	});
+
+	test("accepts custom edit specs on elements inside the active range", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Attach custom animation",
+				summary: "Host a Hyperframes-style animation spec",
+				operations: [
+					{
+						type: "attach_custom_edit",
+						trackId: "text",
+						elementId: "inside",
+						label: "Blur zoom entrance",
+						kind: "animation",
+						intent: "Animate the word with a blurred zoom-in.",
+						startTime: t(100),
+						duration: t(40),
+						spec: {
+							method: "fromTo",
+							duration: 0.45,
+							from: { opacity: 0, scale: 1.4, blur: 16 },
+							to: { opacity: 1, scale: 1, blur: 0 },
+						},
+					},
+				],
+			},
+			tracks,
+			range: { startTime: t(90), endTime: t(220) },
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.plan?.operations[0]).toMatchObject({
+			type: "attach_custom_edit",
+			kind: "animation",
+			startTime: t(100),
+			duration: t(40),
+		});
+	});
+
+	test("rejects custom edit layer timing outside the active range", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Attach custom animation",
+				summary: "",
+				operations: [
+					{
+						type: "attach_custom_edit",
+						trackId: "text",
+						elementId: "inside",
+						label: "Long effect",
+						startTime: t(100),
+						duration: t(200),
+						spec: { effect: "blur" },
+					},
+				],
+			},
+			tracks,
+			range: { startTime: t(90), endTime: t(220) },
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("timing is outside");
+	});
+
+	test("rejects custom edit specs outside the active range", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Attach late custom animation",
+				summary: "",
+				operations: [
+					{
+						type: "attach_custom_edit",
+						trackId: "text",
+						elementId: "outside",
+						label: "Late effect",
+						spec: { effect: "shake" },
+					},
+				],
+			},
+			tracks,
+			range: { startTime: t(90), endTime: t(220) },
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("outside the selected range");
+	});
+
+	test("rejects missing element references without an active range", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Missing target",
+				summary: "",
+				operations: [
+					{
+						type: "delete_element",
+						trackId: "text",
+						elementId: "missing",
+					},
+				],
+			},
+			tracks,
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("missing element");
+	});
+
+	test("rejects custom edit specs on non-visual elements", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Audio effect",
+				summary: "",
+				operations: [
+					{
+						type: "attach_custom_edit",
+						trackId: "audio-track",
+						elementId: "audio",
+						label: "Visual shake",
+						spec: { effect: "shake" },
+					},
+				],
+			},
+			tracks,
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("not a visual element");
+	});
+
+	test("accepts clip effect updates when the referenced effect exists", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Adjust blur",
+				summary: "",
+				operations: [
+					{
+						type: "update_clip_effect_params",
+						trackId: "text",
+						elementId: "inside",
+						effectId: "effect-blur",
+						params: { intensity: 35 },
+					},
+				],
+			},
+			tracks,
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects clip effect updates when the referenced effect is missing", () => {
+		const result = validateAiEditPlan({
+			value: {
+				title: "Adjust blur",
+				summary: "",
+				operations: [
+					{
+						type: "update_clip_effect_params",
+						trackId: "text",
+						elementId: "inside",
+						effectId: "missing-effect",
+						params: { intensity: 35 },
+					},
+				],
+			},
+			tracks,
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.errors[0]).toContain("missing effect");
+	});
+
+	test("builds custom effect params for custom edit operations", () => {
+		const params = buildCustomEditEffectParams({
+			operation: {
+				type: "attach_custom_edit",
+				trackId: "text",
+				elementId: "inside",
+				label: "Explode letters",
+				kind: "animation",
+				intent: "Explode each letter outward.",
+				startTime: t(100),
+				duration: t(50),
+				spec: { keyframes: [{ percentage: 100, x: 40 }] },
+			},
+		});
+
+		expect(params).toMatchObject({
+			label: "Explode letters",
+			kind: "animation",
+			intent: "Explode each letter outward.",
+		});
+		expect(params.specJson).toContain("effect-layer");
+		expect(params.specJson).toContain("keyframes");
+	});
+
+	test("builds visible effect layer elements for custom edit operations", () => {
+		const element = buildCustomEditEffectElement({
+			operation: {
+				type: "attach_custom_edit",
+				trackId: "text",
+				elementId: "inside",
+				label: "Blur zoom",
+				startTime: t(120),
+				duration: t(60),
+				spec: { effect: "blur zoom" },
+			},
+			target: {
+				startTime: t(100),
+				duration: t(100),
+			},
+		});
+
+		expect(element).toMatchObject({
+			type: "effect",
+			name: "AI: Blur zoom",
+			effectType: CUSTOM_AI_EFFECT_TYPE,
+			startTime: t(120),
+			duration: t(60),
+		});
+	});
+
+	test("builds visible effect layer elements for AI-added clip effects", () => {
+		const element = buildAiClipEffectLayerElement({
+			operation: {
+				type: "add_clip_effect",
+				trackId: "text",
+				elementId: "inside",
+				effectType: "blur",
+				params: { intensity: 42 },
+			},
+			target: {
+				startTime: t(100),
+				duration: t(100),
+			},
+		});
+
+		expect(element).toMatchObject({
+			type: "effect",
+			name: "AI: blur",
+			effectType: "blur",
+			startTime: t(100),
+			duration: t(100),
+			params: { intensity: 42 },
+		});
+	});
+
+	test("builds visible effect layer elements for AI-updated clip effects", () => {
+		const element = buildAiUpdatedClipEffectLayerElement({
+			operation: {
+				type: "update_clip_effect_params",
+				trackId: "text",
+				elementId: "inside",
+				effectId: "effect-blur",
+				params: { intensity: 55 },
+			},
+			target: {
+				startTime: t(100),
+				duration: t(100),
+			},
+			effect: {
+				type: "blur",
+				params: { intensity: 15 },
+			},
+		});
+
+		expect(element).toMatchObject({
+			type: "effect",
+			name: "AI: blur",
+			effectType: "blur",
+			startTime: t(100),
+			duration: t(100),
+			params: { intensity: 55 },
+		});
 	});
 });

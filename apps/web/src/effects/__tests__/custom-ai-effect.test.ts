@@ -5,6 +5,10 @@ import {
 	getEffectDefinition,
 	normalizeEffectType,
 } from "@/effects";
+import {
+	buildCustomAiEffectParams,
+	stringifyCustomAiEffectSpec,
+} from "@/effects/custom-ai-effect";
 
 describe("custom AI effect fallback", () => {
 	test("normalizes descriptive blur requests to the built-in blur effect", () => {
@@ -25,7 +29,7 @@ describe("custom AI effect fallback", () => {
 
 		expect(effect.type).toBe(CUSTOM_AI_EFFECT_TYPE);
 		expect(effect.params.requestedType).toBe("liquid neon chromatic burst");
-		expect(definition.name).toBe("Custom AI Effect");
+		expect(definition.name).toBe("Custom AI Edit");
 		expect(
 			definition.renderer.buildPasses?.({
 				effectParams: effect.params,
@@ -33,5 +37,68 @@ describe("custom AI effect fallback", () => {
 				height: 1080,
 			}),
 		).toEqual([]);
+	});
+
+	test("stores structured custom edit specs as stable editable JSON", () => {
+		const params = buildCustomAiEffectParams({
+			requestedType: "kinetic caption entrance",
+			label: "Kinetic caption entrance",
+			kind: "animation",
+			intent: "Make the caption pop in with staggered letters.",
+			spec: {
+				to: { opacity: 1, y: 0 },
+				from: { y: 30, opacity: 0 },
+				ease: "back.out",
+			},
+		});
+
+		expect(params.label).toBe("Kinetic caption entrance");
+		expect(params.kind).toBe("animation");
+		expect(params.specJson).toBe(
+			[
+				"{",
+				'  "ease": "back.out",',
+				'  "from": {',
+				'    "opacity": 0,',
+				'    "y": 30',
+				"  },",
+				'  "to": {',
+				'    "opacity": 1,',
+				'    "y": 0',
+				"  }",
+				"}",
+			].join("\n"),
+		);
+	});
+
+	test("normalizes JSON strings when storing custom specs", () => {
+		expect(
+			stringifyCustomAiEffectSpec({
+				spec: '{"z":2,"a":{"b":1}}',
+			}),
+		).toBe(['{', '  "a": {', '    "b": 1', "  },", '  "z": 2', "}"].join("\n"));
+	});
+
+	test("renders blur-like custom edit specs with Gaussian blur passes", () => {
+		const definition = getEffectDefinition(CUSTOM_AI_EFFECT_TYPE);
+		const params = buildCustomAiEffectParams({
+			requestedType: "blur zoom",
+			label: "Blur zoom",
+			kind: "animation",
+			spec: {
+				from: { filter: "blur(18px)", scale: 1.25 },
+				to: { filter: "blur(0px)", scale: 1 },
+			},
+		});
+
+		const passes =
+			definition.renderer.buildPasses?.({
+				effectParams: params,
+				width: 1920,
+				height: 1080,
+			}) ?? [];
+
+		expect(passes.length).toBeGreaterThan(0);
+		expect(passes[0]?.shader).toBe("gaussian-blur");
 	});
 });

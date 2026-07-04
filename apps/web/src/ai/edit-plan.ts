@@ -1,12 +1,24 @@
 import { z } from "zod";
 import type { EditorCore } from "@/core";
-import type { CreateTextElement, SceneTracks } from "@/timeline";
+import {
+	VISUAL_ELEMENT_TYPES,
+	type CreateTextElement,
+	type ElementType,
+	type SceneTracks,
+	type TimelineElement,
+	type VisualElement,
+} from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import type { AnimationPath } from "@/animation/types";
 import { ZERO_MEDIA_TIME, type MediaTime } from "@/wasm";
-import type { ParamValue } from "@/params";
+import type { ParamValue, ParamValues } from "@/params";
+import { buildEffectElement } from "@/timeline/element-utils";
 import type { AiEditOperation, AiEditPlan, AiTimelineRange } from "./types";
 import { buildTimelineContextIndex, rangesOverlap } from "./timeline-context";
+import {
+	buildCustomAiEffectParams,
+	CUSTOM_AI_EFFECT_TYPE,
+} from "@/effects/custom-ai-effect";
 
 const mediaTimeSchema = z.custom<MediaTime>(
 	(value) => typeof value === "number" && Number.isInteger(value) && value >= 0,
@@ -18,6 +30,24 @@ const positiveMediaTimeSchema = z.custom<MediaTime>(
 );
 const paramValueSchema = z.union([z.string(), z.number(), z.boolean()]);
 const paramsSchema = z.record(z.string(), paramValueSchema);
+type JsonValue =
+	| string
+	| number
+	| boolean
+	| null
+	| JsonValue[]
+	| { [key: string]: JsonValue };
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+	z.union([
+		z.string(),
+		z.number(),
+		z.boolean(),
+		z.null(),
+		z.array(jsonValueSchema),
+		z.record(z.string(), jsonValueSchema),
+	]),
+);
+const customEditSpecSchema = jsonValueSchema;
 
 const operationSchema = z.discriminatedUnion("type", [
 	z.object({
@@ -74,6 +104,19 @@ const operationSchema = z.discriminatedUnion("type", [
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
 		effectType: z.string().min(1),
+		params: paramsSchema.optional(),
+		reason: z.string().optional(),
+	}),
+	z.object({
+		type: z.literal("attach_custom_edit"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		label: z.string().min(1),
+		kind: z.string().min(1).optional(),
+		intent: z.string().min(1).optional(),
+		startTime: mediaTimeSchema.optional(),
+		duration: positiveMediaTimeSchema.optional(),
+		spec: customEditSpecSchema,
 		reason: z.string().optional(),
 	}),
 	z.object({
@@ -298,10 +341,6 @@ function getRangeGuardErrors({
 			continue;
 		}
 
-		if (!range) {
-			continue;
-		}
-
 		const refs = getOperationElementRefs(operation);
 		for (const ref of refs) {
 			const element = index.elementsById.get(`${ref.trackId}:${ref.elementId}`);
@@ -312,6 +351,7 @@ function getRangeGuardErrors({
 				continue;
 			}
 			if (
+				range &&
 				!rangesOverlap({
 					firstStart: element.startTime,
 					firstEnd: element.endTime,
@@ -323,9 +363,35 @@ function getRangeGuardErrors({
 					`${operation.type} references ${element.name} outside the selected range`,
 				);
 			}
+			const targetIsVisual = isVisualElementType({ type: element.type });
+			if (isClipEffectOperation(operation) && !targetIsVisual) {
+				errors.push(
+					`${operation.type} target ${element.name} is not a visual element`,
+				);
+			}
+			if (
+				operation.type === "update_clip_effect_params" &&
+				targetIsVisual &&
+				!element.effects?.some((effect) => effect.id === operation.effectId)
+			) {
+				errors.push(
+					`update_clip_effect_params references a missing effect ${operation.effectId}`,
+				);
+			}
 		}
 
 		if (
+			range &&
+			operation.type === "attach_custom_edit" &&
+			operation.startTime !== undefined &&
+			operation.duration !== undefined &&
+			(operation.startTime < range.startTime ||
+				operation.startTime + operation.duration > range.endTime)
+		) {
+			errors.push("attach_custom_edit timing is outside the selected range");
+		}
+		if (
+			range &&
 			operation.type === "split_element" &&
 			(operation.splitTime < range.startTime ||
 				operation.splitTime > range.endTime)
@@ -333,6 +399,7 @@ function getRangeGuardErrors({
 			errors.push("split_element splitTime is outside the selected range");
 		}
 		if (
+			range &&
 			operation.type === "upsert_keyframe" &&
 			(operation.time < range.startTime || operation.time > range.endTime)
 		) {
@@ -432,19 +499,42 @@ function applyOperation({
 			});
 			return;
 		case "add_clip_effect":
-			editor.timeline.addClipEffect({
-				trackId: operation.trackId,
-				elementId: operation.elementId,
-				effectType: operation.effectType,
-			});
+			{
+				const target = getOperationTargetElement({ editor, operation });
+				if (!target) return;
+				editor.timeline.insertElement({
+					element: buildAiClipEffectLayerElement({ operation, target }),
+					placement: { mode: "auto", trackType: "effect" },
+				});
+			}
+			return;
+		case "attach_custom_edit":
+			{
+				const target = getOperationTargetElement({ editor, operation });
+				if (!target) return;
+				editor.timeline.insertElement({
+					element: buildCustomEditEffectElement({ operation, target }),
+					placement: { mode: "auto", trackType: "effect" },
+				});
+			}
 			return;
 		case "update_clip_effect_params":
-			editor.timeline.updateClipEffectParams({
-				trackId: operation.trackId,
-				elementId: operation.elementId,
-				effectId: operation.effectId,
-				params: operation.params,
-			});
+			{
+				const target = getOperationTargetElement({ editor, operation });
+				if (!target || !isVisualElement(target)) return;
+				const effect = target.effects?.find(
+					(candidate) => candidate.id === operation.effectId,
+				);
+				if (!effect) return;
+				editor.timeline.insertElement({
+					element: buildAiUpdatedClipEffectLayerElement({
+						operation,
+						target,
+						effect,
+					}),
+					placement: { mode: "auto", trackType: "effect" },
+				});
+			}
 			return;
 		case "upsert_keyframe":
 			editor.timeline.upsertKeyframes({
@@ -478,6 +568,128 @@ function applyOperation({
 			return exhaustive;
 		}
 	}
+}
+
+function getOperationTargetElement({
+	editor,
+	operation,
+}: {
+	editor: EditorCore;
+	operation: Extract<
+		AiEditOperation,
+		{
+			type:
+				| "add_clip_effect"
+				| "attach_custom_edit"
+				| "update_clip_effect_params";
+		}
+	>;
+}) {
+	const track = editor.timeline.getTrackById({ trackId: operation.trackId });
+	return track?.elements.find((element) => element.id === operation.elementId);
+}
+
+export function buildAiClipEffectLayerElement({
+	operation,
+	target,
+}: {
+	operation: Extract<AiEditOperation, { type: "add_clip_effect" }>;
+	target: Pick<TimelineElement, "startTime" | "duration">;
+}) {
+	return buildEffectElement({
+		effectType: operation.effectType,
+		name: `AI: ${operation.effectType}`,
+		startTime: target.startTime,
+		duration: target.duration,
+		params: operation.params,
+	});
+}
+
+export function buildAiUpdatedClipEffectLayerElement({
+	operation,
+	target,
+	effect,
+}: {
+	operation: Extract<AiEditOperation, { type: "update_clip_effect_params" }>;
+	target: Pick<TimelineElement, "startTime" | "duration">;
+	effect: { type: string; params: ParamValues };
+}) {
+	return buildEffectElement({
+		effectType: effect.type,
+		name: `AI: ${effect.type}`,
+		startTime: target.startTime,
+		duration: target.duration,
+		params: {
+			...effect.params,
+			...operation.params,
+		},
+	});
+}
+
+export function buildCustomEditEffectElement({
+	operation,
+	target,
+}: {
+	operation: Extract<AiEditOperation, { type: "attach_custom_edit" }>;
+	target: Pick<TimelineElement, "startTime" | "duration">;
+}) {
+	return buildEffectElement({
+		effectType: CUSTOM_AI_EFFECT_TYPE,
+		name: `AI: ${operation.label}`,
+		startTime: operation.startTime ?? target.startTime,
+		duration: operation.duration ?? target.duration,
+		params: buildCustomEditEffectParams({ operation }),
+	});
+}
+
+export function buildCustomEditEffectParams({
+	operation,
+}: {
+	operation: Extract<AiEditOperation, { type: "attach_custom_edit" }>;
+}): ReturnType<typeof buildCustomAiEffectParams> {
+	return buildCustomAiEffectParams({
+		requestedType: operation.label,
+		label: operation.label,
+		kind: operation.kind,
+		intent: operation.intent ?? operation.reason,
+		spec: {
+			host: {
+				type: "effect-layer",
+				target: {
+					trackId: operation.trackId,
+					elementId: operation.elementId,
+				},
+				timing:
+					operation.startTime !== undefined &&
+					operation.duration !== undefined
+						? {
+								startTime: operation.startTime,
+								duration: operation.duration,
+							}
+						: null,
+			},
+			kind: operation.kind ?? "effect",
+			intent: operation.intent ?? operation.reason ?? operation.label,
+			label: operation.label,
+			spec: operation.spec,
+		},
+	});
+}
+
+function isClipEffectOperation(operation: AiEditOperation): boolean {
+	return (
+		operation.type === "add_clip_effect" ||
+		operation.type === "attach_custom_edit" ||
+		operation.type === "update_clip_effect_params"
+	);
+}
+
+function isVisualElementType({ type }: { type: ElementType }): boolean {
+	return VISUAL_ELEMENT_TYPES.some((candidate) => candidate === type);
+}
+
+function isVisualElement(element: TimelineElement): element is VisualElement {
+	return isVisualElementType({ type: element.type });
 }
 
 function buildInsertedTextElement({

@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import type { AiEditPlan } from "@/ai/types";
+import type { AiEditOperation, AiEditPlan } from "@/ai/types";
 
 export function AiPlanReview({
 	plan,
@@ -53,11 +53,30 @@ export function AiPlanReview({
 							key={`${operation.type}-${index}`}
 							className="border-b px-3 py-2 last:border-b-0"
 						>
-							<div className="text-xs font-medium">{operation.type}</div>
+							<div className="text-xs font-medium">
+								{getOperationTitle({ operation })}
+							</div>
+							<div className="text-muted-foreground mt-1 text-xs">
+								{getOperationTarget({ operation })}
+							</div>
 							{"reason" in operation && operation.reason && (
 								<div className="text-muted-foreground mt-1 text-xs">
 									{operation.reason}
 								</div>
+							)}
+							{operation.type === "attach_custom_edit" && (
+								<>
+									{operation.startTime !== undefined &&
+										operation.duration !== undefined && (
+											<div className="text-muted-foreground mt-1 text-xs">
+												layer {operation.startTime} -{" "}
+												{operation.startTime + operation.duration} ticks
+											</div>
+										)}
+									<pre className="bg-muted/40 mt-2 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-sm p-2 text-[11px] leading-4">
+										{formatCustomEditSpec({ operation })}
+									</pre>
+								</>
 							)}
 						</div>
 					))
@@ -78,4 +97,67 @@ export function AiPlanReview({
 			</div>
 		</div>
 	);
+}
+
+function getOperationTitle({
+	operation,
+}: {
+	operation: AiEditOperation;
+}): string {
+	switch (operation.type) {
+		case "attach_custom_edit":
+			return `${operation.label} (${operation.kind ?? "custom"})`;
+		case "add_clip_effect":
+			return `Add ${operation.effectType} effect layer`;
+		case "update_clip_effect_params":
+			return `Add updated effect layer from ${operation.effectId}`;
+		case "insert_text_element":
+			return "Insert text element";
+		case "update_element":
+			return "Update element";
+		case "trim_element":
+			return "Trim element";
+		case "move_element":
+			return "Move element";
+		case "split_element":
+			return "Split element";
+		case "delete_element":
+			return "Delete element";
+		case "upsert_keyframe":
+			return "Upsert keyframe";
+		case "remove_keyframe":
+			return "Remove keyframe";
+		default: {
+			const exhaustive: never = operation;
+			return exhaustive;
+		}
+	}
+}
+
+function getOperationTarget({
+	operation,
+}: {
+	operation: AiEditOperation;
+}): string {
+	if (operation.type === "insert_text_element") {
+		return operation.trackId
+			? `track ${operation.trackId}`
+			: "new text track or compatible text layer";
+	}
+	if (operation.type === "move_element") {
+		return `${operation.sourceTrackId}:${operation.elementId} -> ${operation.targetTrackId}`;
+	}
+	return `${operation.trackId}:${operation.elementId}`;
+}
+
+function formatCustomEditSpec({
+	operation,
+}: {
+	operation: Extract<AiEditOperation, { type: "attach_custom_edit" }>;
+}): string {
+	const payload = {
+		intent: operation.intent,
+		spec: operation.spec,
+	};
+	return JSON.stringify(payload, null, 2);
 }

@@ -48,8 +48,10 @@ export const EFFECT_TARGET_ELEMENT_TYPES = VISUAL_ELEMENT_TYPES;
 
 export function buildDefaultEffectInstance({
 	effectType,
+	params: paramOverrides,
 }: {
 	effectType: string;
+	params?: Partial<ParamValues>;
 }): Effect {
 	registerDefaultEffects();
 	const normalizedType = normalizeEffectType(effectType);
@@ -64,7 +66,26 @@ export function buildDefaultEffectInstance({
 	return {
 		id: generateUUID(),
 		type: definition.type,
-		params,
+		params: mergeParamOverrides({ params, overrides: paramOverrides }),
 		enabled: true,
 	};
+}
+
+function mergeParamOverrides({
+	params,
+	overrides,
+}: {
+	params: ParamValues;
+	overrides?: Partial<ParamValues>;
+}): ParamValues {
+	if (!overrides) {
+		return params;
+	}
+	const nextParams: ParamValues = { ...params };
+	for (const [key, value] of Object.entries(overrides)) {
+		if (value !== undefined) {
+			nextParams[key] = value;
+		}
+	}
+	return nextParams;
 }

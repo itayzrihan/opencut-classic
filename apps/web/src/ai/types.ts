@@ -64,6 +64,14 @@ export interface AiEditPlan {
 	notes?: string[];
 }
 
+export type AiCustomEditSpec =
+	| string
+	| number
+	| boolean
+	| null
+	| AiCustomEditSpec[]
+	| { [key: string]: AiCustomEditSpec };
+
 export type AiEditOperation =
 	| {
 			type: "update_element";
@@ -119,6 +127,19 @@ export type AiEditOperation =
 			trackId: string;
 			elementId: string;
 			effectType: string;
+			params?: Record<string, string | number | boolean>;
+			reason?: string;
+	  }
+	| {
+			type: "attach_custom_edit";
+			trackId: string;
+			elementId: string;
+			label: string;
+			kind?: string;
+			intent?: string;
+			startTime?: MediaTime;
+			duration?: MediaTime;
+			spec: AiCustomEditSpec;
 			reason?: string;
 	  }
 	| {
