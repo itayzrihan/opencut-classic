@@ -101,4 +101,66 @@ describe("custom AI effect fallback", () => {
 		expect(passes.length).toBeGreaterThan(0);
 		expect(passes[0]?.shader).toBe("gaussian-blur");
 	});
+
+	test("renders fixed AI effect templates as shader passes", () => {
+		const definition = getEffectDefinition(CUSTOM_AI_EFFECT_TYPE);
+		const params = buildCustomAiEffectParams({
+			requestedType: "rgb split",
+			label: "RGB Split",
+			spec: {
+				template: "rgb-split",
+				intensity: 70,
+				color: "#33ccff",
+			},
+		});
+
+		const passes =
+			definition.renderer.buildPasses?.({
+				effectParams: params,
+				width: 1920,
+				height: 1080,
+				localTime: 60_000,
+			}) ?? [];
+
+		expect(passes).toEqual([
+			{
+				shader: "rgb-split",
+				uniforms: {
+					u_intensity: 0.7,
+					u_amount: 20.599999999999998,
+				},
+			},
+		]);
+	});
+
+	test("passes local time into animated AI effect templates", () => {
+		const definition = getEffectDefinition(CUSTOM_AI_EFFECT_TYPE);
+		const params = buildCustomAiEffectParams({
+			requestedType: "noise",
+			label: "Analog Noise",
+			spec: {
+				template: "noise",
+				intensity: 50,
+				seed: 12,
+			},
+		});
+
+		const passes =
+			definition.renderer.buildPasses?.({
+				effectParams: params,
+				width: 1920,
+				height: 1080,
+				localTime: 240_000,
+			}) ?? [];
+
+		expect(passes[0]).toMatchObject({
+			shader: "noise",
+			uniforms: {
+				u_intensity: 0.5,
+				u_amount: 2,
+				u_time: 2,
+				u_seed: 12,
+			},
+		});
+	});
 });

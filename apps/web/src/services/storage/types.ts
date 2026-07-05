@@ -1,4 +1,5 @@
 import type { MediaType } from "@/media/types";
+import type { ProjectFont } from "@/fonts/types";
 import type {
 	TProject,
 	TProjectMetadata,
@@ -29,6 +30,8 @@ export interface MediaAssetData {
 	ephemeral?: boolean;
 	thumbnailUrl?: string;
 }
+
+export type ProjectFontData = ProjectFont;
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {
 	createdAt: string;
@@ -74,6 +77,7 @@ export interface SerializedCommandHistory {
 export interface StorageConfig {
 	projectsDb: string;
 	mediaDb: string;
+	fontsDb: string;
 	commandHistoryDb: string;
 	savedSoundsDb: string;
 	version: number;

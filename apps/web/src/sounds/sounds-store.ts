@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { EditorCore } from "@/core";
 import { buildLibraryAudioElement } from "@/timeline/element-utils";
 import { mediaTimeFromSeconds } from "@/wasm";
+import { createAudioContext } from "@/media/audio";
+import { sharedLibraryService, type SharedAudioAsset } from "@/shared-library";
 
 interface SoundsStore {
 	topSoundEffects: SoundEffect[];
@@ -29,6 +31,11 @@ interface SoundsStore {
 	savedSoundsError: string | null;
 
 	addSoundToTimeline: ({ sound }: { sound: SoundEffect }) => Promise<boolean>;
+	addSharedAudioToTimeline: ({
+		asset,
+	}: {
+		asset: SharedAudioAsset;
+	}) => Promise<boolean>;
 	setTopSoundEffects: ({ sounds }: { sounds: SoundEffect[] }) => void;
 	setLoading: ({ loading }: { loading: boolean }) => void;
 	setError: ({ error }: { error: string | null }) => void;
@@ -245,6 +252,54 @@ export const useSoundsStore = create<SoundsStore>((set, get) => ({
 					? error.message
 					: "Failed to add sound to timeline",
 				{ id: `sound-${sound.id}` },
+			);
+			return false;
+		}
+	},
+
+	addSharedAudioToTimeline: async ({ asset }) => {
+		try {
+			const file = await sharedLibraryService.getAudioAssetFile({ id: asset.id });
+			if (!file) {
+				toast.error("Shared audio file is missing");
+				return false;
+			}
+
+			const editor = EditorCore.getInstance();
+			const currentTime = editor.playback.getCurrentTime();
+			let buffer: AudioBuffer | undefined;
+			let durationSeconds = asset.duration;
+
+			try {
+				const audioContext = createAudioContext();
+				const arrayBuffer = await file.arrayBuffer();
+				buffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+				durationSeconds = durationSeconds ?? buffer.duration;
+			} catch (error) {
+				console.warn("Failed to decode shared audio before insert:", error);
+			}
+
+			const element = buildLibraryAudioElement({
+				libraryAssetId: asset.id,
+				librarySourceType: "shared",
+				name: asset.name,
+				duration: mediaTimeFromSeconds({ seconds: durationSeconds ?? 5 }),
+				startTime: currentTime,
+				buffer,
+			});
+
+			editor.timeline.insertElement({
+				placement: { mode: "auto", trackType: "audio" },
+				element,
+			});
+			return true;
+		} catch (error) {
+			console.error("Failed to add shared audio to timeline:", error);
+			toast.error(
+				error instanceof Error
+					? error.message
+					: "Failed to add shared audio to timeline",
+				{ id: `shared-audio-${asset.id}` },
 			);
 			return false;
 		}

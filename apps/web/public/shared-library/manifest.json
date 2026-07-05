@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "audioAssets": [
+    {
+      "id": "fd7f3d73-7e16-409d-a045-004e35b603cb",
+      "name": "Joe Cuba - Bang Bang (Classic)",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 7665717,
+      "duration": 319.344036,
+      "sourceUrl": "/shared-library/audio/music/fd7f3d73-7e16-409d-a045-004e35b603cb.mp3",
+      "repositoryPath": "public/shared-library/audio/music/fd7f3d73-7e16-409d-a045-004e35b603cb.mp3",
+      "storageKind": "repo",
+      "fileName": "fd7f3d73-7e16-409d-a045-004e35b603cb.mp3",
+      "createdAt": "2026-07-05T14:40:05.725Z",
+      "updatedAt": "2026-07-05T14:40:05.801Z"
+    },
+    {
+      "id": "9011e440-02cb-4ebd-be8c-eca7ceca2051",
+      "name": "Mercy, Mercy, Mercy (Live) [W9mYN0Tkoik]",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 5122295,
+      "duration": 310.636553,
+      "sourceUrl": "/shared-library/audio/music/9011e440-02cb-4ebd-be8c-eca7ceca2051.mp3",
+      "repositoryPath": "public/shared-library/audio/music/9011e440-02cb-4ebd-be8c-eca7ceca2051.mp3",
+      "storageKind": "repo",
+      "fileName": "9011e440-02cb-4ebd-be8c-eca7ceca2051.mp3",
+      "createdAt": "2026-07-05T13:40:53.196Z",
+      "updatedAt": "2026-07-05T13:40:53.264Z"
+    },
+    {
+      "id": "4487df7f-2e35-4c34-a629-b4a4a30eea9f",
+      "name": "Bo Diddley Pretty Thing",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 4126648,
+      "duration": 171.874104,
+      "sourceUrl": "/shared-library/audio/music/4487df7f-2e35-4c34-a629-b4a4a30eea9f.mp3",
+      "repositoryPath": "public/shared-library/audio/music/4487df7f-2e35-4c34-a629-b4a4a30eea9f.mp3",
+      "storageKind": "repo",
+      "fileName": "4487df7f-2e35-4c34-a629-b4a4a30eea9f.mp3",
+      "createdAt": "2026-07-05T12:01:47.595Z",
+      "updatedAt": "2026-07-05T12:01:47.890Z"
+    }
+  ],
+  "stickerAssets": [],
+  "categories": [],
+  "generatedBackgrounds": [],
+  "generatedEffects": [],
+  "captionPresets": [
+    {
+      "id": "5a829a99-c397-4b66-825b-47b5f0576a8c",
+      "name": "dream",
+      "settings": {
+        "wordsPerRow": 3,
+        "rows": 1,
+        "inPaddingPercent": 5,
+        "outPaddingPercent": 7,
+        "revealMode": "spoken-word-keep",
+        "transitionIn": "blur-zoom",
+        "wordAnimationId": "whisper-type-8",
+        "accentColor": "#c8ff4d",
+        "wordDirection": "auto",
+        "hidePunctuation": true,
+        "placementMode": "grid",
+        "placementGridX": 0.5,
+        "placementGridY": 0.5,
+        "manualPositionX": 0,
+        "manualPositionY": 0
+      },
+      "createdAt": "2026-07-05T13:23:08.167Z",
+      "updatedAt": "2026-07-05T13:23:08.167Z"
+    },
+    {
+      "id": "9c35bc34-3bf3-4d40-bf8a-42181dd17298",
+      "name": "liquid",
+      "settings": {
+        "wordsPerRow": 3,
+        "rows": 1,
+        "inPaddingPercent": 5,
+        "outPaddingPercent": 7,
+        "revealMode": "spoken-word-keep",
+        "transitionIn": "blur-zoom",
+        "wordAnimationId": "liquid-bloom-4",
+        "accentColor": "#c8ff4d",
+        "wordDirection": "auto",
+        "hidePunctuation": true,
+        "placementMode": "grid",
+        "placementGridX": 0.5,
+        "placementGridY": 0.5,
+        "manualPositionX": 0,
+        "manualPositionY": 0
+      },
+      "createdAt": "2026-07-05T13:22:44.308Z",
+      "updatedAt": "2026-07-05T13:22:44.308Z"
+    },
+    {
+      "id": "bfd215a9-e5ae-4322-9941-d2b2ed67e95b",
+      "name": "ghost",
+      "settings": {
+        "wordsPerRow": 3,
+        "rows": 1,
+        "inPaddingPercent": 5,
+        "outPaddingPercent": 7,
+        "revealMode": "spoken-word-keep",
+        "transitionIn": "blur-zoom",
+        "wordAnimationId": "ghost-trail-3",
+        "accentColor": "#c8ff4d",
+        "wordDirection": "auto",
+        "hidePunctuation": true,
+        "placementMode": "grid",
+        "placementGridX": 0.5,
+        "placementGridY": 0.5,
+        "manualPositionX": 0,
+        "manualPositionY": 0
+      },
+      "createdAt": "2026-07-05T13:22:18.764Z",
+      "updatedAt": "2026-07-05T13:22:18.764Z"
+    },
+    {
+      "id": "c8d1109d-805c-4ed0-bf05-e83e3099776c",
+      "name": "Classic",
+      "settings": {
+        "wordsPerRow": 3,
+        "rows": 1,
+        "inPaddingPercent": 0,
+        "outPaddingPercent": 0,
+        "revealMode": "spoken-word-keep",
+        "transitionIn": "blur-zoom",
+        "wordAnimationId": "kinetic-slam-1",
+        "accentColor": "#c8ff4d",
+        "wordDirection": "auto",
+        "placementMode": "grid",
+        "placementGridX": 0.5,
+        "placementGridY": 0.5,
+        "manualPositionX": 0,
+        "manualPositionY": 0
+      },
+      "createdAt": "2026-07-05T12:41:32.336Z",
+      "updatedAt": "2026-07-05T12:41:32.336Z"
+    }
+  ],
+  "updatedAt": "2026-07-05T14:40:05.804Z"
+}

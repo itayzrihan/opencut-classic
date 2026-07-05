@@ -1,4 +1,5 @@
 import type { FrameRate } from "opencut-wasm";
+import type { ProjectFont } from "@/fonts/types";
 import type { TScene } from "@/timeline/types";
 import type { MediaTime } from "@/wasm";
 
@@ -46,6 +47,7 @@ export interface TProject {
 	scenes: TScene[];
 	currentSceneId: string;
 	settings: TProjectSettings;
+	customFonts?: ProjectFont[];
 	version: number;
 	timelineViewState?: TTimelineViewState;
 }

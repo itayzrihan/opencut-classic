@@ -22,6 +22,7 @@ import { resolveColorAtTime, resolveOpacityAtTime } from "@/animation/values";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { videoCache } from "@/services/video-cache/service";
 import type { CanvasRenderer } from "./canvas-renderer";
+import { resolveEffectLayerVisualOverlay } from "./effect-layer-visual-overlay";
 import type { AnyBaseNode } from "./nodes/base-node";
 import {
 	BlurBackgroundNode,
@@ -126,6 +127,7 @@ function resolveEffectPassGroups({
 				effectParams: resolvedParams,
 				width,
 				height,
+				localTime,
 			});
 		})
 		.filter((passes) => passes.length > 0);
@@ -486,10 +488,21 @@ function resolveEffectLayerNode({
 		effectParams: node.params.effectParams,
 		width: context.renderer.width,
 		height: context.renderer.height,
+		localTime: time - node.params.timeOffset,
 	});
-	if (passes.length > 0) {
+	const visualOverlay =
+		definition.type === CUSTOM_AI_EFFECT_TYPE
+			? resolveEffectLayerVisualOverlay({
+					effectType: node.params.effectType,
+					effectParams: node.params.effectParams,
+					localTime: time - node.params.timeOffset,
+					duration: node.params.duration,
+				})
+			: null;
+	if (passes.length > 0 || visualOverlay) {
 		return {
 			passes,
+			visualOverlay,
 			overlay: null,
 		};
 	}
@@ -505,6 +518,7 @@ function resolveEffectLayerNode({
 
 	return {
 		passes: [],
+		visualOverlay: null,
 		overlay,
 	};
 }

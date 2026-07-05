@@ -7,10 +7,12 @@ import {
 } from "@/components/editor/panels/assets/assets-panel-store";
 import { TabBar } from "./tabbar";
 import { Captions } from "@/subtitles/components/assets-view";
+import { CaptionReviewView } from "@/subtitles/components/caption-review-view";
 import { MediaView } from "./views/assets";
 import { SettingsView } from "./views/settings";
 import { SoundsView } from "@/sounds/components/assets-view";
 import { StickersView } from "@/stickers/components/assets-view";
+import { UiElementsView } from "@/ui-elements/components/assets-view";
 import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
 import { BackgroundsView } from "@/backgrounds/components/assets-view";
@@ -27,11 +29,13 @@ export function AssetsPanel() {
 		sounds: <SoundsView />,
 		text: <TextView />,
 		stickers: <StickersView />,
+		"ui-elements": <UiElementsView />,
 		backgrounds: <BackgroundsView />,
 		effects: <EffectsView />,
 		overlays: <OverlayEffectsView />,
 		transitions: <TransitionsView />,
 		captions: <Captions />,
+		"see-captions": <CaptionReviewView />,
 		adjustment: (
 			<div className="text-muted-foreground p-4">
 				Adjustment view coming soon...

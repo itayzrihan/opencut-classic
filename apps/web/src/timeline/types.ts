@@ -113,7 +113,9 @@ export interface UploadAudioElement extends BaseAudioElement {
 
 export interface LibraryAudioElement extends BaseAudioElement {
 	sourceType: "library";
-	sourceUrl: string;
+	sourceUrl?: string;
+	libraryAssetId?: string;
+	librarySourceType?: "remote" | "shared";
 }
 
 export type AudioElement = UploadAudioElement | LibraryAudioElement;

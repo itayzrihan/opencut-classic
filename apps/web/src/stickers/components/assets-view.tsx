@@ -6,18 +6,34 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogBody,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEditor } from "@/editor/use-editor";
+import { useFileUpload } from "@/media/use-file-upload";
 import { resolveStickerIntrinsicSize } from "@/stickers";
 import {
 	buildGraphicElement,
 	buildStickerElement,
 } from "@/timeline/element-utils";
 import { STICKER_CATEGORIES } from "@/stickers/categories";
-import { getRegionLabel, resolveQueryToRegions } from "@/stickers";
+import { getRegionLabel, resolveQueryToRegions, resolveStickerId } from "@/stickers";
 import { parseShapeStickerId } from "@/stickers/providers/shapes";
+import { parseStickerId } from "@/stickers/sticker-id";
+import {
+	useSharedLibraryStore,
+	type SharedAssetCategory,
+} from "@/shared-library";
 import type { TimelineDragData } from "@/timeline/drag";
 import type {
 	StickerBrowseSection,
@@ -27,7 +43,9 @@ import type {
 import { useStickersStore } from "@/stickers/stickers-store";
 import { cn } from "@/utils/ui";
 import {
+	Folder03Icon,
 	HappyIcon,
+	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 
@@ -42,6 +60,34 @@ export function StickersView() {
 		setSelectedCategory,
 		viewMode,
 	} = useStickersStore();
+	const {
+		categories,
+		createCategory,
+		addAssetToCategory,
+		importStickerFiles,
+		loadLibrary,
+		stickerAssets,
+	} = useSharedLibraryStore();
+	const [selectedCustomCategoryId, setSelectedCustomCategoryId] = useState<
+		string | null
+	>(null);
+	const [categoryName, setCategoryName] = useState("");
+	const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
+	const stickerCategories = categories.filter(
+		(category) => category.scope === "stickers",
+	);
+	const selectedCustomCategory = selectedCustomCategoryId
+		? stickerCategories.find((category) => category.id === selectedCustomCategoryId)
+		: null;
+	const { openFilePicker, fileInputProps } = useFileUpload({
+		accept: "image/*",
+		multiple: true,
+		onFilesSelected: (files) => {
+			void importStickerFiles({ files }).then(() => {
+				void browseStickers();
+			});
+		},
+	});
 
 	useEffect(() => {
 		if (viewMode === "browse" && !browseContent) {
@@ -49,15 +95,49 @@ export function StickersView() {
 		}
 	}, [browseContent, browseStickers, viewMode]);
 
+	useEffect(() => {
+		void loadLibrary();
+	}, [loadLibrary]);
+
+	const handleCreateCategory = async () => {
+		const category = await createCategory({
+			scope: "stickers",
+			name: categoryName,
+		});
+		if (category) {
+			setSelectedCustomCategoryId(category.id);
+			setCategoryName("");
+			setIsCategoryDialogOpen(false);
+		}
+	};
+
+	const handleDropOnCategory = async ({
+		category,
+		event,
+	}: {
+		category: SharedAssetCategory;
+		event: React.DragEvent;
+	}) => {
+		event.preventDefault();
+		const stickerId = event.dataTransfer.getData("application/x-sticker-id");
+		if (!stickerId) return;
+		await addAssetToCategory({
+			categoryId: category.id,
+			assetId: stickerId,
+		});
+	};
+
 	return (
 		<div className="flex h-full flex-col py-2">
-			<div className="px-2">
+			<input {...fileInputProps} />
+			<div className="flex items-center gap-2 px-2">
 				<Input
 					size="sm"
 					variant="default"
 					placeholder="Search..."
 					value={searchQuery}
 					onChange={(e) => {
+						setSelectedCustomCategoryId(null);
 						setSearchQuery({ query: e.target.value });
 						void searchStickers({ query: e.target.value });
 					}}
@@ -69,11 +149,107 @@ export function StickersView() {
 					className="w-full"
 					containerClassName="w-full"
 				/>
+				<Button size="sm" onClick={openFilePicker}>
+					<HugeiconsIcon icon={PlusSignIcon} />
+					Add
+				</Button>
 			</div>
 
+			<div className="mt-2 flex gap-2 overflow-x-auto px-2 pb-1 scrollbar-hidden">
+				<button
+					type="button"
+					className={cn(
+						"bg-accent flex size-20 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border px-2 text-center",
+						!selectedCustomCategoryId && "border-primary text-primary",
+					)}
+					onClick={() => setSelectedCustomCategoryId(null)}
+				>
+					<HugeiconsIcon icon={HappyIcon} className="size-5" />
+					<span className="max-w-full truncate text-xs">All</span>
+				</button>
+				{stickerCategories.map((category) => (
+					<button
+						key={category.id}
+						type="button"
+						className={cn(
+							"bg-accent flex size-20 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border px-2 text-center",
+							selectedCustomCategoryId === category.id &&
+								"border-primary text-primary",
+						)}
+						onClick={() => setSelectedCustomCategoryId(category.id)}
+						onDragOver={(event) => event.preventDefault()}
+						onDrop={(event) => void handleDropOnCategory({ category, event })}
+						title="Drop a sticker here to add it to this category"
+					>
+						<HugeiconsIcon icon={Folder03Icon} className="size-5" />
+						<span className="max-w-full truncate text-xs">{category.name}</span>
+						<span className="text-muted-foreground text-[10px]">
+							{category.assetIds.length}
+						</span>
+					</button>
+				))}
+				<Dialog
+					open={isCategoryDialogOpen}
+					onOpenChange={setIsCategoryDialogOpen}
+				>
+					<DialogTrigger asChild>
+						<button
+							type="button"
+							className="border-muted-foreground/30 text-muted-foreground hover:text-foreground flex size-20 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border border-dashed px-2 text-center"
+						>
+							<HugeiconsIcon icon={PlusSignIcon} className="size-5" />
+							<span className="text-xs">Category</span>
+						</button>
+					</DialogTrigger>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>Create sticker category</DialogTitle>
+							<DialogDescription>
+								Categories are saved in the repository manifest. A sticker can
+								be dropped into multiple categories and still remain in the main
+								sticker views.
+							</DialogDescription>
+						</DialogHeader>
+						<DialogBody>
+							<Input
+								placeholder="Category name"
+								value={categoryName}
+								onChange={(event) => setCategoryName(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter") {
+										event.preventDefault();
+										void handleCreateCategory();
+									}
+								}}
+							/>
+						</DialogBody>
+						<DialogFooter>
+							<Button
+								variant="text"
+								onClick={() => setIsCategoryDialogOpen(false)}
+							>
+								Cancel
+							</Button>
+							<Button onClick={() => void handleCreateCategory()}>
+								Create
+							</Button>
+						</DialogFooter>
+					</DialogContent>
+				</Dialog>
+			</div>
+
+			{selectedCustomCategory ? (
+				<div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4">
+					<CustomStickerCategoryView
+						category={selectedCustomCategory}
+						stickerAssets={stickerAssets}
+					/>
+				</div>
+			) : (
 			<Tabs
 				value={selectedCategory}
 				onValueChange={(value) => {
+					setSelectedCustomCategoryId(null);
 					setSelectedCategory({ category: value as StickerCategory });
 				}}
 				variant="underline"
@@ -90,6 +266,70 @@ export function StickersView() {
 					<StickersContentView />
 				</div>
 			</Tabs>
+			)}
+		</div>
+	);
+}
+
+function CustomStickerCategoryView({
+	category,
+	stickerAssets,
+}: {
+	category: SharedAssetCategory;
+	stickerAssets: ReturnType<typeof useSharedLibraryStore.getState>["stickerAssets"];
+}) {
+	const importedById = new Map(stickerAssets.map((asset) => [asset.id, asset]));
+	const items = category.assetIds
+		.map((stickerId) => {
+			try {
+				const parsed = parseStickerId({ stickerId });
+				const imported =
+					parsed.providerId === "user-stickers"
+						? importedById.get(parsed.providerValue)
+						: null;
+				if (imported) {
+					const previewUrl = imported.dataUrl ?? imported.sourceUrl;
+					if (!previewUrl) {
+						return null;
+					}
+					return {
+						id: stickerId,
+						provider: parsed.providerId,
+						name: imported.name,
+						previewUrl,
+						metadata: {
+							sharedAssetId: imported.id,
+						},
+					} satisfies StickerData;
+				}
+				return {
+					id: stickerId,
+					provider: parsed.providerId,
+					name: parsed.providerValue.replaceAll("-", " "),
+					previewUrl: resolveStickerId({
+						stickerId,
+						options: { width: 96, height: 96 },
+					}),
+					metadata: {},
+				} satisfies StickerData;
+			} catch {
+				return null;
+			}
+		})
+		.filter((item): item is StickerData => item !== null);
+
+	if (items.length === 0) {
+		return <EmptyView message="Drop stickers into this category to show them here." />;
+	}
+
+	return (
+		<div className="flex flex-col gap-3 pb-4">
+			<div className="flex items-center justify-between">
+				<span className="text-muted-foreground text-sm">
+					{items.length} {items.length === 1 ? "sticker" : "stickers"}
+				</span>
+			</div>
+			<StickerGrid items={items} />
 		</div>
 	);
 }
@@ -438,6 +678,10 @@ function StickerItem({
 				name={displayName}
 				preview={preview}
 				dragData={dragData}
+				onDragStart={({ e }) => {
+					e.dataTransfer.setData("application/x-sticker-id", item.id);
+					e.dataTransfer.setData("text/plain", displayName);
+				}}
 				onAddToTimeline={handleAdd}
 				aspectRatio={1}
 				shouldShowLabel={false}

@@ -10,6 +10,7 @@ import {
 	polygonGraphicDefinition,
 	rectangleGraphicDefinition,
 	starGraphicDefinition,
+	uiElementGraphicDefinition,
 } from "./definitions";
 import {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
@@ -168,6 +169,7 @@ export {
 	rectangleGraphicDefinition,
 	registerDefaultGraphics,
 	starGraphicDefinition,
+	uiElementGraphicDefinition,
 };
 export {
 	DEFAULT_HYPERFRAME_HEIGHT,

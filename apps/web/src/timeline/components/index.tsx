@@ -94,10 +94,11 @@ import { getMouseTimeFromClientX } from "@/timeline/drag-utils";
 import { getSelectedTimelineRange } from "@/timeline/range-selection";
 import { AiRangeDialog } from "@/ai/components/ai-range-dialog";
 import {
-	CAPTION_WORD_TIMING_TRACK_HEIGHT_PX,
 	CaptionWordTimingTrack,
+	getCaptionWordTimingTrackHeightForWords,
 } from "./caption-word-timing-track";
 import { findCaptionSourceTrack } from "@/subtitles/caption-tracks";
+import { TIMELINE_SCROLL_TO_TIME_EVENT } from "@/timeline/focus-event";
 
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
@@ -148,11 +149,31 @@ export function Timeline() {
 		() => (scene ? getDisplayTracks({ tracks: scene.tracks }) : []),
 		[scene],
 	);
-	const hasCaptionWordTimingTrack = !!(
-		scene && findCaptionSourceTrack({ tracks: scene.tracks })
+	const captionSourceTrack = useMemo(
+		() => (scene ? findCaptionSourceTrack({ tracks: scene.tracks }) : null),
+		[scene],
 	);
+	const hasCaptionWordTimingTrack = !!captionSourceTrack;
+	const committedWordTimingTrackHeight = captionSourceTrack?.captionSource
+		? getCaptionWordTimingTrackHeightForWords({
+				words: captionSourceTrack.captionSource.words,
+			})
+		: 0;
+	const captionSourceTrackId = captionSourceTrack?.id ?? null;
+	const [measuredWordTimingTrackHeight, setMeasuredWordTimingTrackHeight] =
+		useState<{ trackId: string; height: number } | null>(null);
+	const currentMeasuredWordTimingTrackHeight =
+		measuredWordTimingTrackHeight?.trackId === captionSourceTrackId
+			? measuredWordTimingTrackHeight.height
+			: null;
+	const wordTimingTrackHeight = hasCaptionWordTimingTrack
+		? Math.max(
+				committedWordTimingTrackHeight,
+				currentMeasuredWordTimingTrackHeight ?? 0,
+			)
+		: 0;
 	const wordTimingTrackOffset = hasCaptionWordTimingTrack
-		? CAPTION_WORD_TIMING_TRACK_HEIGHT_PX + TIMELINE_TRACK_GAP_PX
+		? wordTimingTrackHeight + TIMELINE_TRACK_GAP_PX
 		: 0;
 	const tracksTopInsetPx =
 		TIMELINE_CONTENT_TOP_PADDING_PX + wordTimingTrackOffset;
@@ -229,6 +250,18 @@ export function Timeline() {
 	useEffect(() => {
 		setZoomLevelRef.current = setZoomLevel;
 	}, [setZoomLevel]);
+
+	const handleWordTimingTrackHeightChange = useCallback(
+		({ height }: { height: number }) => {
+			if (!captionSourceTrackId) return;
+			setMeasuredWordTimingTrackHeight((previous) =>
+				previous?.trackId === captionSourceTrackId && previous.height === height
+					? previous
+					: { trackId: captionSourceTrackId, height },
+			);
+		},
+		[captionSourceTrackId],
+	);
 
 	const saveScrollPositionRef = useRef(saveScrollPosition);
 	useEffect(() => {
@@ -325,6 +358,49 @@ export function Timeline() {
 		isReady: tracks.length > 0,
 	});
 
+	useEffect(() => {
+		const handleTimelineScrollRequest = (event: Event) => {
+			if (!(event instanceof CustomEvent)) return;
+			const detail: unknown = event.detail;
+			if (!detail || typeof detail !== "object" || !("time" in detail)) {
+				return;
+			}
+			const { time } = detail;
+			if (typeof time !== "number") return;
+
+			const tracksViewport = tracksScrollRef.current;
+			if (!tracksViewport) return;
+
+			const viewportWidth = tracksViewport.clientWidth || containerWidth;
+			const maxScrollLeft = Math.max(
+				0,
+				tracksViewport.scrollWidth - viewportWidth,
+			);
+			const targetLeft = timelineTimeToPixels({ time, zoomLevel });
+			const nextScrollLeft = Math.max(
+				0,
+				Math.min(maxScrollLeft, targetLeft - viewportWidth * 0.35),
+			);
+
+			tracksViewport.scrollLeft = nextScrollLeft;
+			if (rulerScrollRef.current) {
+				rulerScrollRef.current.scrollLeft = nextScrollLeft;
+			}
+			syncFollowers();
+			saveScrollPositionRef.current();
+		};
+
+		window.addEventListener(
+			TIMELINE_SCROLL_TO_TIME_EVENT,
+			handleTimelineScrollRequest,
+		);
+		return () =>
+			window.removeEventListener(
+				TIMELINE_SCROLL_TO_TIME_EVENT,
+				handleTimelineScrollRequest,
+			);
+	}, [containerWidth, syncFollowers, zoomLevel]);
+
 	const { dragView, handleElementMouseDown, handleElementClick } =
 		useElementInteraction({
 			zoomLevel,
@@ -393,6 +469,8 @@ export function Timeline() {
 				zoomLevel,
 				startPos,
 				currentPos,
+				tracksTopInsetPx,
+				getTrackExtraHeight: getTrackExpansionHeight,
 			});
 		},
 		onSelectionChange: ({ intersectedIds, isAdditive }) => {
@@ -569,6 +647,7 @@ export function Timeline() {
 					timelineHeaderHeight={timelineHeaderHeight}
 					hasHorizontalScrollbar={hasHorizontalScrollbar}
 					getTrackExpansionHeight={getTrackExpansionHeight}
+					wordTimingTrackHeight={wordTimingTrackHeight}
 				/>
 
 				<div
@@ -686,6 +765,7 @@ export function Timeline() {
 										<CaptionWordTimingTrack
 											zoomLevel={zoomLevel}
 											dynamicTimelineWidth={dynamicTimelineWidth}
+											onHeightChange={handleWordTimingTrackHeightChange}
 											onMouseDown={(event) => {
 												if (handleRangeSelectionMouseDown(event)) return;
 												handleSelectionMouseDown(event);
@@ -822,12 +902,14 @@ function TrackLabelsPanel({
 	timelineHeaderHeight,
 	hasHorizontalScrollbar,
 	getTrackExpansionHeight,
+	wordTimingTrackHeight,
 }: {
 	trackLabelsRef: React.RefObject<HTMLDivElement | null>;
 	trackLabelsScrollRef: React.RefObject<HTMLDivElement | null>;
 	timelineHeaderHeight: number;
 	hasHorizontalScrollbar: boolean;
 	getTrackExpansionHeight: (trackIndex: number) => number;
+	wordTimingTrackHeight: number;
 }) {
 	const editor = useEditor();
 	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
@@ -872,7 +954,7 @@ function TrackLabelsPanel({
 								<div
 									className="flex items-center justify-end border-b border-red-500/20 bg-red-950/10 px-3"
 									style={{
-										height: `${CAPTION_WORD_TIMING_TRACK_HEIGHT_PX}px`,
+										height: `${wordTimingTrackHeight}px`,
 									}}
 								>
 									<span className="truncate text-xs font-medium text-red-200/80">

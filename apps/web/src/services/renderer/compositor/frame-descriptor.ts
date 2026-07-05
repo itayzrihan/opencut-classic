@@ -4,6 +4,10 @@ import { incrementCounter } from "@/diagnostics/render-perf";
 import type { AnyBaseNode } from "../nodes/base-node";
 import type { CanvasRenderer } from "../canvas-renderer";
 import { createCanvasSurface } from "../canvas-utils";
+import {
+	drawEffectLayerVisualOverlay,
+	type EffectLayerVisualOverlay,
+} from "../effect-layer-visual-overlay";
 import { BlurBackgroundNode } from "../nodes/blur-background-node";
 import { ColorNode } from "../nodes/color-node";
 import { EffectLayerNode } from "../nodes/effect-layer-node";
@@ -132,6 +136,15 @@ async function collectNode({
 				effect_pass_groups: [node.resolved.passes],
 			});
 		}
+		if (node.resolved.visualOverlay) {
+			collectEffectVisualOverlay({
+				visualOverlay: node.resolved.visualOverlay,
+				renderer,
+				path,
+				items,
+				textures,
+			});
+		}
 		if (node.resolved.overlay) {
 			collectAiEffectOverlay({
 				overlay: node.resolved.overlay,
@@ -216,6 +229,47 @@ async function collectNode({
 			textures,
 		});
 	}
+}
+
+function collectEffectVisualOverlay({
+	visualOverlay,
+	renderer,
+	path,
+	items,
+	textures,
+}: {
+	visualOverlay: EffectLayerVisualOverlay;
+	renderer: RendererSize;
+	path: string;
+	items: FrameItemDescriptor[];
+	textures: Map<string, TextureUploadDescriptor>;
+}) {
+	const textureId = `${path}:effect-visual-overlay`;
+	const { width, height } = renderer;
+	textures.set(textureId, {
+		kind: "rendered",
+		id: textureId,
+		contentHash: `effect-visual-overlay:${width}x${height}:${JSON.stringify(visualOverlay)}`,
+		width,
+		height,
+		draw: (ctx) => {
+			drawEffectLayerVisualOverlay({
+				ctx,
+				overlay: visualOverlay,
+				width,
+				height,
+			});
+		},
+	});
+	items.push({
+		type: "layer",
+		textureId,
+		transform: fullCanvasTransform(renderer),
+		opacity: visualOverlay.opacity,
+		blendMode: visualOverlay.blendMode,
+		effectPassGroups: [],
+		mask: null,
+	});
 }
 
 function collectAiEffectOverlay({

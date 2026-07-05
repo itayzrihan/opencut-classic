@@ -337,12 +337,16 @@ export function buildElementFromMedia({
 
 export function buildLibraryAudioElement({
 	sourceUrl,
+	libraryAssetId,
+	librarySourceType,
 	name,
 	duration,
 	startTime,
 	buffer,
 }: {
-	sourceUrl: string;
+	sourceUrl?: string;
+	libraryAssetId?: string;
+	librarySourceType?: "remote" | "shared";
 	name: string;
 	duration: MediaTime;
 	startTime: MediaTime;
@@ -351,7 +355,6 @@ export function buildLibraryAudioElement({
 	const element: CreateLibraryAudioElement = {
 		type: "audio",
 		sourceType: "library",
-		sourceUrl,
 		name,
 		duration,
 		startTime,
@@ -360,6 +363,15 @@ export function buildLibraryAudioElement({
 		sourceDuration: duration,
 		params: buildDefaultElementParams({ type: "audio" }),
 	};
+	if (sourceUrl) {
+		element.sourceUrl = sourceUrl;
+	}
+	if (libraryAssetId) {
+		element.libraryAssetId = libraryAssetId;
+		element.librarySourceType = librarySourceType ?? "shared";
+	} else if (sourceUrl) {
+		element.librarySourceType = librarySourceType ?? "remote";
+	}
 	if (buffer) {
 		element.buffer = buffer;
 	}

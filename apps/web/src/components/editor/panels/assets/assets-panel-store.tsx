@@ -21,11 +21,13 @@ export const TAB_KEYS = [
 	"sounds",
 	"text",
 	"stickers",
+	"ui-elements",
 	"backgrounds",
 	"effects",
 	"overlays",
 	"transitions",
 	"captions",
+	"see-captions",
 	"adjustment",
 	"settings",
 ] as const;
@@ -61,6 +63,10 @@ export const tabs = {
 		icon: createHugeiconsIcon({ icon: Happy01Icon }),
 		label: "Stickers",
 	},
+	"ui-elements": {
+		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
+		label: "UI Elements",
+	},
 	backgrounds: {
 		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
 		label: "Backgrounds",
@@ -80,6 +86,10 @@ export const tabs = {
 	captions: {
 		icon: createHugeiconsIcon({ icon: ClosedCaptionIcon }),
 		label: "Captions",
+	},
+	"see-captions": {
+		icon: createHugeiconsIcon({ icon: TextIcon }),
+		label: "See captions",
 	},
 	adjustment: {
 		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),

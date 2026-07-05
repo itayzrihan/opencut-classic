@@ -2,6 +2,7 @@ export { InsertElementCommand } from "./insert-element";
 export { DeleteElementsCommand } from "./delete-elements";
 export { DuplicateElementsCommand } from "./duplicate-elements";
 export { SplitElementsCommand } from "./split-elements";
+export { MergeTextElementsCommand } from "./merge-text-elements";
 export { UpdateElementsCommand } from "./update-elements";
 export { ApplyTransitionCommand } from "./apply-transition";
 export { ToggleSourceAudioSeparationCommand } from "./toggle-source-audio-separation";

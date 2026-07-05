@@ -24,17 +24,24 @@ import { EmptyView } from "./empty-view";
 import type { TextElement, TimelineElement } from "@/timeline";
 import { getTextRows, getWordRuns, type TextOverrideScope } from "./text-scope";
 import { useMemo, useState } from "react";
+import type { SelectedTextWordRef } from "@/selection/editor-selection";
+import type { ElementWithTrackForParams } from "./components/element-params-tab";
 
 export function PropertiesPanel() {
 	const editor = useEditor();
 	useEditor((e) => e.scenes.getActiveSceneOrNull());
 	useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
+	const selectedTextWords = useEditor((e) => e.selection.getSelectedTextWords());
 	const { activeTabPerType, setActiveTab } = usePropertiesStore();
 	const mediaAssets = editor.media.getAssets();
-	const elementsWithTracks = editor.timeline.getElementsWithTracks({
-		elements: selectedElements,
+	const elementsWithTracks = addSelectedTextWordIds({
+		elementsWithTracks: editor.timeline.getElementsWithTracks({
+			elements: selectedElements,
+		}),
+		selectedTextWords,
 	});
+	const selectedTextWordCount = selectedTextWords.length;
 	const [textScopeMode, setTextScopeMode] =
 		useState<TextOverrideScope["type"]>("layer");
 	const [selectedLineIndex, setSelectedLineIndex] = useState(0);
@@ -76,6 +83,10 @@ export function PropertiesPanel() {
 		const activeTab =
 			visibleTabs.find((t) => t.id === activeTabId) ?? visibleTabs[0];
 		const trackId = elementsWithTracks[0].track.id;
+		const textScope =
+			selectedTextWordCount > 0
+				? buildSelectedTextWordScope({ entry: elementsWithTracks[0] })
+				: undefined;
 
 		if (!activeTab) return null;
 
@@ -112,9 +123,11 @@ export function PropertiesPanel() {
 				</TooltipProvider>
 				<ScrollArea className="flex-1 scrollbar-hidden">
 					<div className="border-b px-3 py-2 text-muted-foreground text-xs">
-						{selectedElements.length} {firstElement.type} elements selected
+						{selectedTextWordCount > 0
+							? `${selectedTextWordCount} words selected`
+							: `${selectedElements.length} ${firstElement.type} elements selected`}
 					</div>
-					{activeTab.content({ trackId, elementsWithTracks })}
+					{activeTab.content({ trackId, elementsWithTracks, textScope })}
 				</ScrollArea>
 			</div>
 		);
@@ -126,12 +139,18 @@ export function PropertiesPanel() {
 	const { element, track } = elementWithTrack;
 	const config = getPropertiesConfig({ element, mediaAssets });
 	const visibleTabs = config.tabs;
-	const textScope = buildTextScope({
-		element,
-		mode: textScopeMode,
-		selectedLineIndex,
-		selectedWordId,
-	});
+	const selectedTextWordScope =
+		selectedTextWordCount > 0
+			? buildSelectedTextWordScope({ entry: elementWithTrack })
+			: undefined;
+	const textScope =
+		selectedTextWordScope ??
+		buildTextScope({
+			element,
+			mode: textScopeMode,
+			selectedLineIndex,
+			selectedWordId,
+		});
 
 	const storedTabId = activeTabPerType[element.type];
 	const isStoredTabVisible = visibleTabs.some((t) => t.id === storedTabId);
@@ -182,6 +201,8 @@ export function PropertiesPanel() {
 						onLineChange={setSelectedLineIndex}
 						selectedWordId={selectedWordId}
 						onWordChange={setSelectedWordId}
+						selectedTextWordScope={selectedTextWordScope}
+						selectedTextWordCount={selectedTextWordCount}
 					/>
 				)}
 				{activeTab.content({
@@ -223,6 +244,50 @@ function buildTextScope({
 	return { type: "layer" };
 }
 
+function addSelectedTextWordIds({
+	elementsWithTracks,
+	selectedTextWords,
+}: {
+	elementsWithTracks: Array<{
+		track: ElementWithTrackForParams["track"];
+		element: TimelineElement;
+	}>;
+	selectedTextWords: SelectedTextWordRef[];
+}): ElementWithTrackForParams[] {
+	if (selectedTextWords.length === 0) {
+		return elementsWithTracks;
+	}
+
+	const wordIdsByElement = new Map<string, string[]>();
+	for (const word of selectedTextWords) {
+		const key = `${word.trackId}:${word.elementId}`;
+		wordIdsByElement.set(key, [
+			...(wordIdsByElement.get(key) ?? []),
+			word.wordId,
+		]);
+	}
+
+	return elementsWithTracks.map((entry) => ({
+		...entry,
+		textWordIds: wordIdsByElement.get(
+			`${entry.track.id}:${entry.element.id}`,
+		),
+	}));
+}
+
+function buildSelectedTextWordScope({
+	entry,
+}: {
+	entry: ElementWithTrackForParams;
+}): Extract<TextOverrideScope, { type: "word" | "words" }> | undefined {
+	const wordIds = entry.textWordIds ?? [];
+	if (wordIds.length === 0) return undefined;
+	if (wordIds.length === 1) {
+		return { type: "word", wordId: wordIds[0] };
+	}
+	return { type: "words", wordIds };
+}
+
 function TextScopeBar({
 	element,
 	mode,
@@ -231,6 +296,8 @@ function TextScopeBar({
 	onLineChange,
 	selectedWordId,
 	onWordChange,
+	selectedTextWordScope,
+	selectedTextWordCount,
 }: {
 	element: TextElement;
 	mode: TextOverrideScope["type"];
@@ -239,6 +306,8 @@ function TextScopeBar({
 	onLineChange: (lineIndex: number) => void;
 	selectedWordId: string;
 	onWordChange: (wordId: string) => void;
+	selectedTextWordScope?: Extract<TextOverrideScope, { type: "word" | "words" }>;
+	selectedTextWordCount: number;
 }) {
 	const wordRuns = useMemo(() => getWordRuns({ element }), [element]);
 	const rows = useMemo(() => getTextRows({ wordRuns }), [wordRuns]);
@@ -249,6 +318,32 @@ function TextScopeBar({
 	)
 		? selectedLineIndex
 		: (rows[0]?.lineIndex ?? 0);
+	const selectedTextWordLabel =
+		selectedTextWordScope?.type === "word"
+			? (wordRuns.find((word) => word.id === selectedTextWordScope.wordId)
+					?.text ?? "Word")
+			: `${selectedTextWordCount} words selected`;
+
+	if (selectedTextWordScope) {
+		return (
+			<div className="sticky top-0 z-10 border-b bg-background/95 px-3 py-2 backdrop-blur">
+				<div className="flex items-center gap-2">
+					<span className="text-muted-foreground text-xs">Scope</span>
+					<Select value="word" disabled>
+						<SelectTrigger className="h-8 min-w-28">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="word">Word</SelectItem>
+						</SelectContent>
+					</Select>
+					<div className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
+						{selectedTextWordLabel}
+					</div>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className="sticky top-0 z-10 border-b bg-background/95 px-3 py-2 backdrop-blur">

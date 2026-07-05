@@ -86,6 +86,10 @@ export const ACTIONS = {
 		description: "Copy selected elements",
 		category: "editing",
 	},
+	"merge-text-selected": {
+		description: "Merge selected text elements",
+		category: "editing",
+	},
 	"paste-copied": {
 		description: "Paste elements at playhead",
 		category: "editing",

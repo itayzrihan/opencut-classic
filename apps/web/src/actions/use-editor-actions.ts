@@ -454,6 +454,16 @@ export function useEditorActions() {
 	);
 
 	useActionHandler(
+		"merge-text-selected",
+		() => {
+			editor.timeline.mergeTextElements({
+				elements: selectedElements,
+			});
+		},
+		undefined,
+	);
+
+	useActionHandler(
 		"paste-copied",
 		() => {
 			editor.clipboard.paste();

@@ -1,0 +1,5 @@
+$ turbo run dev --filter=@opencut/web
+• turbo 2.9.6
+ ERROR  @opencut/web#dev: command (C:\Users\etiez\OneDrive\Documents\OpenCut\opencut-classic\apps\web) C:\Users\etiez\AppData\Local\Microsoft\WinGet\Packages\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\./bun-windows-x64\bun.exe run dev exited (255)
+ ERROR  run failed: command  exited (255)
+error: script "dev:web" exited with code 255

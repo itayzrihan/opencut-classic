@@ -1,7 +1,15 @@
 import {
 	buildSubtitleCuesFromWords,
 	splitCaptionCuesByLayer,
+	stripCaptionPunctuation,
 } from "@/subtitles/caption-layout";
+import {
+	findCaptionSourceTrack,
+	findCaptionSourceTracks,
+	getGeneratedCaptionWords,
+	hasSameCaptionSource,
+	rebuildCaptionTracksWithSource,
+} from "@/subtitles/caption-tracks";
 import type {
 	OverlayTrack,
 	SceneTracks,
@@ -16,12 +24,27 @@ interface UpdatedElementRef {
 	elementId: string;
 }
 
+interface TranscriptWordSnapshot {
+	text: string;
+	start: number;
+	end: number;
+}
+
+interface TextElementWithTrack {
+	track: TextTrack;
+	element: TextElement;
+}
+
 export function syncCaptionSourceWordsFromElements({
 	tracks,
+	previousTracks,
 	updates,
+	canvasSize,
 }: {
 	tracks: SceneTracks;
+	previousTracks?: SceneTracks;
 	updates: UpdatedElementRef[];
+	canvasSize?: { width: number; height: number };
 }): SceneTracks {
 	const sourceTrack = findCaptionSourceTrack({ tracks });
 	const source = sourceTrack?.captionSource;
@@ -41,6 +64,16 @@ export function syncCaptionSourceWordsFromElements({
 		const element =
 			elementIndex >= 0 ? track?.elements[elementIndex] : undefined;
 		if (!track || !element) continue;
+		if (
+			previousTracks &&
+			!hasElementTranscriptSemanticChange({
+				previousTracks,
+				nextElement: element,
+				update,
+			})
+		) {
+			continue;
+		}
 
 		const updatedWords = syncElementWords({
 			sourceWords: nextWords,
@@ -55,6 +88,21 @@ export function syncCaptionSourceWordsFromElements({
 	}
 
 	if (!didChange) return tracks;
+
+	if (canvasSize) {
+		const rebuiltTracks = rebuildCaptionTracksWithSource({
+			tracks,
+			words: nextWords,
+			settings: source.settings,
+			canvasSize,
+			layerCount: source.layerCount,
+			ignoredEditedElements: updates,
+			preserveEditedElements: false,
+		});
+		if (rebuiltTracks) {
+			return rebuiltTracks;
+		}
+	}
 
 	const withUpdatedSource = (track: OverlayTrack): OverlayTrack => {
 		if (track.type !== "text" || !track.captionSource) return track;
@@ -74,6 +122,79 @@ export function syncCaptionSourceWordsFromElements({
 	};
 }
 
+export function syncTextLayerWordsIntoCaptionSource({
+	tracks,
+	elements,
+}: {
+	tracks: SceneTracks;
+	elements: UpdatedElementRef[];
+}): SceneTracks {
+	const sourceTrack = findCaptionSourceTrack({ tracks });
+	const source = sourceTrack?.captionSource;
+	if (!source) return tracks;
+
+	const sourceTracks = findCaptionSourceTracks({ tracks, source });
+	const sourceTrackIds = new Set(sourceTracks.map((track) => track.id));
+	const nextManualWords = elements.flatMap((ref) => {
+		if (sourceTrackIds.has(ref.trackId)) return [];
+		const entry = findTextElementWithTrack({
+			tracks,
+			trackId: ref.trackId,
+			elementId: ref.elementId,
+		});
+		if (!entry) return [];
+		return buildTextLayerTranscriptionWords(entry);
+	});
+	const replacedKeys = new Set(
+		elements.map(({ trackId, elementId }) => `${trackId}:${elementId}`),
+	);
+	const nextWords = sortTranscriptionWords([
+		...source.words.filter((word) => {
+			if (word.source?.type !== "text-layer") return true;
+			return !replacedKeys.has(`${word.source.trackId}:${word.source.elementId}`);
+		}),
+		...nextManualWords,
+	]);
+	if (areTranscriptionWordsEqual({ left: source.words, right: nextWords })) {
+		return tracks;
+	}
+
+	return updateCaptionSourceWordsInTracks({
+		tracks,
+		source,
+		words: nextWords,
+	});
+}
+
+export function removeTextLayerWordsFromCaptionSource({
+	tracks,
+	elements,
+}: {
+	tracks: SceneTracks;
+	elements: UpdatedElementRef[];
+}): SceneTracks {
+	const sourceTrack = findCaptionSourceTrack({ tracks });
+	const source = sourceTrack?.captionSource;
+	if (!source) return tracks;
+
+	const removedKeys = new Set(
+		elements.map(({ trackId, elementId }) => `${trackId}:${elementId}`),
+	);
+	const nextWords = source.words.filter((word) => {
+		if (word.source?.type !== "text-layer") return true;
+		return !removedKeys.has(`${word.source.trackId}:${word.source.elementId}`);
+	});
+	if (areTranscriptionWordsEqual({ left: source.words, right: nextWords })) {
+		return tracks;
+	}
+
+	return updateCaptionSourceWordsInTracks({
+		tracks,
+		source,
+		words: nextWords,
+	});
+}
+
 function syncElementWords({
 	sourceWords,
 	track,
@@ -87,8 +208,9 @@ function syncElementWords({
 }): TranscriptionWord[] {
 	const source = track.captionSource;
 	if (!source) return sourceWords;
+	const generatedSourceWords = getGeneratedCaptionWords({ words: sourceWords });
 	const captions = buildSubtitleCuesFromWords({
-		words: sourceWords,
+		words: generatedSourceWords,
 		settings: source.settings,
 	});
 	const layers = splitCaptionCuesByLayer({
@@ -106,8 +228,15 @@ function syncElementWords({
 	expectedCaption.words.forEach((expectedWord, wordOffset) => {
 		const sourceIndex = sourceWords.findIndex((word) => word === expectedWord);
 		if (sourceIndex < 0) return;
+		const current = nextWords[sourceIndex];
 		const run = element.wordRuns?.[wordOffset];
-		const nextText = run?.text ?? contentWords[wordOffset] ?? expectedWord.text;
+		const renderedText = run?.text ?? contentWords[wordOffset] ?? expectedWord.text;
+		const nextText =
+			source.settings.hidePunctuation &&
+			stripCaptionPunctuation({ text: current.text }) ===
+				stripCaptionPunctuation({ text: renderedText })
+				? current.text
+				: renderedText;
 		const nextStart =
 			run?.startTime == null
 				? expectedWord.start
@@ -117,7 +246,6 @@ function syncElementWords({
 				? expectedWord.end
 				: elementStart + mediaTimeToSeconds({ time: run.endTime });
 
-		const current = nextWords[sourceIndex];
 		const nextWord = {
 			...current,
 			text: nextText,
@@ -143,52 +271,233 @@ function getContentWords({ element }: { element: TextElement }) {
 	return content.trim().split(/\s+/).filter(Boolean);
 }
 
-function findCaptionSourceTrack({
+function findTextElementWithTrack({
 	tracks,
+	trackId,
+	elementId,
 }: {
 	tracks: SceneTracks;
-}): TextTrack | null {
-	return (
-		tracks.overlay.find(
-			(track): track is TextTrack =>
-				track.type === "text" && !!track.captionSource,
-		) ?? null
+	trackId: string;
+	elementId: string;
+}): TextElementWithTrack | null {
+	const track = tracks.overlay.find(
+		(candidate): candidate is TextTrack =>
+			candidate.type === "text" && candidate.id === trackId,
 	);
+	const element = track?.elements.find(
+		(candidate) => candidate.id === elementId,
+	);
+	return track && element ? { track, element } : null;
 }
 
-function findCaptionSourceTracks({
-	tracks,
-	source,
-}: {
-	tracks: SceneTracks;
-	source: NonNullable<TextTrack["captionSource"]>;
-}): TextTrack[] {
-	return tracks.overlay.filter(
-		(track): track is TextTrack =>
-			track.type === "text" && hasSameCaptionSource({ track, source }),
-	);
-}
-
-function hasSameCaptionSource({
+function buildTextLayerTranscriptionWords({
 	track,
+	element,
+}: TextElementWithTrack): TranscriptionWord[] {
+	if (element.wordRuns?.length) {
+		const elementStart = mediaTimeToSeconds({ time: element.startTime });
+		const elementEnd =
+			elementStart + mediaTimeToSeconds({ time: element.duration });
+		return element.wordRuns.map((run, wordIndex) => {
+			const start =
+				run.startTime == null
+					? elementStart
+					: elementStart + mediaTimeToSeconds({ time: run.startTime });
+			const end =
+				run.endTime == null
+					? elementEnd
+					: elementStart + mediaTimeToSeconds({ time: run.endTime });
+			return {
+				text: run.text,
+				start: roundSeconds(start),
+				end: roundSeconds(Math.max(start + 0.01, end)),
+				source: {
+					type: "text-layer" as const,
+					trackId: track.id,
+					elementId: element.id,
+					wordIndex,
+					wordId: run.id,
+				},
+			};
+		});
+	}
+
+	const contentWords = getContentWords({ element });
+	const elementStart = mediaTimeToSeconds({ time: element.startTime });
+	const duration = mediaTimeToSeconds({ time: element.duration });
+	const wordDuration = contentWords.length > 0 ? duration / contentWords.length : 0;
+	return contentWords.map((text, wordIndex) => {
+		const start = elementStart + wordIndex * wordDuration;
+		const end = elementStart + (wordIndex + 1) * wordDuration;
+		return {
+			text,
+			start: roundSeconds(start),
+			end: roundSeconds(Math.max(start + 0.01, end)),
+			source: {
+				type: "text-layer" as const,
+				trackId: track.id,
+				elementId: element.id,
+				wordIndex,
+				wordId: `word-${wordIndex}`,
+			},
+		};
+	});
+}
+
+function updateCaptionSourceWordsInTracks({
+	tracks,
 	source,
+	words,
 }: {
-	track: TextTrack;
+	tracks: SceneTracks;
 	source: NonNullable<TextTrack["captionSource"]>;
-}) {
-	const candidate = track.captionSource;
-	if (!candidate) return false;
-	if (candidate.words.length !== source.words.length) return false;
-	const firstCandidate = candidate.words[0];
-	const firstSource = source.words[0];
-	const lastCandidate = candidate.words[candidate.words.length - 1];
-	const lastSource = source.words[source.words.length - 1];
-	return (
-		firstCandidate?.text === firstSource?.text &&
-		firstCandidate?.start === firstSource?.start &&
-		lastCandidate?.text === lastSource?.text &&
-		lastCandidate?.end === lastSource?.end
+	words: TranscriptionWord[];
+}): SceneTracks {
+	const sourceTracks = findCaptionSourceTracks({ tracks, source });
+	const sourceTrackIds = new Set(sourceTracks.map((track) => track.id));
+	return {
+		...tracks,
+		overlay: tracks.overlay.map((track) => {
+			if (track.type !== "text" || !sourceTrackIds.has(track.id)) return track;
+			return {
+				...track,
+				captionSource: track.captionSource
+					? {
+							...track.captionSource,
+							words,
+						}
+					: undefined,
+			};
+		}),
+	};
+}
+
+function sortTranscriptionWords(words: TranscriptionWord[]) {
+	return [...words].sort(
+		(left, right) =>
+			left.start - right.start ||
+			left.end - right.end ||
+			left.text.localeCompare(right.text),
 	);
+}
+
+function areTranscriptionWordsEqual({
+	left,
+	right,
+}: {
+	left: TranscriptionWord[];
+	right: TranscriptionWord[];
+}) {
+	if (left.length !== right.length) return false;
+	return left.every((word, index) => {
+		const candidate = right[index];
+		return (
+			candidate?.text === word.text &&
+			candidate.start === word.start &&
+			candidate.end === word.end &&
+			candidate.source?.type === word.source?.type &&
+			candidate.source?.trackId === word.source?.trackId &&
+			candidate.source?.elementId === word.source?.elementId &&
+			candidate.source?.wordIndex === word.source?.wordIndex &&
+			candidate.source?.wordId === word.source?.wordId
+		);
+	});
+}
+
+function hasElementTranscriptSemanticChange({
+	previousTracks,
+	nextElement,
+	update,
+}: {
+	previousTracks: SceneTracks;
+	nextElement: TextElement;
+	update: UpdatedElementRef;
+}) {
+	const previousElement = findTextElementInTracks({
+		tracks: previousTracks,
+		trackId: update.trackId,
+		elementId: update.elementId,
+	});
+	if (!previousElement) return true;
+	return !areTranscriptWordSnapshotsEqual({
+		left: getElementTranscriptWordSnapshots({ element: previousElement }),
+		right: getElementTranscriptWordSnapshots({ element: nextElement }),
+	});
+}
+
+function findTextElementInTracks({
+	tracks,
+	trackId,
+	elementId,
+}: {
+	tracks: SceneTracks;
+	trackId: string;
+	elementId: string;
+}) {
+	const track = tracks.overlay.find(
+		(track): track is TextTrack =>
+			track.type === "text" && track.id === trackId,
+	);
+	return track?.elements.find((element) => element.id === elementId) ?? null;
+}
+
+function getElementTranscriptWordSnapshots({
+	element,
+}: {
+	element: TextElement;
+}): TranscriptWordSnapshot[] {
+	if (element.wordRuns?.length) {
+		const elementStart = mediaTimeToSeconds({ time: element.startTime });
+		const elementEnd =
+			elementStart + mediaTimeToSeconds({ time: element.duration });
+		return element.wordRuns.map((run) => {
+			const start =
+				run.startTime == null
+					? elementStart
+					: elementStart + mediaTimeToSeconds({ time: run.startTime });
+			const end =
+				run.endTime == null
+					? elementEnd
+					: elementStart + mediaTimeToSeconds({ time: run.endTime });
+			return {
+				text: run.text,
+				start: roundSeconds(start),
+				end: roundSeconds(Math.max(start + 0.01, end)),
+			};
+		});
+	}
+
+	const contentWords = getContentWords({ element });
+	const elementStart = mediaTimeToSeconds({ time: element.startTime });
+	const duration = mediaTimeToSeconds({ time: element.duration });
+	const wordDuration = contentWords.length > 0 ? duration / contentWords.length : 0;
+	return contentWords.map((text, index) => {
+		const start = elementStart + index * wordDuration;
+		const end = elementStart + (index + 1) * wordDuration;
+		return {
+			text,
+			start: roundSeconds(start),
+			end: roundSeconds(Math.max(start + 0.01, end)),
+		};
+	});
+}
+
+function areTranscriptWordSnapshotsEqual({
+	left,
+	right,
+}: {
+	left: TranscriptWordSnapshot[];
+	right: TranscriptWordSnapshot[];
+}) {
+	if (left.length !== right.length) return false;
+	return left.every((word, index) => {
+		const candidate = right[index];
+		return (
+			candidate?.text === word.text &&
+			candidate.start === word.start &&
+			candidate.end === word.end
+		);
+	});
 }
 
 function roundSeconds(value: number) {

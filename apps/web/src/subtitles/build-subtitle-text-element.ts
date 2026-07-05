@@ -17,6 +17,7 @@ import type {
 } from "@/text/primitives";
 import {
 	getCaptionGridCell,
+	stripCaptionPunctuation,
 	type CaptionLayoutSettings,
 } from "./caption-layout";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
@@ -365,8 +366,11 @@ export function buildSubtitleTextElement({
 		canvasWidth: canvasSize.width,
 		placement: style.placement,
 	});
+	const displayText = layoutSettings?.hidePunctuation
+		? stripCaptionPunctuation({ text: caption.text })
+		: caption.text;
 
-	let content = caption.text;
+	let content = displayText;
 	let positionX =
 		layoutSettings?.placementMode === "manual"
 			? layoutSettings.manualPositionX
@@ -381,7 +385,7 @@ export function buildSubtitleTextElement({
 		setCanvasLetterSpacing({ ctx, letterSpacingPx: style.letterSpacing });
 		content = wrapSubtitleText({
 			ctx,
-			text: caption.text,
+			text: displayText,
 			maxWidth,
 		});
 		const measurement = measureWrappedTextBlock({
@@ -406,6 +410,7 @@ export function buildSubtitleTextElement({
 	const wordRuns = buildWordRunsFromCaption({
 		caption,
 		content,
+		hidePunctuation: Boolean(layoutSettings?.hidePunctuation),
 	});
 
 	return {
@@ -452,11 +457,13 @@ export function buildSubtitleTextElement({
 function buildWordRunsFromCaption({
 	caption,
 	content,
+	hidePunctuation,
 }: {
 	caption: SubtitleCue;
 	content: string;
+	hidePunctuation: boolean;
 }): TextWordRun[] | undefined {
-	const sourceWords = caption.words?.length
+	const rawSourceWords = caption.words?.length
 		? caption.words
 		: caption.text
 				.trim()
@@ -471,6 +478,14 @@ function buildWordRunsFromCaption({
 						end: caption.startTime + (index + 1) * wordDuration,
 					};
 				});
+	const sourceWords = hidePunctuation
+		? rawSourceWords
+				.map((word) => ({
+					...word,
+					text: stripCaptionPunctuation({ text: word.text }),
+				}))
+				.filter((word) => word.text.length > 0)
+		: rawSourceWords;
 
 	if (!sourceWords.length) {
 		return undefined;

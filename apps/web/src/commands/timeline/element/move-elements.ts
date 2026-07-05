@@ -15,6 +15,10 @@ import type {
 	PlannedTrackCreation,
 } from "@/timeline/group-move";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
+import {
+	syncCaptionSourceWordsFromElements,
+	syncTextLayerWordsIntoCaptionSource,
+} from "@/subtitles/caption-source-sync";
 
 export class MoveElementCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -101,7 +105,7 @@ export class MoveElementCommand extends Command {
 			movedElementsByTargetTrackId.set(move.targetTrackId, nextTargetElements);
 		}
 
-		const updatedTracks = mapSceneTracks({
+		let updatedTracks = mapSceneTracks({
 			tracks: tracksToUpdate,
 			update: (track) => ({
 				...track,
@@ -112,6 +116,22 @@ export class MoveElementCommand extends Command {
 					...(movedElementsByTargetTrackId.get(track.id) ?? []),
 				],
 			}),
+		});
+		updatedTracks = syncCaptionSourceWordsFromElements({
+			tracks: updatedTracks,
+			previousTracks: this.savedState,
+			updates: this.moves.map(({ targetTrackId, elementId }) => ({
+				trackId: targetTrackId,
+				elementId,
+			})),
+			canvasSize: editor.project.getActive().settings.canvasSize,
+		});
+		updatedTracks = syncTextLayerWordsIntoCaptionSource({
+			tracks: updatedTracks,
+			elements: this.moves.map(({ targetTrackId, elementId }) => ({
+				trackId: targetTrackId,
+				elementId,
+			})),
 		});
 
 		editor.timeline.updateTracks(updatedTracks);

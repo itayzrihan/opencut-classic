@@ -8,9 +8,12 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { extractTimelineAudio } from "@/media/mediabunny";
 import { useEditor } from "@/editor/use-editor";
+import { sharedLibraryService } from "@/shared-library/service";
+import type { SharedCaptionPreset } from "@/shared-library/types";
 import { TRANSCRIPTION_DIAGNOSTICS_SCOPE } from "@/transcription/diagnostics";
 import { TRANSCRIPTION_LANGUAGES } from "@/transcription/supported-languages";
 import type {
@@ -22,17 +25,16 @@ import {
 	DEFAULT_CAPTION_LAYOUT,
 	buildCaptionChunksFromSegments,
 	buildCaptionChunksFromWords,
-	buildSubtitleCuesFromWords,
 	getCaptionGridCell,
 	getCaptionPlacementGrid,
 	normalizeCaptionLayoutSettings,
-	splitCaptionCuesByLayer,
 	type CaptionLayoutSettings,
 } from "@/subtitles/caption-layout";
+import { insertCaptionChunksAsTextTrack } from "@/subtitles/insert";
 import {
-	buildCaptionTextTracks,
-	insertCaptionChunksAsTextTrack,
-} from "@/subtitles/insert";
+	findCaptionSourceTrack,
+	rebuildCaptionTracksWithSource,
+} from "@/subtitles/caption-tracks";
 import { parseSubtitleFile } from "@/subtitles/parse";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -57,16 +59,13 @@ import {
 } from "@/components/ui/context-menu";
 import type { DiagnosticSeverity } from "@/diagnostics/types";
 import { TracksSnapshotCommand } from "@/commands";
-import type { SceneTracks, TextElement, TextTrack } from "@/timeline";
 import type { TextCaptionRevealMode, TextWordTransitionIn } from "@/timeline";
-import { buildEmptyTrack } from "@/timeline/placement";
-import { generateUUID } from "@/utils/id";
-import { mediaTimeToSeconds } from "@/wasm";
 import { z } from "zod";
 import {
 	CAPTION_ACCENT_COLORS,
 	CAPTION_WORD_ANIMATIONS,
 } from "@/text/caption-presets";
+import { toast } from "sonner";
 
 const DIAGNOSTIC_BUTTON_VARIANT: Record<
 	DiagnosticSeverity,
@@ -93,15 +92,12 @@ const IDLE_STATE: ProcessingState = {
 };
 
 const CAPTION_LAYER_COUNT = 2;
-const TIMING_EPSILON_SECONDS = 0.002;
 const CAPTION_LAST_SETTINGS_STORAGE_KEY = "opencut.caption.lastSettings";
 const CAPTION_SAVED_PRESETS_STORAGE_KEY = "opencut.caption.savedPresets";
+const TRANSCRIPTION_FETCH_RETRY_COUNT = 1;
+const TRANSCRIPTION_FETCH_RETRY_DELAY_MS = 750;
 
-interface SavedCaptionPreset {
-	id: string;
-	name: string;
-	settings: CaptionLayoutSettings;
-}
+type SavedCaptionPreset = SharedCaptionPreset;
 const CAPTION_REVEAL_MODES: Array<{
 	value: TextCaptionRevealMode;
 	label: string;
@@ -134,171 +130,6 @@ function usesTransitionIn(revealMode: TextCaptionRevealMode): boolean {
 	return revealMode === "spoken-word" || revealMode === "spoken-word-keep";
 }
 
-function hasSameCaptionSource({
-	track,
-	source,
-}: {
-	track: TextTrack;
-	source: NonNullable<TextTrack["captionSource"]>;
-}) {
-	const candidate = track.captionSource;
-	if (!candidate) return false;
-	if (candidate.words.length !== source.words.length) return false;
-	const firstCandidate = candidate.words[0];
-	const firstSource = source.words[0];
-	const lastCandidate = candidate.words[candidate.words.length - 1];
-	const lastSource = source.words[source.words.length - 1];
-	return (
-		firstCandidate?.text === firstSource?.text &&
-		firstCandidate?.start === firstSource?.start &&
-		lastCandidate?.text === lastSource?.text &&
-		lastCandidate?.end === lastSource?.end
-	);
-}
-
-function textElementContent(element: TextElement) {
-	return typeof element.params.content === "string"
-		? element.params.content
-		: "";
-}
-
-function isPristineGeneratedCaption({
-	element,
-	expected,
-}: {
-	element: TextElement;
-	expected: { text: string; startTime: number; duration: number } | undefined;
-}) {
-	if (!expected) return false;
-	return (
-		textElementContent(element) === expected.text &&
-		Math.abs(
-			mediaTimeToSeconds({ time: element.startTime }) - expected.startTime,
-		) <= TIMING_EPSILON_SECONDS &&
-		Math.abs(
-			mediaTimeToSeconds({ time: element.duration }) - expected.duration,
-		) <= TIMING_EPSILON_SECONDS &&
-		mediaTimeToSeconds({ time: element.trimStart }) === 0 &&
-		mediaTimeToSeconds({ time: element.trimEnd }) === 0
-	);
-}
-
-function buildEditedCaptionTracks({
-	sourceTracks,
-}: {
-	sourceTracks: TextTrack[];
-}) {
-	return sourceTracks.flatMap((track) => {
-		const source = track.captionSource;
-		if (!source) return [];
-
-		const previousCaptions = buildSubtitleCuesFromWords({
-			words: source.words,
-			settings: source.settings,
-		});
-		const previousLayers = splitCaptionCuesByLayer({
-			captions: previousCaptions,
-			layerCount: source.layerCount ?? 1,
-		});
-		const expectedLayer = previousLayers[source.layerIndex ?? 0] ?? [];
-		const editedElements = track.elements.filter(
-			(element, index) =>
-				!isPristineGeneratedCaption({
-					element,
-					expected: expectedLayer[index],
-				}),
-		);
-
-		if (editedElements.length === 0) return [];
-
-		return [
-			{
-				...buildEmptyTrack({
-					id: generateUUID(),
-					type: "text",
-					name: `Edited ${track.name}`,
-				}),
-				hidden: track.hidden,
-				elements: editedElements,
-			},
-		];
-	});
-}
-
-function rebuildCaptionTracksWithSettings({
-	tracks,
-	settings,
-	canvasSize,
-}: {
-	tracks: SceneTracks;
-	settings: CaptionLayoutSettings;
-	canvasSize: { width: number; height: number };
-}) {
-	const firstSourceTrack = tracks.overlay.find(
-		(track): track is TextTrack =>
-			track.type === "text" && !!track.captionSource,
-	);
-	const source = firstSourceTrack?.captionSource;
-	if (!source) return null;
-
-	const sourceTracks = tracks.overlay.filter(
-		(track): track is TextTrack =>
-			track.type === "text" && hasSameCaptionSource({ track, source }),
-	);
-	const sourceTrackIds = new Set(sourceTracks.map((track) => track.id));
-	const editedTracks = buildEditedCaptionTracks({ sourceTracks });
-	const captions = buildSubtitleCuesFromWords({
-		words: source.words,
-		settings,
-	});
-	const regeneratedTracks = buildCaptionTextTracks({
-		captions,
-		captionSource: {
-			...source,
-			settings,
-		},
-		layerCount: CAPTION_LAYER_COUNT,
-		canvasSize,
-	});
-	const replacementTracks = regeneratedTracks.map((track, index) => {
-		const previousTrack = sourceTracks[index];
-		if (!previousTrack) return track;
-		return {
-			...track,
-			id: previousTrack.id,
-			name: previousTrack.name,
-			hidden: previousTrack.hidden,
-			captionSource: track.captionSource
-				? {
-						...track.captionSource,
-						layerIndex: previousTrack.captionSource?.layerIndex ?? index,
-						layerCount:
-							previousTrack.captionSource?.layerCount ??
-							track.captionSource.layerCount,
-					}
-				: undefined,
-		};
-	});
-	let replacementIndex = 0;
-	let insertedExtraTracks = false;
-
-	return {
-		...tracks,
-		overlay: tracks.overlay.flatMap((track) => {
-			if (!sourceTrackIds.has(track.id)) {
-				return [track];
-			}
-			const replacement = replacementTracks[replacementIndex++];
-			const extras =
-				!insertedExtraTracks && replacementIndex === sourceTracks.length
-					? [...replacementTracks.slice(sourceTracks.length), ...editedTracks]
-					: [];
-			insertedExtraTracks = insertedExtraTracks || extras.length > 0;
-			return replacement ? [replacement, ...extras] : extras;
-		}),
-	};
-}
-
 const transcriptionResultSchema = z.object({
 	text: z.string(),
 	segments: z.array(
@@ -319,6 +150,57 @@ const transcriptionResultSchema = z.object({
 		.optional(),
 	language: z.string(),
 });
+
+function isFetchNetworkError({ error }: { error: unknown }): boolean {
+	return (
+		error instanceof TypeError &&
+		/(failed to fetch|networkerror|load failed|fetch)/i.test(error.message)
+	);
+}
+
+function sleep({ delayMs }: { delayMs: number }): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, delayMs);
+	});
+}
+
+async function postWhisperTranscription({
+	formData,
+}: {
+	formData: FormData;
+}): Promise<Response> {
+	let lastError: unknown = null;
+
+	for (let attempt = 0; attempt <= TRANSCRIPTION_FETCH_RETRY_COUNT; attempt += 1) {
+		try {
+			return await fetch("/api/transcription/whisper-cpp", {
+				method: "POST",
+				body: formData,
+			});
+		} catch (error) {
+			lastError = error;
+			if (
+				!isFetchNetworkError({ error }) ||
+				attempt >= TRANSCRIPTION_FETCH_RETRY_COUNT
+			) {
+				break;
+			}
+			await sleep({ delayMs: TRANSCRIPTION_FETCH_RETRY_DELAY_MS });
+		}
+	}
+
+	throw new Error(
+		"Could not reach the local transcription service. The dev server may have reloaded while transcription was running; try again.",
+		{ cause: lastError },
+	);
+}
+
+function getTranscriptionErrorMessage({ error }: { error: unknown }): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return "An unexpected error occurred";
+}
 
 /* eslint-disable opencut/prefer-object-params -- React reducers must accept (state, action). */
 function processingReducer(
@@ -364,8 +246,9 @@ function saveLastCaptionSettings({
 	);
 }
 
-function loadSavedCaptionPresets(): SavedCaptionPreset[] {
+function loadLegacySavedCaptionPresets(): SavedCaptionPreset[] {
 	if (typeof window === "undefined") return [];
+	const timestamp = new Date().toISOString();
 	try {
 		const raw = window.localStorage.getItem(CAPTION_SAVED_PRESETS_STORAGE_KEY);
 		const parsed = raw ? JSON.parse(raw) : [];
@@ -382,22 +265,41 @@ function loadSavedCaptionPresets(): SavedCaptionPreset[] {
 				id: item.id,
 				name: item.name,
 				settings: normalizeCaptionLayoutSettings({ settings: item.settings }),
+				createdAt: typeof item.createdAt === "string" ? item.createdAt : timestamp,
+				updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : timestamp,
 			}));
 	} catch {
 		return [];
 	}
 }
 
-function saveSavedCaptionPresets({
-	presets,
-}: {
-	presets: SavedCaptionPreset[];
-}) {
+function clearLegacySavedCaptionPresets() {
 	if (typeof window === "undefined") return;
-	window.localStorage.setItem(
-		CAPTION_SAVED_PRESETS_STORAGE_KEY,
-		JSON.stringify(presets),
-	);
+	window.localStorage.removeItem(CAPTION_SAVED_PRESETS_STORAGE_KEY);
+}
+
+function mergeCaptionPresets({
+	repositoryPresets,
+	localPresets,
+}: {
+	repositoryPresets: SavedCaptionPreset[];
+	localPresets: SavedCaptionPreset[];
+}): SavedCaptionPreset[] {
+	const repositoryIds = new Set(repositoryPresets.map((preset) => preset.id));
+	return [
+		...repositoryPresets,
+		...localPresets.filter((preset) => !repositoryIds.has(preset.id)),
+	].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function getErrorMessage({
+	error,
+	fallback,
+}: {
+	error: unknown;
+	fallback: string;
+}): string {
+	return error instanceof Error ? error.message : fallback;
 }
 
 export function Captions() {
@@ -406,9 +308,7 @@ export function Captions() {
 	const [captionSettings, setCaptionSettings] = useState<CaptionLayoutSettings>(
 		() => loadLastCaptionSettings(),
 	);
-	const [savedPresets, setSavedPresets] = useState<SavedCaptionPreset[]>(() =>
-		loadSavedCaptionPresets(),
-	);
+	const [savedPresets, setSavedPresets] = useState<SavedCaptionPreset[]>([]);
 	const [processing, dispatch] = useReducer(processingReducer, IDLE_STATE);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -439,6 +339,61 @@ export function Captions() {
 	useEffect(() => {
 		saveLastCaptionSettings({ settings: captionSettings });
 	}, [captionSettings]);
+
+	useEffect(() => {
+		let isCancelled = false;
+
+		const loadSharedPresets = async () => {
+			const legacyPresets = loadLegacySavedCaptionPresets();
+
+			try {
+				let repositoryPresets = await sharedLibraryService.listCaptionPresets();
+				const repositoryIds = new Set(
+					repositoryPresets.map((preset) => preset.id),
+				);
+				const presetsToMigrate = legacyPresets.filter(
+					(preset) => !repositoryIds.has(preset.id),
+				);
+
+				if (presetsToMigrate.length > 0) {
+					const migratedPresets: SavedCaptionPreset[] = [];
+					for (const preset of presetsToMigrate) {
+						migratedPresets.push(
+							await sharedLibraryService.upsertCaptionPreset({ preset }),
+						);
+					}
+					repositoryPresets = mergeCaptionPresets({
+						repositoryPresets: migratedPresets,
+						localPresets: repositoryPresets,
+					});
+					clearLegacySavedCaptionPresets();
+				}
+				if (legacyPresets.length > 0 && presetsToMigrate.length === 0) {
+					clearLegacySavedCaptionPresets();
+				}
+
+				if (!isCancelled) {
+					setSavedPresets(
+						mergeCaptionPresets({
+							repositoryPresets,
+							localPresets: legacyPresets,
+						}),
+					);
+				}
+			} catch (error) {
+				console.error("Failed to load shared caption presets:", error);
+				if (!isCancelled) {
+					setSavedPresets(legacyPresets);
+				}
+			}
+		};
+
+		void loadSharedPresets();
+
+		return () => {
+			isCancelled = true;
+		};
+	}, []);
 
 	const insertCaptions = ({
 		captions,
@@ -522,20 +477,31 @@ export function Captions() {
 		});
 	};
 
-	const saveCurrentPreset = () => {
+	const saveCurrentPreset = async () => {
 		const name = window.prompt("Preset name");
 		const trimmedName = name?.trim();
 		if (!trimmedName) return;
-		const nextPreset: SavedCaptionPreset = {
-			id: generateUUID(),
-			name: trimmedName,
-			settings: normalizeCaptionLayoutSettings({ settings: captionSettings }),
-		};
-		setSavedPresets((current) => {
-			const next = [...current, nextPreset];
-			saveSavedCaptionPresets({ presets: next });
-			return next;
-		});
+		try {
+			const nextPreset = await sharedLibraryService.saveCaptionPreset({
+				name: trimmedName,
+				settings: normalizeCaptionLayoutSettings({ settings: captionSettings }),
+			});
+			setSavedPresets((current) =>
+				mergeCaptionPresets({
+					repositoryPresets: [nextPreset],
+					localPresets: current,
+				}),
+			);
+			clearLegacySavedCaptionPresets();
+			toast.success("Saved caption preset to the shared library");
+		} catch (error) {
+			const message = getErrorMessage({
+				error,
+				fallback: "Failed to save caption preset",
+			});
+			toast.error(message);
+			console.error("Failed to save caption preset:", error);
+		}
 	};
 
 	const loadPreset = ({ presetId }: { presetId: string }) => {
@@ -546,31 +512,52 @@ export function Captions() {
 		);
 	};
 
-	const renamePreset = ({ presetId }: { presetId: string }) => {
+	const renamePreset = async ({ presetId }: { presetId: string }) => {
 		const preset = savedPresets.find((item) => item.id === presetId);
 		if (!preset) return;
 		const nextName = window.prompt("Preset name", preset.name);
 		const trimmedName = nextName?.trim();
 		if (!trimmedName) return;
-		setSavedPresets((current) => {
-			const next = current.map((item) =>
-				item.id === presetId ? { ...item, name: trimmedName } : item,
+		try {
+			const updatedPreset = await sharedLibraryService.renameCaptionPreset({
+				presetId,
+				name: trimmedName,
+			});
+			if (!updatedPreset) return;
+			setSavedPresets((current) =>
+				current.map((item) =>
+					item.id === presetId ? { ...item, ...updatedPreset } : item,
+				),
 			);
-			saveSavedCaptionPresets({ presets: next });
-			return next;
-		});
+			clearLegacySavedCaptionPresets();
+			toast.success("Renamed caption preset");
+		} catch (error) {
+			const message = getErrorMessage({
+				error,
+				fallback: "Failed to rename caption preset",
+			});
+			toast.error(message);
+			console.error("Failed to rename caption preset:", error);
+		}
 	};
 
 	const applyCaptionSettings = () => {
 		const activeScene = editor.scenes.getActiveSceneOrNull();
 		if (!activeScene) return;
+		const source = findCaptionSourceTrack({
+			tracks: activeScene.tracks,
+		})?.captionSource;
+		if (!source) return;
 		const settings = normalizeCaptionLayoutSettings({
 			settings: captionSettings,
 		});
-		const after = rebuildCaptionTracksWithSettings({
+		const after = rebuildCaptionTracksWithSource({
 			tracks: activeScene.tracks,
+			words: source.words,
 			settings,
 			canvasSize: editor.project.getActive().settings.canvasSize,
+			layerCount: source.layerCount,
+			preserveEditedElements: false,
 		});
 		if (!after) return;
 		editor.command.execute({
@@ -599,10 +586,7 @@ export function Captions() {
 				selectedLanguage === "auto" ? "he" : selectedLanguage,
 			);
 
-			const response = await fetch("/api/transcription/whisper-cpp", {
-				method: "POST",
-				body: formData,
-			});
+			const response = await postWhisperTranscription({ formData });
 			if (!response.ok) {
 				const error = await response.json().catch(() => null);
 				throw new Error(
@@ -638,13 +622,11 @@ export function Captions() {
 
 			dispatch({ type: "succeed", warnings: [] });
 		} catch (error) {
-			console.error("Transcription failed:", error);
+			const errorMessage = getTranscriptionErrorMessage({ error });
+			console.warn("Transcription failed:", errorMessage);
 			dispatch({
 				type: "fail",
-				error:
-					error instanceof Error
-						? error.message
-						: "An unexpected error occurred",
+				error: errorMessage,
 			});
 		}
 	};
@@ -859,6 +841,17 @@ export function Captions() {
 								}
 							/>
 						</SectionField>
+						<SectionField label="Hide punctuation">
+							<Switch
+								checked={captionSettings.hidePunctuation}
+								onCheckedChange={(checked) =>
+									updateCaptionSettings({
+										patch: { hidePunctuation: checked },
+									})
+								}
+								aria-label="Hide punctuation"
+							/>
+						</SectionField>
 						<SectionField label="Placement">
 							<Select
 								value={captionSettings.placementMode}
@@ -1021,7 +1014,9 @@ export function Captions() {
 											</ContextMenuTrigger>
 											<ContextMenuContent>
 												<ContextMenuItem
-													onSelect={() => renamePreset({ presetId: preset.id })}
+													onSelect={() =>
+														void renamePreset({ presetId: preset.id })
+													}
 												>
 													Rename
 												</ContextMenuItem>
@@ -1101,7 +1096,7 @@ export function Captions() {
 						type="button"
 						variant="outline"
 						className="w-full"
-						onClick={saveCurrentPreset}
+						onClick={() => void saveCurrentPreset()}
 						disabled={isProcessing}
 					>
 						Save preset

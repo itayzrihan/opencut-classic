@@ -1,13 +1,17 @@
 import { stickersRegistry } from "../registry";
 import type { StickerProvider } from "@/stickers/types";
+import { builtinStickersProvider } from "./builtins";
 import { flagsProvider } from "./flags";
 import { logosProvider } from "./logos";
 import { shapesProvider } from "./shapes";
+import { userStickersProvider } from "./user-stickers";
 
 const defaultProviders: StickerProvider[] = [
+	builtinStickersProvider,
 	logosProvider,
 	flagsProvider,
 	shapesProvider,
+	userStickersProvider,
 ];
 
 export function registerDefaultStickerProviders({

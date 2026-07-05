@@ -3,6 +3,7 @@ import {
 	getCaptionGridCell,
 	getCaptionPlacementGrid,
 	normalizeCaptionLayoutSettings,
+	stripCaptionPunctuation,
 } from "@/subtitles/caption-layout";
 
 describe("caption placement layout", () => {
@@ -57,5 +58,25 @@ describe("caption placement layout", () => {
 		expect(settings.placementGridY).toBe(0);
 		expect(settings.manualPositionX).toBe(123);
 		expect(settings.manualPositionY).toBe(-456);
+	});
+
+	test("normalizes punctuation hiding", () => {
+		expect(
+			normalizeCaptionLayoutSettings({
+				settings: { hidePunctuation: true },
+			}).hidePunctuation,
+		).toBe(true);
+		expect(
+			normalizeCaptionLayoutSettings({
+				settings: undefined,
+			}).hidePunctuation,
+		).toBe(false);
+	});
+
+	test("strips punctuation without collapsing caption lines", () => {
+		expect(stripCaptionPunctuation({ text: "Hello, world." })).toBe(
+			"Hello world",
+		);
+		expect(stripCaptionPunctuation({ text: "One!\nTwo?" })).toBe("One\nTwo");
 	});
 });

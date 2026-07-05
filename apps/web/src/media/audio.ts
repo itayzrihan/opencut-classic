@@ -25,6 +25,7 @@ import {
 	computeRmsBuckets,
 	type SampleBucket,
 } from "@/media/waveform-summary";
+import { sharedLibraryService } from "@/shared-library";
 
 const MAX_AUDIO_CHANNELS = 2;
 const EXPORT_SAMPLE_RATE = 44100;
@@ -232,12 +233,9 @@ async function resolveAudioBufferForElement({
 
 		if (element.buffer) return element.buffer;
 
-		const response = await fetch(element.sourceUrl);
-		if (!response.ok) {
-			throw new Error(`Library audio fetch failed: ${response.status}`);
-		}
-
-		const arrayBuffer = await response.arrayBuffer();
+		const file = await loadLibraryAudioFile({ element });
+		if (!file) return null;
+		const arrayBuffer = await file.arrayBuffer();
 		return await audioContext.decodeAudioData(arrayBuffer.slice(0));
 	} catch (error) {
 		console.warn("Failed to decode audio:", error);
@@ -349,6 +347,40 @@ interface AudioMixSource {
 	retime?: RetimeConfig;
 }
 
+async function loadLibraryAudioFile({
+	element,
+}: {
+	element: LibraryAudioElement;
+}): Promise<File | null> {
+	if (element.libraryAssetId) {
+		return await sharedLibraryService.getAudioAssetFile({
+			id: element.libraryAssetId,
+		});
+	}
+
+	if (!element.sourceUrl) {
+		return null;
+	}
+
+	const response = await fetch(element.sourceUrl);
+	if (!response.ok) {
+		throw new Error(`Library audio fetch failed: ${response.status}`);
+	}
+
+	const blob = await response.blob();
+	return new File([blob], `${element.name}.mp3`, {
+		type: blob.type || "audio/mpeg",
+	});
+}
+
+function getLibraryAudioSourceKey({
+	element,
+}: {
+	element: LibraryAudioElement;
+}): string {
+	return element.libraryAssetId ?? element.sourceUrl ?? element.id;
+}
+
 export interface AudioClipSource {
 	timelineElement: AudioCapableElement;
 	id: string;
@@ -371,15 +403,8 @@ async function fetchLibraryAudioSource({
 	volume: number;
 }): Promise<AudioMixSource | null> {
 	try {
-		const response = await fetch(element.sourceUrl);
-		if (!response.ok) {
-			throw new Error(`Library audio fetch failed: ${response.status}`);
-		}
-
-		const blob = await response.blob();
-		const file = new File([blob], `${element.name}.mp3`, {
-			type: "audio/mpeg",
-		});
+		const file = await loadLibraryAudioFile({ element });
+		if (!file) return null;
 
 		return {
 			timelineElement: element,
@@ -407,25 +432,18 @@ async function fetchLibraryAudioClip({
 	volume: number;
 }): Promise<AudioClipSource | null> {
 	try {
-		const response = await fetch(element.sourceUrl);
-		if (!response.ok) {
-			throw new Error(`Library audio fetch failed: ${response.status}`);
-		}
-
-		const blob = await response.blob();
-		const file = new File([blob], `${element.name}.mp3`, {
-			type: "audio/mpeg",
-		});
+		const file = await loadLibraryAudioFile({ element });
+		if (!file) return null;
 
 		return {
 			timelineElement: element,
 			id: element.id,
-			sourceKey: element.id,
+			sourceKey: getLibraryAudioSourceKey({ element }),
 			file,
-			startTime: element.startTime,
-			duration: element.duration,
-			trimStart: element.trimStart,
-			trimEnd: element.trimEnd,
+			startTime: element.startTime / TICKS_PER_SECOND,
+			duration: element.duration / TICKS_PER_SECOND,
+			trimStart: element.trimStart / TICKS_PER_SECOND,
+			trimEnd: element.trimEnd / TICKS_PER_SECOND,
 			volume,
 			muted,
 			retime: element.retime,

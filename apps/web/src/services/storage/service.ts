@@ -1,6 +1,7 @@
 import type { TProject, TProjectMetadata } from "@/project/types";
 import { getProjectDurationFromScenes } from "@/timeline/scenes";
 import type { MediaAsset } from "@/media/types";
+import type { ProjectFontAsset } from "@/fonts/types";
 import { IndexedDBAdapter } from "./indexeddb-adapter";
 import { OPFSAdapter } from "./opfs-adapter";
 import {
@@ -13,6 +14,7 @@ import {
 import type {
 	SerializedCommandHistory,
 	MediaAssetData,
+	ProjectFontData,
 	StorageConfig,
 	SerializedProject,
 	SerializedScene,
@@ -63,6 +65,7 @@ class StorageService {
 		this.config = {
 			projectsDb: "video-editor-projects",
 			mediaDb: "video-editor-media",
+			fontsDb: "video-editor-fonts",
 			commandHistoryDb: "video-editor-command-history",
 			savedSoundsDb: "video-editor-saved-sounds",
 			version: 1,
@@ -111,6 +114,18 @@ class StorageService {
 		const mediaAssetsAdapter = new OPFSAdapter(`media-files-${projectId}`);
 
 		return { mediaMetadataAdapter, mediaAssetsAdapter };
+	}
+
+	private getProjectFontAdapters({ projectId }: { projectId: string }) {
+		const fontMetadataAdapter = new IndexedDBAdapter<ProjectFontData>({
+			dbName: `${this.config.fontsDb}-${projectId}`,
+			storeName: "font-metadata",
+			version: this.config.version,
+		});
+
+		const fontFilesAdapter = new OPFSAdapter(`font-files-${projectId}`);
+
+		return { fontMetadataAdapter, fontFilesAdapter };
 	}
 
 	async canStoreFile({
@@ -168,6 +183,7 @@ class StorageService {
 			scenes: serializedScenes,
 			currentSceneId: project.currentSceneId,
 			settings: project.settings,
+			customFonts: project.customFonts,
 			version: project.version,
 			timelineViewState: project.timelineViewState,
 		};
@@ -228,6 +244,7 @@ class StorageService {
 			scenes,
 			currentSceneId: serializedProject.currentSceneId || "",
 			settings: serializedProject.settings,
+			customFonts: serializedProject.customFonts,
 			version: serializedProject.version,
 			timelineViewState: serializedProject.timelineViewState,
 		};
@@ -458,6 +475,124 @@ class StorageService {
 			mediaAssetsAdapter.remove(id),
 			mediaMetadataAdapter.remove(id),
 		]);
+	}
+
+	async saveProjectFont({
+		projectId,
+		font,
+	}: {
+		projectId: string;
+		font: ProjectFontAsset;
+	}): Promise<void> {
+		const { fontMetadataAdapter, fontFilesAdapter } =
+			this.getProjectFontAdapters({ projectId });
+
+		const metadata: ProjectFontData = {
+			id: font.id,
+			family: font.family,
+			fileName: font.fileName,
+			mimeType: font.mimeType,
+			size: font.file.size,
+			lastModified: font.file.lastModified,
+			createdAt: font.createdAt,
+			sourceUrl: font.sourceUrl,
+			repositoryPath: font.repositoryPath,
+		};
+
+		try {
+			await fontFilesAdapter.set({
+				key: font.id,
+				value: font.file,
+			});
+			await fontMetadataAdapter.set({
+				key: font.id,
+				value: metadata,
+			});
+		} catch (error) {
+			try {
+				await fontFilesAdapter.remove(font.id);
+			} catch {
+				// Preserve the original storage error.
+			}
+
+			if (this.isQuotaExceededError({ error })) {
+				throw new StorageQuotaExceededError({
+					requiredBytes: font.file.size,
+				});
+			}
+
+			throw error;
+		}
+	}
+
+	async loadProjectFont({
+		projectId,
+		id,
+	}: {
+		projectId: string;
+		id: string;
+	}): Promise<ProjectFontAsset | null> {
+		const { fontMetadataAdapter, fontFilesAdapter } =
+			this.getProjectFontAdapters({ projectId });
+
+		const [file, metadata] = await Promise.all([
+			fontFilesAdapter.get(id),
+			fontMetadataAdapter.get(id),
+		]);
+
+		if (!file || !metadata) return null;
+
+		return {
+			...metadata,
+			file,
+			url: URL.createObjectURL(file),
+		};
+	}
+
+	async loadAllProjectFonts({
+		projectId,
+	}: {
+		projectId: string;
+	}): Promise<ProjectFontAsset[]> {
+		const { fontMetadataAdapter } = this.getProjectFontAdapters({ projectId });
+		const fontIds = await fontMetadataAdapter.list();
+		const fonts: ProjectFontAsset[] = [];
+
+		for (const id of fontIds) {
+			const font = await this.loadProjectFont({ projectId, id });
+			if (font) {
+				fonts.push(font);
+			}
+		}
+
+		return fonts;
+	}
+
+	async deleteProjectFont({
+		projectId,
+		id,
+	}: {
+		projectId: string;
+		id: string;
+	}): Promise<void> {
+		const { fontMetadataAdapter, fontFilesAdapter } =
+			this.getProjectFontAdapters({ projectId });
+
+		await Promise.all([
+			fontFilesAdapter.remove(id),
+			fontMetadataAdapter.remove(id),
+		]);
+	}
+
+	async deleteProjectFonts({
+		projectId,
+	}: {
+		projectId: string;
+	}): Promise<void> {
+		const { fontMetadataAdapter, fontFilesAdapter } =
+			this.getProjectFontAdapters({ projectId });
+
+		await Promise.all([fontMetadataAdapter.clear(), fontFilesAdapter.clear()]);
 	}
 
 	async deleteProjectMedia({

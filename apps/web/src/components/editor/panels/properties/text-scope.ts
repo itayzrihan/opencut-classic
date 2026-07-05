@@ -14,7 +14,8 @@ import { mediaTime } from "@/wasm";
 export type TextOverrideScope =
 	| { type: "layer" }
 	| { type: "row"; lineIndex: number }
-	| { type: "word"; wordId: string };
+	| { type: "word"; wordId: string }
+	| { type: "words"; wordIds: string[] };
 
 export type TextScopedSettings = {
 	revealMode?: TextCaptionRevealMode;
@@ -154,6 +155,15 @@ export function buildScopedTextPatch({
 		};
 	}
 
+	if (scope.type === "words") {
+		const wordIds = new Set(scope.wordIds);
+		return {
+			wordRuns: wordRuns.map((word) =>
+				wordIds.has(word.id) ? mergeWordOverride({ word, patch }) : word,
+			),
+		};
+	}
+
 	return {
 		...(patch.revealMode !== undefined
 			? { captionRevealMode: patch.revealMode }
@@ -207,6 +217,23 @@ export function clearScopedTextOverride({
 		};
 	}
 
+	if (scope.type === "words") {
+		const wordIds = new Set(scope.wordIds);
+		return {
+			wordRuns: wordRuns.map((word) =>
+				wordIds.has(word.id)
+					? {
+							id: word.id,
+							text: word.text,
+							lineIndex: word.lineIndex,
+							startTime: word.startTime,
+							endTime: word.endTime,
+						}
+					: word,
+			),
+		};
+	}
+
 	return {};
 }
 
@@ -221,6 +248,8 @@ export function getScopedSettings({
 	const scopedWord =
 		scope.type === "word"
 			? wordRuns.find((word) => word.id === scope.wordId)
+			: scope.type === "words"
+				? wordRuns.find((word) => scope.wordIds.includes(word.id))
 			: undefined;
 	const scopedRow =
 		scope.type === "row"
@@ -253,12 +282,15 @@ export function getScopedSettings({
 			scopedRow?.wordDirection ??
 			element.captionWordDirection,
 		style:
-			scope.type === "word"
+			scope.type === "word" || scope.type === "words"
 				? scopedWord?.style
 				: scope.type === "row"
 					? scopedRow?.style
 					: undefined,
-		inheritedStyle: scope.type === "word" ? scopedRow?.style : undefined,
+		inheritedStyle:
+			scope.type === "word" || scope.type === "words"
+				? scopedRow?.style
+				: undefined,
 	};
 }
 
@@ -283,6 +315,21 @@ export function hasScopedTextOverride({
 			word?.wordAnimationId ||
 			word?.accentColor ||
 			word?.wordDirection
+		);
+	}
+	if (scope.type === "words") {
+		const wordIds = new Set(scope.wordIds);
+		return getWordRuns({ element }).some(
+			(word) =>
+				wordIds.has(word.id) &&
+				!!(
+					word.style ||
+					word.revealMode ||
+					word.transitionIn ||
+					word.wordAnimationId ||
+					word.accentColor ||
+					word.wordDirection
+				),
 		);
 	}
 	return false;

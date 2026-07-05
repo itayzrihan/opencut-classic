@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import {
+	type CSSProperties,
+	useCallback,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { List, type RowComponentProps } from "react-window";
 import {
 	Popover,
@@ -10,11 +16,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { loadFullFont } from "@/fonts/google-fonts";
+import { CUSTOM_FONT_ACCEPT, loadProjectFont } from "@/fonts/custom-fonts";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
 import type { FontAtlas, FontAtlasEntry } from "@/fonts/types";
 import { useFontAtlas } from "@/fonts/use-font-atlas";
 import { cn } from "@/utils/ui";
-import { ChevronDown, Search } from "lucide-react";
+import { useEditor } from "@/editor/use-editor";
+import { ChevronDown, Loader2, Search, Upload } from "lucide-react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { TextIcon } from "@hugeicons/core-free-icons";
 
@@ -46,8 +54,36 @@ export function FontPicker({
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const [activeTab, setActiveTab] = useState<FontTab>("all");
+	const [isImporting, setIsImporting] = useState(false);
 	const searchInputRef = useRef<HTMLInputElement>(null);
-	const { atlas, status, fontNames, retry: handleRetry } = useFontAtlas({ open });
+	const fontInputRef = useRef<HTMLInputElement>(null);
+	const editor = useEditor();
+	const customFonts = useEditor(
+		(e) => e.project.getActiveOrNull()?.customFonts ?? [],
+	);
+	const {
+		atlas,
+		status,
+		fontNames: atlasFontNames,
+		retry: handleRetry,
+	} = useFontAtlas({ open });
+	const customFontNames = useMemo(
+		() => customFonts.map((font) => font.family).sort(),
+		[customFonts],
+	);
+	const customFontByFamily = useMemo(
+		() => new Map(customFonts.map((font) => [font.family, font])),
+		[customFonts],
+	);
+	const customFontNameSet = useMemo(
+		() => new Set(customFontNames),
+		[customFontNames],
+	);
+	const fontNames = useMemo(() => {
+		if (activeTab === "my-fonts") return customFontNames;
+		if (activeTab === "favorites") return [];
+		return Array.from(new Set([...customFontNames, ...atlasFontNames])).sort();
+	}, [activeTab, atlasFontNames, customFontNames]);
 
 	const filteredFonts = useMemo(() => {
 		if (!search) return fontNames;
@@ -60,9 +96,26 @@ export function FontPicker({
 		filteredFonts.length * ROW_HEIGHT,
 	);
 
+	const resetPicker = useCallback(() => {
+		setSearch("");
+		setActiveTab("all");
+	}, []);
+
+	const closePicker = useCallback(() => {
+		setOpen(false);
+		resetPicker();
+	}, [resetPicker]);
+
 	const handleSelect = useCallback(
 		async ({ family }: { family: string }) => {
-			if (!SYSTEM_FONTS.has(family)) {
+			const customFont = customFontByFamily.get(family);
+			if (customFont) {
+				try {
+					await loadProjectFont({ font: customFont });
+				} catch {
+					// ignore load failure, font will fall back to system default
+				}
+			} else if (!SYSTEM_FONTS.has(family)) {
 				try {
 					await loadFullFont({ family });
 				} catch {
@@ -70,23 +123,48 @@ export function FontPicker({
 				}
 			}
 			onValueChange?.(family);
-			setOpen(false);
+			closePicker();
 		},
-		[onValueChange],
+		[closePicker, customFontByFamily, onValueChange],
 	);
 
-	useEffect(() => {
-		if (!open) {
-			setSearch("");
-			setActiveTab("all");
-		}
-	}, [open]);
+	const handleImportFonts = useCallback(
+		async ({ files }: { files: File[] }) => {
+			if (files.length === 0) return;
+
+			setIsImporting(true);
+			try {
+				const importedFonts = await editor.project.importCustomFonts({ files });
+				const firstImportedFont = importedFonts[0];
+				if (firstImportedFont) {
+					onValueChange?.(firstImportedFont.family);
+					closePicker();
+				}
+			} finally {
+				setIsImporting(false);
+				if (fontInputRef.current) {
+					fontInputRef.current.value = "";
+				}
+			}
+		},
+		[closePicker, editor, onValueChange],
+	);
+
+	const handleOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			setOpen(nextOpen);
+			if (!nextOpen) {
+				resetPicker();
+			}
+		},
+		[resetPicker],
+	);
 
 	const activeTabLabel =
 		FONT_TABS.find((t) => t.key === activeTab)?.label.toLowerCase() ?? "";
 
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
+		<Popover open={open} onOpenChange={handleOpenChange}>
 			<PopoverTrigger
 				className={cn(
 					"border-border bg-accent flex h-7 w-full cursor-pointer items-center justify-between gap-1 rounded-md border px-2.5 text-sm whitespace-nowrap focus-visible:border-primary focus-visible:ring-0 focus:outline-hidden",
@@ -144,43 +222,85 @@ export function FontPicker({
 						</button>
 					))}
 				</div>
-				{status === "loading" && (
+				{activeTab === "my-fonts" && (
+					<div className="border-b px-3 py-2">
+						<input
+							ref={fontInputRef}
+							type="file"
+							accept={CUSTOM_FONT_ACCEPT}
+							multiple
+							className="hidden"
+							onChange={(event) =>
+								void handleImportFonts({
+									files: Array.from(event.currentTarget.files ?? []),
+								})
+							}
+						/>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-7 w-full"
+							disabled={isImporting}
+							onClick={() => fontInputRef.current?.click()}
+						>
+							{isImporting ? (
+								<Loader2 className="size-3.5 animate-spin" />
+							) : (
+								<Upload className="size-3.5" />
+							)}
+							Import fonts
+						</Button>
+					</div>
+				)}
+				{status === "loading" && activeTab === "all" && (
 					<div className="py-8 text-center text-sm text-muted-foreground">
 						Loading fonts...
 					</div>
 				)}
-				{status === "error" && (
-					<div className="flex flex-col items-center gap-3 py-8 px-4">
-						<p className="text-sm text-muted-foreground text-center">
-							Failed to load font previews.
-						</p>
-						<Button variant="outline" size="sm" onClick={handleRetry}>
-							Retry
-						</Button>
-					</div>
-				)}
-				{status === "idle" &&
+				{status === "error" &&
+					activeTab === "all" &&
+					filteredFonts.length === 0 && (
+						<div className="flex flex-col items-center gap-3 py-8 px-4">
+							<p className="text-sm text-muted-foreground text-center">
+								Failed to load font previews.
+							</p>
+							<Button variant="outline" size="sm" onClick={handleRetry}>
+								Retry
+							</Button>
+						</div>
+					)}
+				{(status === "idle" || activeTab !== "all") &&
 					fontNames.length > 0 &&
 					filteredFonts.length === 0 && (
 						<div className="py-6 text-center text-sm text-muted-foreground">
 							No fonts found.
 						</div>
 					)}
-				{status === "idle" && atlas && filteredFonts.length > 0 && (
-					<List
-						rowCount={filteredFonts.length}
-						rowHeight={ROW_HEIGHT}
-						overscanCount={OVERSCAN}
-						rowComponent={FontRow}
-						rowProps={{
-							atlas,
-							filteredFonts,
-							selectedFont: defaultValue,
-							onFontSelect: handleSelect,
-						}}
-						style={{ height: listHeight, width: LIST_WIDTH }}
-					/>
+				{activeTab === "my-fonts" && fontNames.length === 0 && (
+					<div className="py-6 text-center text-sm text-muted-foreground">
+						No fonts imported.
+					</div>
 				)}
+				{(status === "idle" ||
+					activeTab !== "all" ||
+					filteredFonts.length > 0) &&
+					filteredFonts.length > 0 && (
+						<List
+							rowCount={filteredFonts.length}
+							rowHeight={ROW_HEIGHT}
+							overscanCount={OVERSCAN}
+							rowComponent={FontRow}
+							rowProps={{
+								atlas,
+								customFontNameSet,
+								filteredFonts,
+								selectedFont: defaultValue,
+								onFontSelect: handleSelect,
+							}}
+							style={{ height: listHeight, width: LIST_WIDTH }}
+						/>
+					)}
 			</PopoverContent>
 		</Popover>
 	);
@@ -208,7 +328,8 @@ function FontSpritePreview({ entry }: { entry: FontAtlasEntry }) {
 }
 
 type FontRowProps = {
-	atlas: FontAtlas;
+	atlas: FontAtlas | null;
+	customFontNameSet: Set<string>;
 	filteredFonts: string[];
 	selectedFont: string | undefined;
 	onFontSelect: (params: { family: string }) => void;
@@ -218,14 +339,16 @@ function FontRow({
 	index,
 	style,
 	atlas,
+	customFontNameSet,
 	filteredFonts,
 	selectedFont,
 	onFontSelect,
 }: RowComponentProps<FontRowProps>) {
 	const fontName = filteredFonts[index];
-	const entry = atlas.fonts[fontName];
+	const entry = atlas?.fonts[fontName];
 	const isSelected = fontName === selectedFont;
 	const isSystemFont = SYSTEM_FONTS.has(fontName);
+	const isCustomFont = customFontNameSet.has(fontName);
 
 	return (
 		<button
@@ -245,8 +368,11 @@ function FontRow({
 			aria-label={fontName}
 		>
 			<div className="min-w-0 overflow-hidden">
-				{isSystemFont ? (
-					<span className="text-xl text-foreground/85" style={{ fontFamily: fontName }}>
+				{isSystemFont || isCustomFont || !entry ? (
+					<span
+						className="text-xl text-foreground/85"
+						style={{ fontFamily: fontName }}
+					>
 						{fontName}
 					</span>
 				) : (

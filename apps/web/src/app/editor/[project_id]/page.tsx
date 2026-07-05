@@ -29,6 +29,10 @@ import {
 	mergePreviewOverlaySources,
 } from "@/preview/overlays";
 import { usePreviewStore } from "@/preview/preview-store";
+import {
+	getSafeAreaPreviewOverlaySource,
+	safeAreaPreviewOverlay,
+} from "@/preview/safe-area-overlay";
 import { getGuidePreviewOverlaySource } from "@/guides";
 import {
 	bookmarkNotesPreviewOverlay,
@@ -94,11 +98,18 @@ function EditorLayout() {
 		overlay: bookmarkNotesPreviewOverlay,
 		overlays,
 	});
+	const showSafeArea = isPreviewOverlayVisible({
+		overlay: safeAreaPreviewOverlay,
+		overlays,
+	});
 
 	const overlaySource = useMemo(
 		() =>
 			mergePreviewOverlaySources({
 				sources: [
+					getSafeAreaPreviewOverlaySource({
+						isVisible: showSafeArea,
+					}),
 					getGuidePreviewOverlaySource({
 						guideId: activeGuide,
 					}),
@@ -114,7 +125,7 @@ function EditorLayout() {
 							},
 				],
 			}),
-		[activeGuide, activeScene, currentTime, showBookmarkNotes],
+		[activeGuide, activeScene, currentTime, showBookmarkNotes, showSafeArea],
 	);
 
 	const overlayControls = useMemo(

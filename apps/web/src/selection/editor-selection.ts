@@ -1,6 +1,10 @@
 import type { SelectedKeyframeRef } from "@/animation/types";
 import type { ElementRef } from "@/timeline/types";
 
+export interface SelectedTextWordRef extends ElementRef {
+	wordId: string;
+}
+
 export interface SelectedMaskPointSelection {
 	trackId: string;
 	elementId: string;
@@ -10,6 +14,7 @@ export interface SelectedMaskPointSelection {
 
 export interface EditorSelectionSnapshot {
 	selectedElements: ElementRef[];
+	selectedTextWords: SelectedTextWordRef[];
 	selectedKeyframes: SelectedKeyframeRef[];
 	keyframeSelectionAnchor: SelectedKeyframeRef | null;
 	selectedMaskPoints: SelectedMaskPointSelection | null;
@@ -17,9 +22,14 @@ export interface EditorSelectionSnapshot {
 
 export interface EditorSelectionPatch {
 	selectedElements?: ElementRef[];
+	selectedTextWords?: SelectedTextWordRef[];
 	selectedKeyframes?: SelectedKeyframeRef[];
 	keyframeSelectionAnchor?: SelectedKeyframeRef | null;
 	selectedMaskPoints?: SelectedMaskPointSelection | null;
 }
 
-export type EditorSelectionKind = "mask-points" | "keyframes" | "elements";
+export type EditorSelectionKind =
+	| "mask-points"
+	| "keyframes"
+	| "text-words"
+	| "elements";

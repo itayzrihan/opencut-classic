@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
@@ -66,6 +66,7 @@ import {
 import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import { resolveStickerId } from "@/stickers";
 import { buildGraphicPreviewUrl } from "@/graphics";
+import { sharedLibraryService } from "@/shared-library";
 import Image from "next/image";
 import {
 	ScissorIcon,
@@ -80,6 +81,7 @@ import {
 	Exchange01Icon,
 	KeyframeIcon,
 	MagicWand05Icon,
+	TextIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
@@ -238,8 +240,12 @@ export function TimelineElement({
 	dragView,
 	isDropTarget = false,
 }: TimelineElementProps) {
+	const editor = useEditor();
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
+	const selectedTimelineElements = editor.timeline.getElementsWithTracks({
+		elements: selectedElements,
+	});
 	const requestRevealMedia = useAssetsPanelStore((s) => s.requestRevealMedia);
 	const { renderElement } = useElementPreview({
 		trackId: track.id,
@@ -355,6 +361,12 @@ export function TimelineElement({
 	const isElementSourceAudioSeparated =
 		element.type === "video" && isSourceAudioSeparated({ element });
 	const hasKeyframes = elementKeyframes.length > 0;
+	const canMergeSelectedTextElements =
+		selectedElements.length >= 2 &&
+		selectedTimelineElements.length === selectedElements.length &&
+		selectedTimelineElements.every(
+			(selectedElement) => selectedElement.element.type === "text",
+		);
 	const expansionHeight = getExpansionHeight({ rows: expandedRows });
 	const baseTrackHeight = getTrackHeight({ type: track.type });
 
@@ -445,6 +457,14 @@ export function TimelineElement({
 							icon={<HugeiconsIcon icon={Copy01Icon} />}
 						>
 							Duplicate
+						</ActionMenuItem>
+					)}
+					{canMergeSelectedTextElements && (
+						<ActionMenuItem
+							action="merge-text-selected"
+							icon={<HugeiconsIcon icon={TextIcon} />}
+						>
+							Connect text layers
 						</ActionMenuItem>
 					)}
 					{canElementHaveAudio(element) && hasAudio && (
@@ -1226,17 +1246,78 @@ function AudioElementContent({
 		element.sourceType === "upload"
 			? (mediaAssets.find((asset) => asset.id === element.mediaId) ?? null)
 			: null;
+	const [sharedAudioSource, setSharedAudioSource] = useState<{
+		assetId: string;
+		file?: File;
+		url?: string;
+	} | null>(null);
+	const libraryAssetId =
+		element.sourceType === "library" ? element.libraryAssetId : undefined;
+
+	useEffect(() => {
+		if (!libraryAssetId) {
+			return;
+		}
+
+		let shouldIgnore = false;
+		let objectUrl: string | null = null;
+
+		void sharedLibraryService
+			.getAudioAssetFile({ id: libraryAssetId })
+			.then((file) => {
+				if (shouldIgnore) return;
+				if (!file || typeof URL === "undefined") {
+					setSharedAudioSource({
+						assetId: libraryAssetId,
+						file: file ?? undefined,
+					});
+					return;
+				}
+				objectUrl = URL.createObjectURL(file);
+				setSharedAudioSource({
+					assetId: libraryAssetId,
+					file,
+					url: objectUrl,
+				});
+			})
+			.catch((error) => {
+				console.warn("Failed to load shared audio asset:", error);
+				if (!shouldIgnore) {
+					setSharedAudioSource({
+						assetId: libraryAssetId,
+					});
+				}
+			});
+
+		return () => {
+			shouldIgnore = true;
+			if (objectUrl && typeof URL !== "undefined") {
+				URL.revokeObjectURL(objectUrl);
+			}
+		};
+	}, [libraryAssetId]);
+	const currentSharedAudioSource =
+		libraryAssetId && sharedAudioSource?.assetId === libraryAssetId
+			? sharedAudioSource
+			: null;
 
 	const audioBuffer =
 		element.sourceType === "library" ? element.buffer : undefined;
 	const audioUrl =
-		element.sourceType === "library" ? element.sourceUrl : mediaAsset?.url;
+		element.sourceType === "library"
+			? (currentSharedAudioSource?.url ?? element.sourceUrl)
+			: mediaAsset?.url;
 	const sourceFile =
-		element.sourceType === "upload" ? mediaAsset?.file : undefined;
+		element.sourceType === "upload"
+			? mediaAsset?.file
+			: currentSharedAudioSource?.file;
 	const sourceKey =
 		element.sourceType === "upload"
 			? buildWaveformSourceKey({ kind: "media", id: element.mediaId })
-			: buildWaveformSourceKey({ kind: "library", id: element.sourceUrl });
+			: buildWaveformSourceKey({
+					kind: "library",
+					id: element.libraryAssetId ?? element.sourceUrl ?? element.id,
+				});
 	const mediaLabel = mediaAsset?.name ?? element.name;
 	const gainSamples = useMemo(
 		() =>

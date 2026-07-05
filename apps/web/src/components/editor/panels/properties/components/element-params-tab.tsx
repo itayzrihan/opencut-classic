@@ -25,6 +25,7 @@ import {
 export type ElementWithTrackForParams = {
 	track: { id: string };
 	element: TimelineElement;
+	textWordIds?: string[];
 };
 
 export function ElementParamsTab({
@@ -154,18 +155,30 @@ function ElementParamField({
 		if (isScopedText) {
 			const scopedPatch = textParamToScopedPatch({ key: param.key, value });
 			if (!scopedPatch) return;
+			const targetEntries = elementsWithTracks ?? [
+				{ track: { id: trackId }, element },
+			];
+
 			editor.timeline.previewElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						updates: buildScopedTextPatch({
-							element,
-							scope: textScope,
-							patch: scopedPatch,
-						}),
-					},
-				],
+				updates: targetEntries.flatMap((entry) => {
+					if (entry.element.type !== "text") return [];
+					const entryScope = resolveTextScopeForEntry({
+						textScope,
+						entry,
+					});
+					if (!entryScope) return [];
+					return [
+						{
+							trackId: entry.track.id,
+							elementId: entry.element.id,
+							updates: buildScopedTextPatch({
+								element: entry.element,
+								scope: entryScope,
+								patch: scopedPatch,
+							}),
+						},
+					];
+				}),
 			});
 			return;
 		}
@@ -208,6 +221,21 @@ function ElementParamField({
 			}
 		/>
 	);
+}
+
+function resolveTextScopeForEntry({
+	textScope,
+	entry,
+}: {
+	textScope: TextOverrideScope;
+	entry: ElementWithTrackForParams;
+}): TextOverrideScope | null {
+	if (textScope.type !== "words") {
+		return textScope;
+	}
+
+	const wordIds = entry.textWordIds ?? textScope.wordIds;
+	return wordIds.length > 0 ? { type: "words", wordIds } : null;
 }
 
 function buildValues({

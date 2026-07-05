@@ -41,13 +41,112 @@ const LEGACY_SHAPE_PRESETS: Record<string, ShapeGraphicPreset> = {
 	star: { shapeKey: "star", name: "Star", definitionId: "star" },
 };
 
+const SHAPE_PRESETS: ShapeGraphicPreset[] = [
+	{ shapeKey: "square", name: "Square", definitionId: "rectangle" },
+	{
+		shapeKey: "rounded-square",
+		name: "Rounded Square",
+		definitionId: "rectangle",
+		params: { cornerRadius: 18 },
+	},
+	{
+		shapeKey: "pill",
+		name: "Pill",
+		definitionId: "rectangle",
+		params: { cornerRadius: 50 },
+	},
+	{
+		shapeKey: "outline-box",
+		name: "Outline Box",
+		definitionId: "rectangle",
+		params: { fill: "#00000000", stroke: "#ffffff", strokeWidth: 8 },
+	},
+	{ shapeKey: "circle", name: "Circle", definitionId: "ellipse" },
+	{ shapeKey: "oval", name: "Oval", definitionId: "ellipse" },
+	{
+		shapeKey: "ring",
+		name: "Ring",
+		definitionId: "ellipse",
+		params: { fill: "#00000000", stroke: "#ffffff", strokeWidth: 10 },
+	},
+	{
+		shapeKey: "triangle",
+		name: "Triangle",
+		definitionId: "polygon",
+		params: { sides: 3 },
+	},
+	{
+		shapeKey: "diamond",
+		name: "Diamond",
+		definitionId: "polygon",
+		params: { sides: 4 },
+	},
+	{
+		shapeKey: "pentagon",
+		name: "Pentagon",
+		definitionId: "polygon",
+		params: { sides: 5 },
+	},
+	{
+		shapeKey: "hexagon",
+		name: "Hexagon",
+		definitionId: "polygon",
+		params: { sides: 6 },
+	},
+	{
+		shapeKey: "octagon",
+		name: "Octagon",
+		definitionId: "polygon",
+		params: { sides: 8 },
+	},
+	{
+		shapeKey: "dodecagon",
+		name: "Dodecagon",
+		definitionId: "polygon",
+		params: { sides: 12 },
+	},
+	{
+		shapeKey: "rounded-triangle",
+		name: "Rounded Triangle",
+		definitionId: "polygon",
+		params: { sides: 3, cornerRadius: 18 },
+	},
+	{
+		shapeKey: "rounded-hexagon",
+		name: "Rounded Hexagon",
+		definitionId: "polygon",
+		params: { sides: 6, cornerRadius: 16 },
+	},
+	{ shapeKey: "star", name: "Star", definitionId: "star" },
+	{
+		shapeKey: "spark",
+		name: "Spark",
+		definitionId: "star",
+		params: { points: 4, depth: 22 },
+	},
+	{
+		shapeKey: "burst",
+		name: "Burst",
+		definitionId: "star",
+		params: { points: 12, depth: 58 },
+	},
+	{
+		shapeKey: "badge-star",
+		name: "Badge Star",
+		definitionId: "star",
+		params: { points: 8, depth: 72 },
+	},
+	{
+		shapeKey: "sunburst",
+		name: "Sunburst",
+		definitionId: "star",
+		params: { points: 10, depth: 35 },
+	},
+];
+
 function getShapePresets(): ShapeGraphicPreset[] {
 	registerDefaultGraphics();
-	return graphicsRegistry.getAll().map((definition) => ({
-		shapeKey: definition.id,
-		name: definition.name,
-		definitionId: definition.id,
-	}));
+	return SHAPE_PRESETS;
 }
 
 function getShapePreset({

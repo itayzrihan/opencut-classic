@@ -280,11 +280,15 @@ function getScopedWordsCenter({
 	);
 	const words = (measured.wordLines ?? [])
 		.flatMap((line) => line.words)
-		.filter((word) =>
-			scope.type === "word"
-				? word.id === scope.wordId
-				: wordLineIndexes.get(word.id) === scope.lineIndex,
-		);
+		.filter((word) => {
+			if (scope.type === "word") {
+				return word.id === scope.wordId;
+			}
+			if (scope.type === "words") {
+				return scope.wordIds.includes(word.id);
+			}
+			return wordLineIndexes.get(word.id) === scope.lineIndex;
+		});
 
 	if (words.length === 0) {
 		return null;

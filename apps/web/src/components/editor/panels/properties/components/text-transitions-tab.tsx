@@ -66,7 +66,8 @@ export function TextTransitionsTab({
 	const editor = useEditor();
 	const scope = textScope ?? { type: "layer" as const };
 	const isScopedWordTransition =
-		scope.type !== "layer" && (elementsWithTracks?.length ?? 0) <= 1;
+		scope.type !== "layer" &&
+		((elementsWithTracks?.length ?? 0) <= 1 || scope.type === "words");
 	const targets = useMemo(
 		() =>
 			elementsWithTracks?.length
@@ -136,13 +137,22 @@ export function TextTransitionsTab({
 		const transitionIn = settings.transitionIn ?? "blur-zoom";
 		const updateScopedTransition = (patch: TextScopedSettings) => {
 			editor.timeline.updateElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						patch: buildScopedTextPatch({ element, scope, patch }),
-					},
-				],
+				updates: targets.flatMap((target) => {
+					if (target.element.type !== "text") return [];
+					const targetScope = resolveTextScopeForEntry({ scope, target });
+					if (!targetScope) return [];
+					return [
+						{
+							trackId: target.track.id,
+							elementId: target.element.id,
+							patch: buildScopedTextPatch({
+								element: target.element,
+								scope: targetScope,
+								patch,
+							}),
+						},
+					];
+				}),
 			});
 		};
 
@@ -263,4 +273,19 @@ export function TextTransitionsTab({
 			</SectionContent>
 		</Section>
 	);
+}
+
+function resolveTextScopeForEntry({
+	scope,
+	target,
+}: {
+	scope: TextOverrideScope;
+	target: ElementWithTrackForParams;
+}): TextOverrideScope | null {
+	if (scope.type !== "words") {
+		return scope;
+	}
+
+	const wordIds = target.textWordIds ?? scope.wordIds;
+	return wordIds.length > 0 ? { type: "words", wordIds } : null;
 }

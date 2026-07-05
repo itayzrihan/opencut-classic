@@ -1,11 +1,18 @@
 import type { TimelineTrack } from "@/timeline";
 import { timelineTimeToPixels } from "@/timeline/pixel-utils";
-import {
-	TIMELINE_CONTENT_TOP_PADDING_PX,
-} from "./layout";
+import { TIMELINE_CONTENT_TOP_PADDING_PX } from "./layout";
 import { getCumulativeHeightBefore, getTrackHeight } from "./track-layout";
 
 type TimelineElementRef = { trackId: string; elementId: string };
+
+interface LayoutElement {
+	getBoundingClientRect: () => DOMRect;
+}
+
+interface ScrollLayoutElement extends LayoutElement {
+	scrollLeft: number;
+	scrollTop: number;
+}
 
 interface SelectionRectangle {
 	left: number;
@@ -35,8 +42,8 @@ function getSelectionRectangleInContent({
 	startPos,
 	endPos,
 }: {
-	container: HTMLElement;
-	scrollContainer: HTMLDivElement | null;
+	container: LayoutElement;
+	scrollContainer: ScrollLayoutElement | null;
 	startPos: { x: number; y: number };
 	endPos: { x: number; y: number };
 }): SelectionRectangle {
@@ -82,13 +89,17 @@ export function resolveTimelineElementIntersections({
 	zoomLevel,
 	startPos,
 	currentPos,
+	tracksTopInsetPx = TIMELINE_CONTENT_TOP_PADDING_PX,
+	getTrackExtraHeight,
 }: {
-	container: HTMLElement;
-	scrollContainer: HTMLDivElement | null;
+	container: LayoutElement;
+	scrollContainer: ScrollLayoutElement | null;
 	tracks: TimelineTrack[];
 	zoomLevel: number;
 	startPos: { x: number; y: number };
 	currentPos: { x: number; y: number };
+	tracksTopInsetPx?: number;
+	getTrackExtraHeight?: (trackIndex: number) => number;
 }): TimelineElementRef[] {
 	const selectionRectangle = getSelectionRectangleInContent({
 		container,
@@ -102,14 +113,21 @@ export function resolveTimelineElementIntersections({
 		const trackTop = getCumulativeHeightBefore({
 			tracks,
 			trackIndex,
+			getExtraHeight: getTrackExtraHeight,
 		});
 		const trackHeight = getTrackHeight({ type: track.type });
-		const elementTop = TIMELINE_CONTENT_TOP_PADDING_PX + trackTop;
+		const elementTop = tracksTopInsetPx + trackTop;
 		const elementBottom = elementTop + trackHeight;
 
 		for (const element of track.elements) {
-			const elementLeft = timelineTimeToPixels({ time: element.startTime, zoomLevel });
-			const elementRight = timelineTimeToPixels({ time: element.startTime + element.duration, zoomLevel });
+			const elementLeft = timelineTimeToPixels({
+				time: element.startTime,
+				zoomLevel,
+			});
+			const elementRight = timelineTimeToPixels({
+				time: element.startTime + element.duration,
+				zoomLevel,
+			});
 			const elementRectangle = {
 				left: elementLeft,
 				top: elementTop,

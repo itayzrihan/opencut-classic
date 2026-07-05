@@ -24,6 +24,7 @@ import {
 import { usePropertyDraft } from "../hooks/use-property-draft";
 import { KeyframeToggle } from "./keyframe-toggle";
 import { Textarea } from "@/components/ui/textarea";
+import { FontPicker } from "@/components/ui/font-picker";
 
 export function PropertyParamField({
 	param,
@@ -155,12 +156,12 @@ function ParamInput({
 
 	if (param.type === "font") {
 		return (
-			<input
-				className="border-input bg-accent h-9 w-full rounded-md border px-3 text-sm outline-none"
-				value={isMixed ? "" : String(value)}
-				placeholder={isMixed ? "Mixed values" : undefined}
-				onChange={(event) => onPreview(event.currentTarget.value)}
-				onBlur={onCommit}
+			<FontPicker
+				defaultValue={isMixed ? undefined : String(value)}
+				onValueChange={(selected) => {
+					onPreview(selected);
+					onCommit();
+				}}
 			/>
 		);
 	}
@@ -190,9 +191,7 @@ function NumberParamField({
 		);
 
 	const previewFromDisplay = (displayVal: number) => {
-		const clamped = clampDisplayValue(
-			snapToStep({ value: displayVal, step }),
-		);
+		const clamped = clampDisplayValue(snapToStep({ value: displayVal, step }));
 		onPreview(clamped / displayMultiplier);
 	};
 

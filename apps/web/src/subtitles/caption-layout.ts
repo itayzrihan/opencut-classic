@@ -22,6 +22,7 @@ export const DEFAULT_CAPTION_LAYOUT = {
 	wordAnimationId: "kinetic-slam-1",
 	accentColor: "#c8ff4d",
 	wordDirection: "auto" as TextWordDirection,
+	hidePunctuation: false,
 	placementMode: "grid" as CaptionPlacementMode,
 	placementGridX: 0.5,
 	placementGridY: 1,
@@ -39,6 +40,7 @@ export interface CaptionLayoutSettings {
 	wordAnimationId: string;
 	accentColor: string;
 	wordDirection: TextWordDirection;
+	hidePunctuation: boolean;
 	placementMode: CaptionPlacementMode;
 	placementGridX: number;
 	placementGridY: number;
@@ -78,6 +80,15 @@ function clampNumber({
 
 function isPlacementMode(value: unknown): value is CaptionPlacementMode {
 	return value === "grid" || value === "manual";
+}
+
+export function stripCaptionPunctuation({ text }: { text: string }): string {
+	return text
+		.replace(/\p{P}+/gu, "")
+		.replace(/[^\S\n]+/g, " ")
+		.replace(/[ \t]*\n[ \t]*/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
 }
 
 export function getCaptionPlacementGrid({
@@ -200,6 +211,10 @@ export function normalizeCaptionLayoutSettings({
 				? settings.accentColor
 				: DEFAULT_CAPTION_LAYOUT.accentColor,
 		wordDirection,
+		hidePunctuation:
+			typeof settings?.hidePunctuation === "boolean"
+				? settings.hidePunctuation
+				: DEFAULT_CAPTION_LAYOUT.hidePunctuation,
 		placementMode,
 		placementGridX: clampNumber({
 			value: settings?.placementGridX ?? DEFAULT_CAPTION_LAYOUT.placementGridX,

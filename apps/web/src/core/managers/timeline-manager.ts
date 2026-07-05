@@ -41,6 +41,7 @@ import {
 	UpdateElementsCommand,
 	ApplyTransitionCommand,
 	SplitElementsCommand,
+	MergeTextElementsCommand,
 	MoveElementCommand,
 	TracksSnapshotCommand,
 	UpsertKeyframeCommand,
@@ -214,6 +215,19 @@ export class TimelineManager {
 		});
 		this.editor.command.execute({ command });
 		return command.getRightSideElements();
+	}
+
+	mergeTextElements({
+		elements,
+	}: {
+		elements: { trackId: string; elementId: string }[];
+	}): void {
+		if (elements.length < 2) {
+			return;
+		}
+
+		const command = new MergeTextElementsCommand({ elements });
+		this.editor.command.execute({ command });
 	}
 
 	getTotalDuration(): MediaTime {

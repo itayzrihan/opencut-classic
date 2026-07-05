@@ -3,7 +3,10 @@ import { Command, type CommandResult } from "@/commands/base-command";
 import type { SceneTracks, TimelineElement } from "@/timeline";
 import { findTrackInSceneTracks, updateElementInSceneTracks } from "@/timeline";
 import { applyElementUpdate } from "@/timeline/update-pipeline";
-import { syncCaptionSourceWordsFromElements } from "@/subtitles/caption-source-sync";
+import {
+	syncCaptionSourceWordsFromElements,
+	syncTextLayerWordsIntoCaptionSource,
+} from "@/subtitles/caption-source-sync";
 
 export class UpdateElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -62,7 +65,13 @@ export class UpdateElementsCommand extends Command {
 
 		updatedTracks = syncCaptionSourceWordsFromElements({
 			tracks: updatedTracks,
+			previousTracks: this.savedState,
 			updates: this.updates,
+			canvasSize: editor.project.getActive().settings.canvasSize,
+		});
+		updatedTracks = syncTextLayerWordsIntoCaptionSource({
+			tracks: updatedTracks,
+			elements: this.updates,
 		});
 
 		editor.timeline.updateTracks(updatedTracks);

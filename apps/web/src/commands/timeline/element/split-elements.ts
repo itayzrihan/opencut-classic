@@ -9,6 +9,7 @@ import { EditorCore } from "@/core";
 import { isRetimableElement } from "@/timeline";
 import { splitAnimationsAtTime } from "@/animation";
 import { getSourceSpanAtClipTime } from "@/retime";
+import { splitTextElementAtTime } from "@/text/text-layer-utils";
 import {
 	addMediaTime,
 	type MediaTime,
@@ -127,6 +128,40 @@ export class SplitElementsCommand extends Command {
 					a: element.trimStart,
 					b: leftSourceSpan,
 				});
+
+				if (element.type === "text") {
+					const rightElementId = generateUUID();
+					const textSplit = splitTextElementAtTime({
+						element,
+						relativeTime,
+						splitTime: this.splitTime,
+						rightElementId,
+					});
+					if (textSplit) {
+						const leftElement = {
+							...textSplit.left,
+							name: `${element.name} (left)`,
+							animations: leftAnimations,
+						};
+						const rightElement = {
+							...textSplit.right,
+							name: `${element.name} (right)`,
+							animations: rightAnimations,
+						};
+
+						if (this.retainSide === "left") {
+							return [leftElement];
+						}
+						this.rightSideElements.push({
+							trackId: track.id,
+							elementId: rightElementId,
+						});
+						if (this.retainSide === "right") {
+							return [rightElement];
+						}
+						return [leftElement, rightElement];
+					}
+				}
 
 				if (this.retainSide === "left") {
 					splitResult = [

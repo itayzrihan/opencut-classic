@@ -1,5 +1,6 @@
 import type { EffectPass } from "@/effects/types";
 import type { ParamValues } from "@/params";
+import type { EffectLayerVisualOverlay } from "../effect-layer-visual-overlay";
 import { BaseNode } from "./base-node";
 
 export type EffectLayerNodeParams = {
@@ -11,6 +12,7 @@ export type EffectLayerNodeParams = {
 
 export type ResolvedEffectLayerNodeState = {
 	passes: EffectPass[];
+	visualOverlay: EffectLayerVisualOverlay | null;
 	overlay: EffectLayerOverlay | null;
 };
 

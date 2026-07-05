@@ -7,6 +7,7 @@ import { invokeAction } from "@/actions";
 import { EditableTimecode } from "@/components/editable-timecode";
 import { Button } from "@/components/ui/button";
 import {
+	BorderInnerIcon,
 	FullScreenIcon,
 	PauseIcon,
 	PlayIcon,
@@ -22,15 +23,26 @@ import {
 } from "@/components/ui/select";
 import { PREVIEW_ZOOM_PRESETS } from "@/preview/zoom";
 import { usePreviewViewport } from "./preview-viewport";
-import { GridPopover } from "./guide-popover";
-import { usePreviewStore } from "@/preview/preview-store";
+import { safeAreaPreviewOverlay } from "@/preview/safe-area-overlay";
+import type { PreviewOverlayControl } from "@/preview/overlays";
 import type { MediaTime } from "@/wasm";
 
 export function PreviewToolbar({
 	onToggleFullscreen,
+	overlayControls,
+	onOverlayVisibilityChange,
 }: {
 	onToggleFullscreen: () => void;
+	overlayControls: PreviewOverlayControl[];
+	onOverlayVisibilityChange: (params: {
+		overlayId: string;
+		isVisible: boolean;
+	}) => void;
 }) {
+	const safeAreaControl = overlayControls.find(
+		(overlayControl) => overlayControl.id === safeAreaPreviewOverlay.id,
+	);
+
 	return (
 		<div className="grid grid-cols-[1fr_auto_1fr] items-center pb-3 pt-5 px-5">
 			<TimecodeDisplay />
@@ -51,11 +63,50 @@ export function PreviewToolbar({
 						)}
 					</Button>
 				</GridPopover> */}
+				<SafeAreaToggleButton
+					overlayControl={safeAreaControl}
+					onOverlayVisibilityChange={onOverlayVisibilityChange}
+				/>
 				<Button variant="text" onClick={onToggleFullscreen}>
 					<HugeiconsIcon icon={FullScreenIcon} />
 				</Button>
 			</div>
 		</div>
+	);
+}
+
+function SafeAreaToggleButton({
+	overlayControl,
+	onOverlayVisibilityChange,
+}: {
+	overlayControl?: PreviewOverlayControl;
+	onOverlayVisibilityChange: (params: {
+		overlayId: string;
+		isVisible: boolean;
+	}) => void;
+}) {
+	if (!overlayControl) {
+		return null;
+	}
+
+	const label = overlayControl.isVisible ? "Hide safe area" : "Show safe area";
+
+	return (
+		<Button
+			variant={overlayControl.isVisible ? "secondary" : "text"}
+			size="icon"
+			aria-label={label}
+			aria-pressed={overlayControl.isVisible}
+			title={label}
+			onClick={() =>
+				onOverlayVisibilityChange({
+					overlayId: overlayControl.id,
+					isVisible: !overlayControl.isVisible,
+				})
+			}
+		>
+			<HugeiconsIcon icon={BorderInnerIcon} />
+		</Button>
 	);
 }
 

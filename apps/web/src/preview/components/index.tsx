@@ -341,7 +341,11 @@ function PreviewCanvas({
 						/>
 					</ContextMenu>
 				</div>
-				<PreviewToolbar onToggleFullscreen={onToggleFullscreen} />
+				<PreviewToolbar
+					onToggleFullscreen={onToggleFullscreen}
+					overlayControls={overlayControls}
+					onOverlayVisibilityChange={onOverlayVisibilityChange}
+				/>
 			</div>
 		</PreviewViewportProvider>
 	);

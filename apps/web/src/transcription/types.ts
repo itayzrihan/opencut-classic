@@ -12,6 +12,13 @@ export interface TranscriptionWord {
 	text: string;
 	start: number;
 	end: number;
+	source?: {
+		type: "text-layer";
+		trackId: string;
+		elementId: string;
+		wordIndex: number;
+		wordId?: string;
+	};
 }
 
 export interface TranscriptionResult {

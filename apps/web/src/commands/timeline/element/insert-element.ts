@@ -18,6 +18,7 @@ import {
 	resolveTrackPlacement,
 	validateElementTrackCompatibility,
 } from "@/timeline/placement";
+import { syncTextLayerWordsIntoCaptionSource } from "@/subtitles/caption-source-sync";
 import { roundMediaTime } from "@/wasm";
 
 type InsertElementPlacement =
@@ -74,7 +75,8 @@ export class InsertElementCommand extends Command {
 			return;
 		}
 
-		const { updatedTracks, targetTrackId } = updateResult;
+		let { updatedTracks } = updateResult;
+		const { targetTrackId } = updateResult;
 		this.targetTrackId = targetTrackId;
 
 		const isVisualMedia =
@@ -108,6 +110,13 @@ export class InsertElementCommand extends Command {
 					pushHistory: false,
 				});
 			}
+		}
+
+		if (newElement.type === "text") {
+			updatedTracks = syncTextLayerWordsIntoCaptionSource({
+				tracks: updatedTracks,
+				elements: [{ trackId: targetTrackId, elementId: newElement.id }],
+			});
 		}
 
 		editor.timeline.updateTracks(updatedTracks);
@@ -167,9 +176,10 @@ export class InsertElementCommand extends Command {
 		if (
 			element.type === "audio" &&
 			element.sourceType === "library" &&
-			!element.sourceUrl
+			!element.sourceUrl &&
+			!element.libraryAssetId
 		) {
-			console.error("Library audio element must have sourceUrl");
+			console.error("Library audio element must have sourceUrl or libraryAssetId");
 			return false;
 		}
 

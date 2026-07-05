@@ -1,12 +1,17 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
 import { useEditor } from "@/editor/use-editor";
 import {
 	findCaptionSourceTrack,
+	findCaptionSourceTracks,
 	updateCaptionSourceWords,
 } from "@/subtitles/caption-tracks";
-import type { TextElement, TextTrack } from "@/timeline";
+import { buildCaptionReviewWordPatch } from "@/subtitles/caption-review";
+import { stripCaptionPunctuation } from "@/subtitles/caption-layout";
+import type { SelectedTextWordRef } from "@/selection/editor-selection";
+import type { SceneTracks, TextElement, TextTrack, TextWordRun } from "@/timeline";
 import { getTimelinePixelsPerSecond, timelineTimeToPixels } from "@/timeline";
 import type { TranscriptionWord } from "@/transcription/types";
 import { cn } from "@/utils/ui";
@@ -17,8 +22,35 @@ import {
 } from "@/wasm";
 
 export const CAPTION_WORD_TIMING_TRACK_HEIGHT_PX = 42;
+const CAPTION_WORD_TIMING_LANE_HEIGHT_PX = 24;
+const CAPTION_WORD_TIMING_VERTICAL_PADDING_PX = 8;
 
 type WordDragMode = "move" | "left" | "right";
+type WordDragPreview = { wordIndex: number; start: number; end: number };
+
+const WORD_DRAG_THRESHOLD_PX = 2;
+
+export function getCaptionWordTimingTrackHeight({
+	laneCount,
+}: {
+	laneCount: number;
+}) {
+	return Math.max(
+		CAPTION_WORD_TIMING_TRACK_HEIGHT_PX,
+		CAPTION_WORD_TIMING_VERTICAL_PADDING_PX +
+			Math.max(1, laneCount) * CAPTION_WORD_TIMING_LANE_HEIGHT_PX,
+	);
+}
+
+export function getCaptionWordTimingTrackHeightForWords({
+	words,
+}: {
+	words: TranscriptionWord[];
+}) {
+	return getCaptionWordTimingTrackHeight({
+		laneCount: getCaptionWordTimingLaneCount({ words }),
+	});
+}
 
 interface WordCoverageIssue {
 	key: string;
@@ -34,6 +66,7 @@ interface CaptionWordTimingTrackProps {
 	dynamicTimelineWidth: number;
 	onMouseDown?: (event: React.MouseEvent) => void;
 	onMouseUp?: (event: React.MouseEvent) => void;
+	onHeightChange?: ({ height }: { height: number }) => void;
 }
 
 export function CaptionWordTimingTrack({
@@ -41,15 +74,20 @@ export function CaptionWordTimingTrack({
 	dynamicTimelineWidth,
 	onMouseDown,
 	onMouseUp,
+	onHeightChange,
 }: CaptionWordTimingTrackProps) {
 	const editor = useEditor();
 	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
+	const selectedTextWords = useEditor((e) =>
+		e.selection.getSelectedTextWords(),
+	);
+	const setActivePropertiesTab = usePropertiesStore(
+		(state) => state.setActiveTab,
+	);
 	const rowRef = useRef<HTMLDivElement>(null);
-	const [dragPreview, setDragPreview] = useState<{
-		wordIndex: number;
-		start: number;
-		end: number;
-	} | null>(null);
+	const dragPreviewRef = useRef<WordDragPreview | null>(null);
+	const didWordDragRef = useRef(false);
+	const [dragPreview, setDragPreview] = useState<WordDragPreview | null>(null);
 
 	const sourceTrack = useMemo(
 		() => (scene ? findCaptionSourceTrack({ tracks: scene.tracks }) : null),
@@ -58,22 +96,52 @@ export function CaptionWordTimingTrack({
 	const source = sourceTrack?.captionSource;
 	const words = useMemo(() => source?.words ?? [], [source]);
 
+	const sourceTracks = useMemo(
+		() =>
+			scene && source
+				? findCaptionSourceTracks({
+						tracks: scene.tracks,
+						source,
+					})
+				: [],
+		[scene, source],
+	);
+
 	const issues = useMemo(
 		() =>
 			scene && sourceTrack
 				? getWordCoverageIssues({
 						words,
 						sourceTrack,
-						sourceTracks: scene.tracks.overlay.filter(
-							(track): track is TextTrack =>
-								track.type === "text" &&
-								!!track.captionSource &&
-								track.captionSource.words.length === words.length,
-						),
+						sourceTracks,
 					})
 				: [],
-		[scene, sourceTrack, words],
+		[scene, sourceTrack, sourceTracks, words],
 	);
+
+	const wordElementRefs = useMemo(
+		() => getWordElementRefs({ words, sourceTracks }),
+		[words, sourceTracks],
+	);
+	const selectedTextWordKeys = useMemo(
+		() => new Set(selectedTextWords.map(getSelectedTextWordKey)),
+		[selectedTextWords],
+	);
+	const wordLayouts = useMemo(
+		() => buildWordLayouts({ words, dragPreview }),
+		[words, dragPreview],
+	);
+	const wordTimingLaneCount = useMemo(
+		() => getCaptionWordTimingLaneCount({ words, dragPreview }),
+		[words, dragPreview],
+	);
+	const wordTimingTrackHeight = getCaptionWordTimingTrackHeight({
+		laneCount: wordTimingLaneCount,
+	});
+
+	useEffect(() => {
+		onHeightChange?.({ height: wordTimingTrackHeight });
+	}, [onHeightChange, wordTimingTrackHeight]);
 
 	const commitWords = useCallback(
 		(nextWords: TranscriptionWord[]) => {
@@ -87,6 +155,58 @@ export function CaptionWordTimingTrack({
 		[editor, source],
 	);
 
+	const updateManualTextLayerWord = useCallback(
+		({
+			currentWord,
+			nextWord,
+		}: {
+			currentWord: TranscriptionWord;
+			nextWord: TranscriptionWord;
+		}) => {
+			if (currentWord.source?.type !== "text-layer" || !scene) return false;
+			const entry = findManualTextLayerWordEntry({
+				tracks: scene.tracks,
+				word: currentWord,
+			});
+			if (!entry) return false;
+
+			const textPatch =
+				nextWord.text !== currentWord.text
+					? buildCaptionReviewWordPatch({
+							element: entry.element,
+							wordIndex: currentWord.source.wordIndex,
+							text: nextWord.text,
+						})
+					: null;
+			const timingPatch =
+				nextWord.start !== currentWord.start || nextWord.end !== currentWord.end
+					? buildManualTextLayerWordTimingPatch({
+							element: entry.element,
+							wordIndex: currentWord.source.wordIndex,
+							start: nextWord.start,
+							end: nextWord.end,
+						})
+					: null;
+			const patch = mergeTextElementPatches({
+				left: textPatch,
+				right: timingPatch,
+			});
+			if (!patch) return false;
+
+			editor.timeline.updateElements({
+				updates: [
+					{
+						trackId: entry.track.id,
+						elementId: entry.element.id,
+						patch,
+					},
+				],
+			});
+			return true;
+		},
+		[editor, scene],
+	);
+
 	const updateWord = useCallback(
 		({
 			wordIndex,
@@ -97,11 +217,20 @@ export function CaptionWordTimingTrack({
 		}) => {
 			const current = words[wordIndex];
 			if (!current) return;
+			const nextWord = update(current);
+			if (areTranscriptionWordsEqual({ left: current, right: nextWord }))
+				return;
+			if (
+				current.source?.type === "text-layer" &&
+				updateManualTextLayerWord({ currentWord: current, nextWord })
+			) {
+				return;
+			}
 			commitWords(
-				words.map((word, index) => (index === wordIndex ? update(word) : word)),
+				words.map((word, index) => (index === wordIndex ? nextWord : word)),
 			);
 		},
-		[commitWords, words],
+		[commitWords, updateManualTextLayerWord, words],
 	);
 
 	const beginWordDrag = useCallback(
@@ -116,17 +245,22 @@ export function CaptionWordTimingTrack({
 		}) => {
 			const word = words[wordIndex];
 			if (!word || !rowRef.current) return;
+			if (event.button !== 0) return;
 			event.preventDefault();
 			event.stopPropagation();
 
 			const startClientX = event.clientX;
 			const startWord = { start: word.start, end: word.end };
 			const pixelsPerSecond = getTimelinePixelsPerSecond({ zoomLevel });
-			setDragPreview({ wordIndex, ...startWord });
+			let latestPreview: WordDragPreview = { wordIndex, ...startWord };
+			let hasMoved = false;
+			dragPreviewRef.current = latestPreview;
+			didWordDragRef.current = false;
+			setDragPreview(latestPreview);
 
 			const handleMouseMove = (moveEvent: MouseEvent) => {
-				const deltaSeconds =
-					(moveEvent.clientX - startClientX) / pixelsPerSecond;
+				const deltaPixels = moveEvent.clientX - startClientX;
+				const deltaSeconds = deltaPixels / pixelsPerSecond;
 				const minDuration = 0.01;
 				let nextStart = startWord.start;
 				let nextEnd = startWord.end;
@@ -150,25 +284,37 @@ export function CaptionWordTimingTrack({
 					);
 				}
 
-				setDragPreview({ wordIndex, start: nextStart, end: nextEnd });
+				if (Math.abs(deltaPixels) >= WORD_DRAG_THRESHOLD_PX) {
+					hasMoved = true;
+					didWordDragRef.current = true;
+				}
+				latestPreview = { wordIndex, start: nextStart, end: nextEnd };
+				dragPreviewRef.current = latestPreview;
+				setDragPreview(latestPreview);
 			};
 
 			const handleMouseUp = () => {
 				window.removeEventListener("mousemove", handleMouseMove);
 				window.removeEventListener("mouseup", handleMouseUp);
-				setDragPreview((preview) => {
-					if (preview) {
-						updateWord({
-							wordIndex,
-							update: (current) => ({
-								...current,
-								start: roundSeconds(preview.start),
-								end: roundSeconds(Math.max(preview.start + 0.01, preview.end)),
-							}),
-						});
-					}
-					return null;
+				const preview = dragPreviewRef.current ?? latestPreview;
+				dragPreviewRef.current = null;
+				setDragPreview(null);
+				if (!hasMoved || !preview) return;
+				const nextStart = roundSeconds(preview.start);
+				const nextEnd = roundSeconds(
+					Math.max(preview.start + 0.01, preview.end),
+				);
+				updateWord({
+					wordIndex,
+					update: (current) => ({
+						...current,
+						start: nextStart,
+						end: nextEnd,
+					}),
 				});
+				window.setTimeout(() => {
+					didWordDragRef.current = false;
+				}, 0);
 			};
 
 			window.addEventListener("mousemove", handleMouseMove);
@@ -191,6 +337,40 @@ export function CaptionWordTimingTrack({
 			});
 		},
 		[updateWord, words],
+	);
+
+	const selectWord = useCallback(
+		({ event, wordIndex }: { event: React.MouseEvent; wordIndex: number }) => {
+			if (didWordDragRef.current) {
+				event.preventDefault();
+				event.stopPropagation();
+				return;
+			}
+			event.stopPropagation();
+			const refs = wordElementRefs.get(wordIndex) ?? [];
+			if (refs.length === 0) return;
+
+			const isMultiSelect = event.metaKey || event.ctrlKey || event.shiftKey;
+			const currentWords = editor.selection.getSelectedTextWords();
+			const currentKeys = new Set(currentWords.map(getSelectedTextWordKey));
+			const refsAreSelected = refs.every((ref) =>
+				currentKeys.has(getSelectedTextWordKey(ref)),
+			);
+			const nextWords = isMultiSelect
+				? refsAreSelected
+					? currentWords.filter(
+							(word) =>
+								!refs.some((ref) =>
+									isSameSelectedTextWord({ left: ref, right: word }),
+								),
+						)
+					: dedupeSelectedTextWords([...currentWords, ...refs])
+				: refs;
+
+			editor.selection.setSelectedTextWords({ words: nextWords });
+			setActivePropertiesTab({ elementType: "text", tabId: "words" });
+		},
+		[editor, setActivePropertiesTab, wordElementRefs],
 	);
 
 	const extendCaptionToIssue = useCallback(
@@ -233,7 +413,7 @@ export function CaptionWordTimingTrack({
 			className="relative border-b border-red-500/20 bg-red-950/10"
 			style={{
 				width: `${dynamicTimelineWidth}px`,
-				height: `${CAPTION_WORD_TIMING_TRACK_HEIGHT_PX}px`,
+				height: `${wordTimingTrackHeight}px`,
 			}}
 			onMouseDown={onMouseDown}
 			onMouseUp={onMouseUp}
@@ -247,6 +427,15 @@ export function CaptionWordTimingTrack({
 					dragPreview?.wordIndex === index
 						? dragPreview
 						: { start: word.start, end: word.end };
+				const layout = wordLayouts.get(index) ?? {
+					lane: 0,
+					laneCount: 1,
+				};
+				const laneHeight = CAPTION_WORD_TIMING_LANE_HEIGHT_PX;
+				const refs = wordElementRefs.get(index) ?? [];
+				const isSelected = refs.some((ref) =>
+					selectedTextWordKeys.has(getSelectedTextWordKey(ref)),
+				);
 				const left = timelineTimeToPixels({
 					time: secondsToMediaTime(preview.start),
 					zoomLevel,
@@ -265,11 +454,20 @@ export function CaptionWordTimingTrack({
 					<div
 						key={`${index}-${word.text}`}
 						className={cn(
-							"absolute top-1 bottom-1 overflow-hidden rounded-sm border border-red-300/40 bg-red-500/20 text-red-50 shadow-sm",
+							"absolute overflow-hidden rounded-sm border border-red-300/40 bg-red-500/20 text-red-50 shadow-sm",
+							isSelected &&
+								"border-primary bg-primary/30 text-primary-foreground",
 							dragPreview?.wordIndex === index &&
 								"border-red-100 bg-red-500/35",
 						)}
-						style={{ left, width }}
+						style={{
+							left,
+							width,
+							top:
+								CAPTION_WORD_TIMING_VERTICAL_PADDING_PX / 2 +
+								layout.lane * laneHeight,
+							height: laneHeight - 2,
+						}}
 						title={`${word.text} ${word.start.toFixed(2)}s-${word.end.toFixed(2)}s`}
 						onDoubleClick={() => editWordText({ wordIndex: index })}
 					>
@@ -295,6 +493,7 @@ export function CaptionWordTimingTrack({
 							onMouseDown={(event) =>
 								beginWordDrag({ event, wordIndex: index, mode: "move" })
 							}
+							onClick={(event) => selectWord({ event, wordIndex: index })}
 							aria-label={`Move ${word.text}`}
 						>
 							<span className="truncate">{word.text}</span>
@@ -383,6 +582,241 @@ function getWordCoverageIssues({
 	return issues;
 }
 
+function getWordElementRefs({
+	words,
+	sourceTracks,
+}: {
+	words: TranscriptionWord[];
+	sourceTracks: TextTrack[];
+}): Map<number, SelectedTextWordRef[]> {
+	const refsByWordIndex = new Map<number, SelectedTextWordRef[]>();
+	for (const [wordIndex, word] of words.entries()) {
+		if (word.source?.type !== "text-layer") continue;
+		refsByWordIndex.set(wordIndex, [
+			...(refsByWordIndex.get(wordIndex) ?? []),
+			{
+				trackId: word.source.trackId,
+				elementId: word.source.elementId,
+				wordId: word.source.wordId ?? `word-${word.source.wordIndex}`,
+			},
+		]);
+	}
+
+	for (const track of sourceTracks) {
+		for (const element of track.elements) {
+			const elementStart = mediaTimeToSeconds({ time: element.startTime });
+			const elementEnd =
+				elementStart + mediaTimeToSeconds({ time: element.duration });
+			for (const run of element.wordRuns ?? []) {
+				const runStart =
+					run.startTime == null
+						? elementStart
+						: elementStart + mediaTimeToSeconds({ time: run.startTime });
+				const runEnd =
+					run.endTime == null
+						? elementEnd
+						: elementStart + mediaTimeToSeconds({ time: run.endTime });
+				const wordIndex = findWordIndexForRun({ words, run, runStart, runEnd });
+				if (wordIndex < 0) continue;
+
+				refsByWordIndex.set(wordIndex, [
+					...(refsByWordIndex.get(wordIndex) ?? []),
+					{
+						trackId: track.id,
+						elementId: element.id,
+						wordId: run.id,
+					},
+				]);
+			}
+		}
+	}
+
+	return refsByWordIndex;
+}
+
+function findManualTextLayerWordEntry({
+	tracks,
+	word,
+}: {
+	tracks: SceneTracks;
+	word: TranscriptionWord;
+}) {
+	const source = word.source;
+	if (source?.type !== "text-layer") return null;
+	const track = tracks.overlay.find(
+		(candidate): candidate is TextTrack =>
+			candidate.type === "text" && candidate.id === source.trackId,
+	);
+	const element = track?.elements.find(
+		(candidate) => candidate.id === source.elementId,
+	);
+	return track && element ? { track, element } : null;
+}
+
+function mergeTextElementPatches({
+	left,
+	right,
+}: {
+	left: Partial<TextElement> | null;
+	right: Partial<TextElement> | null;
+}): Partial<TextElement> | null {
+	if (!left) return right;
+	if (!right) return left;
+	return {
+		...left,
+		...right,
+		params: {
+			...(left.params ?? {}),
+			...(right.params ?? {}),
+		},
+		wordRuns: right.wordRuns ?? left.wordRuns,
+	};
+}
+
+function buildManualTextLayerWordTimingPatch({
+	element,
+	wordIndex,
+	start,
+	end,
+}: {
+	element: TextElement;
+	wordIndex: number;
+	start: number;
+	end: number;
+}): Partial<TextElement> | null {
+	const wordRuns = getTextLayerWordRuns({ element });
+	if (!wordRuns[wordIndex]) return null;
+	const safeEnd = Math.max(start + 0.01, end);
+	const elementStart = mediaTimeToSeconds({ time: element.startTime });
+	const elementEnd = elementStart + mediaTimeToSeconds({ time: element.duration });
+	const absoluteRuns = wordRuns.map((run, index) => {
+		const runStart =
+			index === wordIndex
+				? start
+				: run.startTime == null
+					? elementStart
+					: elementStart + mediaTimeToSeconds({ time: run.startTime });
+		const runEnd =
+			index === wordIndex
+				? safeEnd
+				: run.endTime == null
+					? elementEnd
+					: elementStart + mediaTimeToSeconds({ time: run.endTime });
+		return {
+			run,
+			start: roundSeconds(runStart),
+			end: roundSeconds(Math.max(runStart + 0.01, runEnd)),
+		};
+	});
+	const nextStart = Math.min(...absoluteRuns.map((run) => run.start));
+	const nextEnd = Math.max(...absoluteRuns.map((run) => run.end));
+
+	return {
+		startTime: mediaTimeFromSeconds({ seconds: nextStart }),
+		duration: mediaTimeFromSeconds({
+			seconds: Math.max(0.01, nextEnd - nextStart),
+		}),
+		wordRuns: absoluteRuns.map(({ run, start, end }) => ({
+			...run,
+			startTime: mediaTimeFromSeconds({ seconds: start - nextStart }),
+			endTime: mediaTimeFromSeconds({ seconds: end - nextStart }),
+		})),
+	};
+}
+
+function getTextLayerWordRuns({
+	element,
+}: {
+	element: TextElement;
+}): TextWordRun[] {
+	if (element.wordRuns?.length) return element.wordRuns;
+	const content =
+		typeof element.params.content === "string" ? element.params.content : "";
+	const entries = content.split("\n").flatMap((line, lineIndex) =>
+		line
+			.trim()
+			.split(/\s+/)
+			.filter(Boolean)
+			.map((text) => ({ text, lineIndex })),
+	);
+	const durationSeconds = mediaTimeToSeconds({ time: element.duration });
+	const wordDuration =
+		entries.length > 0 ? durationSeconds / entries.length : 0;
+	return entries.map((entry, index) => ({
+		id: `word-${index}`,
+		text: entry.text,
+		lineIndex: entry.lineIndex,
+		startTime: mediaTimeFromSeconds({ seconds: index * wordDuration }),
+		endTime: mediaTimeFromSeconds({
+			seconds: (index + 1) * wordDuration,
+		}),
+	}));
+}
+
+function buildWordLayouts({
+	words,
+	dragPreview,
+}: {
+	words: TranscriptionWord[];
+	dragPreview: { wordIndex: number; start: number; end: number } | null;
+}): Map<number, { lane: number; laneCount: number }> {
+	const { timedWords, lanes, laneCount } = calculateWordLanes({
+		words,
+		dragPreview,
+	});
+	return new Map(
+		timedWords.map((word) => [
+			word.index,
+			{ lane: lanes.get(word.index) ?? 0, laneCount },
+		]),
+	);
+}
+
+function getCaptionWordTimingLaneCount({
+	words,
+	dragPreview = null,
+}: {
+	words: TranscriptionWord[];
+	dragPreview?: WordDragPreview | null;
+}) {
+	return calculateWordLanes({ words, dragPreview }).laneCount;
+}
+
+function calculateWordLanes({
+	words,
+	dragPreview,
+}: {
+	words: TranscriptionWord[];
+	dragPreview: WordDragPreview | null;
+}) {
+	const timedWords = words.map((word, index) => {
+		const preview = dragPreview?.wordIndex === index ? dragPreview : word;
+		return {
+			index,
+			start: preview.start,
+			end: Math.max(preview.start + 0.01, preview.end),
+		};
+	});
+	const sortedWords = [...timedWords].sort(
+		(left, right) => left.start - right.start || left.index - right.index,
+	);
+	const laneEnds: number[] = [];
+	const lanes = new Map<number, number>();
+
+	for (const word of sortedWords) {
+		let lane = laneEnds.findIndex((end) => end <= word.start + 0.001);
+		if (lane < 0) {
+			lane = laneEnds.length;
+			laneEnds.push(0);
+		}
+		lanes.set(word.index, lane);
+		laneEnds[lane] = Math.max(laneEnds[lane], word.end);
+	}
+
+	const laneCount = Math.max(1, laneEnds.length);
+	return { timedWords, lanes, laneCount };
+}
+
 function findWordIndexForRun({
 	words,
 	run,
@@ -395,6 +829,7 @@ function findWordIndexForRun({
 	runEnd: number;
 }) {
 	const normalizedText = normalizeWord(run.text);
+	if (!normalizedText) return -1;
 	let bestIndex = -1;
 	let bestScore = Number.POSITIVE_INFINITY;
 	for (let index = 0; index < words.length; index++) {
@@ -410,7 +845,7 @@ function findWordIndexForRun({
 }
 
 function normalizeWord(value: string) {
-	return value.trim().toLocaleLowerCase();
+	return stripCaptionPunctuation({ text: value }).toLocaleLowerCase();
 }
 
 function secondsToMediaTime(seconds: number): MediaTime {
@@ -419,4 +854,46 @@ function secondsToMediaTime(seconds: number): MediaTime {
 
 function roundSeconds(value: number) {
 	return Math.round(value * 1000) / 1000;
+}
+
+function areTranscriptionWordsEqual({
+	left,
+	right,
+}: {
+	left: TranscriptionWord;
+	right: TranscriptionWord;
+}) {
+	return (
+		left.text === right.text &&
+		left.start === right.start &&
+		left.end === right.end
+	);
+}
+
+function getSelectedTextWordKey({
+	trackId,
+	elementId,
+	wordId,
+}: SelectedTextWordRef) {
+	return `${trackId}:${elementId}:${wordId}`;
+}
+
+function isSameSelectedTextWord({
+	left,
+	right,
+}: {
+	left: SelectedTextWordRef;
+	right: SelectedTextWordRef;
+}) {
+	return getSelectedTextWordKey(left) === getSelectedTextWordKey(right);
+}
+
+function dedupeSelectedTextWords(words: SelectedTextWordRef[]) {
+	const seen = new Set<string>();
+	return words.filter((word) => {
+		const key = getSelectedTextWordKey(word);
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 }

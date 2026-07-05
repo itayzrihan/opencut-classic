@@ -22,3 +22,20 @@ export interface FontAtlasEntry {
 export interface FontAtlas {
 	fonts: Record<string, FontAtlasEntry>;
 }
+
+export interface ProjectFont {
+	id: string;
+	family: string;
+	fileName: string;
+	mimeType: string;
+	size: number;
+	lastModified: number;
+	createdAt: string;
+	sourceUrl?: string;
+	repositoryPath?: string;
+}
+
+export interface ProjectFontAsset extends ProjectFont {
+	file: File;
+	url?: string;
+}

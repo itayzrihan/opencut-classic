@@ -28,10 +28,21 @@ import {
 	type MigrationProgress,
 } from "@/services/storage/migrations";
 import { loadFonts } from "@/fonts/google-fonts";
+import {
+	buildUniqueFontFamily,
+	getSupportedFontMimeType,
+	isSupportedFontFile,
+	loadProjectFont,
+} from "@/fonts/custom-fonts";
+import { copyFontToRepository } from "@/fonts/repository-fonts";
+import { SYSTEM_FONTS } from "@/fonts/system-fonts";
 import { DEFAULTS } from "@/timeline/defaults";
 import { getElementFontFamilies } from "@/timeline/element-utils";
 import { getRaisedProjectFpsForImportedMedia } from "@/fps/utils";
 import type { MediaAsset } from "@/media/types";
+import type { ProjectFont, ProjectFontAsset } from "@/fonts/types";
+
+type RuntimeProjectFont = ProjectFont | ProjectFontAsset;
 
 export interface MigrationState {
 	isMigrating: boolean;
@@ -105,6 +116,7 @@ export class ProjectManager {
 					color: DEFAULT_BACKGROUND_COLOR,
 				},
 			},
+			customFonts: [],
 			version: CURRENT_PROJECT_VERSION,
 		};
 
@@ -149,31 +161,41 @@ export class ProjectManager {
 			}
 
 			const project = result.project;
+			const projectFonts = await this.hydrateProjectFonts({ project });
+			const projectWithFonts: TProject = {
+				...project,
+				customFonts: projectFonts.map((font) =>
+					this.getProjectFontMetadata({ font }),
+				),
+			};
 
-			this.active = project;
+			this.active = projectWithFonts;
 			this.notify();
 
-			if (project.scenes && project.scenes.length > 0) {
+			if (projectWithFonts.scenes && projectWithFonts.scenes.length > 0) {
 				this.editor.scenes.initializeScenes({
-					scenes: project.scenes,
-					currentSceneId: project.currentSceneId,
+					scenes: projectWithFonts.scenes,
+					currentSceneId: projectWithFonts.currentSceneId,
 				});
 			}
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
 			await this.editor.command.loadHistory({ projectId: id });
 
+			const customFontFamilies = new Set(
+				projectWithFonts.customFonts?.map((font) => font.family) ?? [],
+			);
 			await loadFonts({
 				families: [
 					...new Set(
-						(project.scenes ?? []).flatMap((scene) =>
+						(projectWithFonts.scenes ?? []).flatMap((scene) =>
 							getElementFontFamilies({ tracks: scene.tracks }),
 						),
 					),
-				],
+				].filter((family) => !customFontFamilies.has(family)),
 			});
 
-			if (!project.metadata.thumbnail) {
+			if (!projectWithFonts.metadata.thumbnail) {
 				try {
 					const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
 					if (didUpdateThumbnail) {
@@ -289,6 +311,7 @@ export class ProjectManager {
 				uniqueIds.map((id) =>
 					Promise.all([
 						storageService.deleteProjectMedia({ projectId: id }),
+						storageService.deleteProjectFonts({ projectId: id }),
 						storageService.deleteProject({ id }),
 					]),
 				),
@@ -313,6 +336,104 @@ export class ProjectManager {
 		} catch (error) {
 			console.error("Failed to delete projects:", error);
 		}
+	}
+
+	async importCustomFonts({
+		files,
+	}: {
+		files: File[];
+	}): Promise<ProjectFont[]> {
+		if (!this.active) return [];
+
+		const projectId = this.active.metadata.id;
+		const existingFonts = this.active.customFonts ?? [];
+		const importedFonts: ProjectFont[] = [];
+		const existingFamilies = new Set([
+			...existingFonts.map((font) => font.family),
+			...SYSTEM_FONTS,
+		]);
+
+		for (const file of files) {
+			if (!isSupportedFontFile({ file })) {
+				toast.error(`Unsupported font type: ${file.name}`);
+				continue;
+			}
+
+			const storageCheck = await storageService.canStoreFile({
+				size: file.size,
+			});
+			if (!storageCheck.canStore) {
+				toast.error(`Not enough browser storage for ${file.name}`);
+				continue;
+			}
+
+			const fontId = generateUUID();
+			const family = buildUniqueFontFamily({
+				fileName: file.name,
+				existingFamilies,
+			});
+			const mimeType = getSupportedFontMimeType({ file }) ?? file.type;
+			const createdAt = new Date().toISOString();
+			const objectUrl = URL.createObjectURL(file);
+			const baseFont: ProjectFontAsset = {
+				id: fontId,
+				family,
+				fileName: file.name,
+				mimeType,
+				size: file.size,
+				lastModified: file.lastModified,
+				createdAt,
+				file,
+				url: objectUrl,
+			};
+
+			try {
+				await loadProjectFont({ font: baseFont });
+
+				const repositoryCopy = await copyFontToRepository({
+					projectId,
+					fontId,
+					file,
+				});
+				const font: ProjectFontAsset = {
+					...baseFont,
+					sourceUrl: repositoryCopy?.sourceUrl,
+					repositoryPath: repositoryCopy?.repositoryPath,
+				};
+
+				await storageService.saveProjectFont({ projectId, font });
+
+				importedFonts.push(this.getProjectFontMetadata({ font }));
+				existingFamilies.add(family);
+			} catch (error) {
+				URL.revokeObjectURL(objectUrl);
+				console.error("Failed to import font:", error);
+				toast.error(`Failed to import ${file.name}`, {
+					description:
+						error instanceof Error
+							? error.message
+							: "The font could not be loaded",
+				});
+			}
+		}
+
+		if (importedFonts.length === 0) return [];
+
+		const updatedProject: TProject = {
+			...this.active,
+			customFonts: [...existingFonts, ...importedFonts],
+			metadata: {
+				...this.active.metadata,
+				updatedAt: new Date(),
+			},
+		};
+
+		this.active = updatedProject;
+		this.notify();
+		this.updateMetadata(updatedProject);
+		await storageService.saveProject({ project: updatedProject });
+
+		return importedFonts;
 	}
 
 	closeProject(): void {
@@ -465,15 +586,24 @@ export class ProjectManager {
 					const sourceMediaAssets = await storageService.loadAllMediaAssets({
 						projectId: sourceProjectId,
 					});
+					const sourceProjectFonts = await storageService.loadAllProjectFonts({
+						projectId: sourceProjectId,
+					});
 
-					await Promise.all(
-						sourceMediaAssets.map((mediaAsset) =>
+					await Promise.all([
+						...sourceMediaAssets.map((mediaAsset) =>
 							storageService.saveMediaAsset({
 								projectId: newProjectId,
 								mediaAsset,
 							}),
 						),
-					);
+						...sourceProjectFonts.map((font) =>
+							storageService.saveProjectFont({
+								projectId: newProjectId,
+								font,
+							}),
+						),
+					]);
 				}),
 			);
 
@@ -655,6 +785,116 @@ export class ProjectManager {
 	subscribe(listener: () => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
+	}
+
+	private async hydrateProjectFonts({
+		project,
+	}: {
+		project: TProject;
+	}): Promise<RuntimeProjectFont[]> {
+		let storedFonts: ProjectFontAsset[] = [];
+		try {
+			storedFonts = await storageService.loadAllProjectFonts({
+				projectId: project.metadata.id,
+			});
+		} catch (error) {
+			console.error("Failed to load project fonts:", error);
+		}
+
+		const storedById = new Map(storedFonts.map((font) => [font.id, font]));
+		const runtimeFonts: RuntimeProjectFont[] = [];
+		const seen = new Set<string>();
+
+		for (const font of project.customFonts ?? []) {
+			const stored = storedById.get(font.id);
+			if (stored) {
+				runtimeFonts.push({
+					...stored,
+					...font,
+					file: stored.file,
+					url: stored.url,
+				});
+				seen.add(font.id);
+				continue;
+			}
+
+			const restored = await this.restoreProjectFontFromRepository({
+				projectId: project.metadata.id,
+				font,
+			});
+			runtimeFonts.push(restored ?? font);
+			seen.add(font.id);
+		}
+
+		for (const font of storedFonts) {
+			if (!seen.has(font.id)) {
+				runtimeFonts.push(font);
+			}
+		}
+
+		await Promise.all(
+			runtimeFonts.map(async (font) => {
+				try {
+					await loadProjectFont({ font });
+				} catch (error) {
+					console.warn(`Failed to load project font "${font.family}":`, error);
+				}
+			}),
+		);
+
+		return runtimeFonts;
+	}
+
+	private async restoreProjectFontFromRepository({
+		projectId,
+		font,
+	}: {
+		projectId: string;
+		font: ProjectFont;
+	}): Promise<ProjectFontAsset | null> {
+		if (!font.sourceUrl) return null;
+
+		try {
+			const response = await fetch(font.sourceUrl);
+			if (!response.ok) return null;
+
+			const blob = await response.blob();
+			const file = new File([blob], font.fileName, {
+				type: font.mimeType,
+				lastModified: font.lastModified,
+			});
+			const asset: ProjectFontAsset = {
+				...font,
+				file,
+				url: URL.createObjectURL(file),
+			};
+			await storageService.saveProjectFont({ projectId, font: asset });
+			return asset;
+		} catch (error) {
+			console.warn(
+				`Could not restore project font "${font.family}" from repository assets:`,
+				error,
+			);
+			return null;
+		}
+	}
+
+	private getProjectFontMetadata({
+		font,
+	}: {
+		font: RuntimeProjectFont;
+	}): ProjectFont {
+		return {
+			id: font.id,
+			family: font.family,
+			fileName: font.fileName,
+			mimeType: font.mimeType,
+			size: font.size,
+			lastModified: font.lastModified,
+			createdAt: font.createdAt,
+			sourceUrl: font.sourceUrl,
+			repositoryPath: font.repositoryPath,
+		};
 	}
 
 	private async updateThumbnailFromTimeline(): Promise<boolean> {

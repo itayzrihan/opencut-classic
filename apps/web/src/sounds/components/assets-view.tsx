@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -22,13 +23,24 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
+import { useFileUpload } from "@/media/use-file-upload";
 import { useSoundSearch } from "@/sounds/use-sound-search";
 import { useSoundsStore } from "@/sounds/sounds-store";
+import {
+	sharedLibraryService,
+	useSharedLibraryStore,
+	type SharedAssetCategory,
+	type SharedAudioAsset,
+	type SharedAudioFolder,
+	type SharedCategoryScope,
+} from "@/shared-library";
 import type { SavedSound, SoundEffect } from "@/sounds/types";
 import { cn } from "@/utils/ui";
 import {
 	FavouriteIcon,
 	FilterMailIcon,
+	Folder03Icon,
+	MusicNote03Icon,
 	PauseIcon,
 	PlayIcon,
 	PlusSignIcon,
@@ -42,12 +54,26 @@ export function SoundsView() {
 				<div className="px-3 pt-4 pb-0">
 					<TabsList>
 						<TabsTrigger value="sound-effects">Sound effects</TabsTrigger>
+						<TabsTrigger value="music">Music</TabsTrigger>
+						<TabsTrigger value="online">Online</TabsTrigger>
 						<TabsTrigger value="saved">Saved</TabsTrigger>
 					</TabsList>
 				</div>
 				<Separator className="my-4" />
 				<TabsContent
 					value="sound-effects"
+					className="mt-0 flex min-h-0 flex-1 flex-col p-5 pt-0"
+				>
+					<SharedAudioFolderView folder="sfx" />
+				</TabsContent>
+				<TabsContent
+					value="music"
+					className="mt-0 flex min-h-0 flex-1 flex-col p-5 pt-0"
+				>
+					<SharedAudioFolderView folder="music" />
+				</TabsContent>
+				<TabsContent
+					value="online"
 					className="mt-0 flex min-h-0 flex-1 flex-col p-5 pt-0"
 				>
 					<SoundEffectsView />
@@ -59,6 +85,313 @@ export function SoundsView() {
 					<SavedSoundsView />
 				</TabsContent>
 			</Tabs>
+		</div>
+	);
+}
+
+function formatAudioDuration({ seconds }: { seconds?: number }): string {
+	if (!seconds || !Number.isFinite(seconds)) {
+		return "--:--";
+	}
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = Math.floor(seconds % 60);
+	return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
+function formatFileSize({ bytes }: { bytes: number }): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAudioScope({ folder }: { folder: SharedAudioFolder }): SharedCategoryScope {
+	return folder === "music" ? "audio:music" : "audio:sfx";
+}
+
+function SharedAudioFolderView({ folder }: { folder: SharedAudioFolder }) {
+	const {
+		audioAssets,
+		categories,
+		loadLibrary,
+		importAudioFiles,
+		createCategory,
+		addAssetToCategory,
+		isLoading,
+	} = useSharedLibraryStore();
+	const { addSharedAudioToTimeline } = useSoundsStore();
+	const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
+		null,
+	);
+	const [categoryName, setCategoryName] = useState("");
+	const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
+	const [playingId, setPlayingId] = useState<string | null>(null);
+	const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(
+		null,
+	);
+	const scope = getAudioScope({ folder });
+	const folderLabel = folder === "music" ? "Music" : "Sound effects";
+	const scopedCategories = categories.filter((category) => category.scope === scope);
+	const folderAssets = audioAssets.filter((asset) => asset.folder === folder);
+	const selectedCategory = selectedCategoryId
+		? scopedCategories.find((category) => category.id === selectedCategoryId)
+		: null;
+	const displayedAssets = selectedCategory
+		? folderAssets.filter((asset) => selectedCategory.assetIds.includes(asset.id))
+		: folderAssets;
+	const { openFilePicker, fileInputProps } = useFileUpload({
+		accept: "audio/*",
+		multiple: true,
+		onFilesSelected: (files) => {
+			void importAudioFiles({ files, folder });
+		},
+	});
+
+	useEffect(() => {
+		void loadLibrary();
+	}, [loadLibrary]);
+
+	useEffect(() => {
+		return () => {
+			audioElement?.pause();
+		};
+	}, [audioElement]);
+
+	const handleCreateCategory = async () => {
+		const category = await createCategory({ scope, name: categoryName });
+		if (category) {
+			setSelectedCategoryId(category.id);
+			setCategoryName("");
+			setIsCategoryDialogOpen(false);
+		}
+	};
+
+	const handleDropOnCategory = async ({
+		category,
+		event,
+	}: {
+		category: SharedAssetCategory;
+		event: React.DragEvent;
+	}) => {
+		event.preventDefault();
+		const assetId = event.dataTransfer.getData(
+			"application/x-shared-audio-asset-id",
+		);
+		if (!assetId) return;
+		await addAssetToCategory({ categoryId: category.id, assetId });
+	};
+
+	const playAsset = async ({ asset }: { asset: SharedAudioAsset }) => {
+		if (playingId === asset.id) {
+			audioElement?.pause();
+			setPlayingId(null);
+			return;
+		}
+
+		audioElement?.pause();
+		const audioUrl = await sharedLibraryService.getAudioAssetUrl({ id: asset.id });
+		if (!audioUrl) return;
+
+		const audio = new Audio(audioUrl);
+		audio.addEventListener("ended", () => setPlayingId(null));
+		audio.addEventListener("error", () => setPlayingId(null));
+		audio.play().catch((error) => {
+			console.error("Failed to play shared audio:", error);
+			setPlayingId(null);
+		});
+		setAudioElement(audio);
+		setPlayingId(asset.id);
+	};
+
+	return (
+		<div className="mt-1 flex h-full flex-col gap-4">
+			<input {...fileInputProps} />
+			<div className="flex items-center justify-between gap-3">
+				<div className="min-w-0">
+					<p className="text-sm font-medium">{folderLabel}</p>
+					<p className="text-muted-foreground text-xs">
+						Copied into the repository and shared across projects
+					</p>
+				</div>
+				<Button size="sm" onClick={openFilePicker}>
+					<HugeiconsIcon icon={PlusSignIcon} />
+					Add
+				</Button>
+			</div>
+
+			<div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hidden">
+				<button
+					type="button"
+					className={cn(
+						"bg-accent flex size-20 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border px-2 text-center",
+						!selectedCategoryId && "border-primary text-primary",
+					)}
+					onClick={() => setSelectedCategoryId(null)}
+				>
+					<HugeiconsIcon
+						icon={folder === "music" ? MusicNote03Icon : Folder03Icon}
+						className="size-5"
+					/>
+					<span className="max-w-full truncate text-xs">All</span>
+					<span className="text-muted-foreground text-[10px]">
+						{folderAssets.length}
+					</span>
+				</button>
+				{scopedCategories.map((category) => (
+					<button
+						key={category.id}
+						type="button"
+						className={cn(
+							"bg-accent flex size-20 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border px-2 text-center",
+							selectedCategoryId === category.id &&
+								"border-primary text-primary",
+						)}
+						onClick={() => setSelectedCategoryId(category.id)}
+						onDragOver={(event) => event.preventDefault()}
+						onDrop={(event) => void handleDropOnCategory({ category, event })}
+						title="Drop a sound here to add it to this category"
+					>
+						<HugeiconsIcon icon={Folder03Icon} className="size-5" />
+						<span className="max-w-full truncate text-xs">{category.name}</span>
+						<span className="text-muted-foreground text-[10px]">
+							{category.assetIds.length}
+						</span>
+					</button>
+				))}
+				<Dialog
+					open={isCategoryDialogOpen}
+					onOpenChange={setIsCategoryDialogOpen}
+				>
+					<DialogTrigger asChild>
+						<button
+							type="button"
+							className="border-muted-foreground/30 text-muted-foreground hover:text-foreground flex size-20 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border border-dashed px-2 text-center"
+						>
+							<HugeiconsIcon icon={PlusSignIcon} className="size-5" />
+							<span className="text-xs">Category</span>
+						</button>
+					</DialogTrigger>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>Create category</DialogTitle>
+							<DialogDescription>
+								Categories are saved in the repository manifest and can contain
+								the same file in many places.
+							</DialogDescription>
+						</DialogHeader>
+						<DialogBody>
+							<Input
+								placeholder="Category name"
+								value={categoryName}
+								onChange={(event) => setCategoryName(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter") {
+										event.preventDefault();
+										void handleCreateCategory();
+									}
+								}}
+							/>
+						</DialogBody>
+						<DialogFooter>
+							<Button
+								variant="text"
+								onClick={() => setIsCategoryDialogOpen(false)}
+							>
+								Cancel
+							</Button>
+							<Button onClick={() => void handleCreateCategory()}>
+								Create
+							</Button>
+						</DialogFooter>
+					</DialogContent>
+				</Dialog>
+			</div>
+
+			<div className="relative min-h-0 flex-1 overflow-hidden">
+				<ScrollArea className="h-full flex-1">
+					<div className="flex flex-col gap-3">
+						{isLoading && folderAssets.length === 0 && (
+							<div className="text-muted-foreground text-sm">
+								Loading shared sounds...
+							</div>
+						)}
+						{displayedAssets.map((asset) => (
+							<SharedAudioItem
+								key={asset.id}
+								asset={asset}
+								isPlaying={playingId === asset.id}
+								onPlay={playAsset}
+								onAddToTimeline={addSharedAudioToTimeline}
+							/>
+						))}
+						{!isLoading && displayedAssets.length === 0 && (
+							<div className="text-muted-foreground py-8 text-center text-sm">
+								{selectedCategory
+									? "Drop sounds into this category to show them here."
+									: `Add ${folderLabel.toLowerCase()} to build your shared library.`}
+							</div>
+						)}
+					</div>
+				</ScrollArea>
+			</div>
+		</div>
+	);
+}
+
+function SharedAudioItem({
+	asset,
+	isPlaying,
+	onPlay,
+	onAddToTimeline,
+}: {
+	asset: SharedAudioAsset;
+	isPlaying: boolean;
+	onPlay: ({ asset }: { asset: SharedAudioAsset }) => void;
+	onAddToTimeline: ({ asset }: { asset: SharedAudioAsset }) => Promise<boolean>;
+}) {
+	const handleDragStart = (event: React.DragEvent<HTMLDivElement>) => {
+		event.dataTransfer.setData("application/x-shared-audio-asset-id", asset.id);
+		event.dataTransfer.setData("text/plain", asset.name);
+	};
+
+	return (
+		<div
+			className="group flex items-center gap-3 opacity-100 hover:opacity-75"
+			draggable
+			onDragStart={handleDragStart}
+		>
+			<button
+				type="button"
+				className="flex min-w-0 flex-1 items-center gap-3 text-left"
+				onClick={() => onPlay({ asset })}
+			>
+				<div className="bg-accent relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-md">
+					<div className="from-primary/20 absolute inset-0 bg-gradient-to-br to-transparent" />
+					{isPlaying ? (
+						<HugeiconsIcon icon={PauseIcon} className="size-5" />
+					) : (
+						<HugeiconsIcon icon={PlayIcon} className="size-5" />
+					)}
+				</div>
+				<div className="min-w-0 flex-1 overflow-hidden">
+					<p className="truncate text-sm font-medium">{asset.name}</p>
+					<span className="text-muted-foreground block truncate text-xs">
+						{formatAudioDuration({ seconds: asset.duration })} ·{" "}
+						{formatFileSize({ bytes: asset.size })}
+					</span>
+				</div>
+			</button>
+			<Button
+				variant="text"
+				size="icon"
+				className="text-muted-foreground hover:text-foreground w-auto !opacity-100"
+				onClick={(event) => {
+					event.stopPropagation();
+					void onAddToTimeline({ asset });
+				}}
+				title="Add to timeline"
+			>
+				<HugeiconsIcon icon={PlusSignIcon} />
+			</Button>
 		</div>
 	);
 }

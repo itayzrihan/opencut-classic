@@ -58,7 +58,9 @@ export function TextWordsTab({
 			entry.element.type === "text",
 	);
 	const isBulk = bulkTextEntries.length > 1;
-	const effectiveScope = isBulk ? ({ type: "layer" } as const) : scope;
+	const isBulkWordScope = isBulk && scope.type === "words";
+	const effectiveScope =
+		isBulk && !isBulkWordScope ? ({ type: "layer" } as const) : scope;
 	const settings = getScopedSettings({ element, scope: effectiveScope });
 	const values = {
 		wordAnimationId:
@@ -98,15 +100,23 @@ export function TextWordsTab({
 	const updateScopedSettings = (patch: TextScopedSettings) => {
 		if (isBulk) {
 			editor.timeline.updateElements({
-				updates: bulkTextEntries.map((entry) => ({
-					trackId: entry.track.id,
-					elementId: entry.element.id,
-					patch: applyPatchToElement({
-						targetElement: entry.element,
-						scope: { type: "layer" },
-						patch,
-					}),
-				})),
+				updates: bulkTextEntries.flatMap((entry) => {
+					const entryScope = isBulkWordScope
+						? resolveTextScopeForEntry({ scope, entry })
+						: ({ type: "layer" } as const);
+					if (!entryScope) return [];
+					return [
+						{
+							trackId: entry.track.id,
+							elementId: entry.element.id,
+							patch: applyPatchToElement({
+								targetElement: entry.element,
+								scope: entryScope,
+								patch,
+							}),
+						},
+					];
+				}),
 			});
 			return;
 		}
@@ -128,6 +138,25 @@ export function TextWordsTab({
 
 	const clearOverride = () => {
 		if (effectiveScope.type === "layer") return;
+		if (effectiveScope.type === "words" && isBulkWordScope) {
+			editor.timeline.updateElements({
+				updates: bulkTextEntries.flatMap((entry) => {
+					const entryScope = resolveTextScopeForEntry({ scope, entry });
+					if (!entryScope) return [];
+					return [
+						{
+							trackId: entry.track.id,
+							elementId: entry.element.id,
+							patch: clearScopedTextOverride({
+								element: entry.element,
+								scope: entryScope,
+							}),
+						},
+					];
+				}),
+			});
+			return;
+		}
 		editor.timeline.updateElements({
 			updates: [
 				{
@@ -254,7 +283,7 @@ export function TextWordsTab({
 						</Select>
 					</SectionField>
 
-					{(!element.wordRuns?.length || isBulk) && (
+					{(!element.wordRuns?.length || (isBulk && !isBulkWordScope)) && (
 						<Button
 							type="button"
 							variant="outline"
@@ -280,4 +309,19 @@ export function TextWordsTab({
 			</SectionContent>
 		</Section>
 	);
+}
+
+function resolveTextScopeForEntry({
+	scope,
+	entry,
+}: {
+	scope: TextOverrideScope;
+	entry: ElementWithTrackForParams & { element: TextElement };
+}): TextOverrideScope | null {
+	if (scope.type !== "words") {
+		return scope;
+	}
+
+	const wordIds = entry.textWordIds ?? scope.wordIds;
+	return wordIds.length > 0 ? { type: "words", wordIds } : null;
 }

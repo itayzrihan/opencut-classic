@@ -1,5 +1,5 @@
 import type { EditorCore } from "@/core";
-import { TracksSnapshotCommand } from "@/commands";
+import { TracksSnapshotCommand } from "@/commands/timeline/tracks-snapshot";
 import { buildSubtitleTextElement } from "./build-subtitle-text-element";
 import type { SubtitleCue } from "./types";
 import type { TextTrack } from "@/timeline";

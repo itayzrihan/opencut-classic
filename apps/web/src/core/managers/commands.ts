@@ -255,6 +255,9 @@ export class CommandManager {
 			})),
 			currentSceneId: project.currentSceneId,
 			settings: this.cloneData(project.settings),
+			customFonts: project.customFonts
+				? this.cloneData(project.customFonts)
+				: undefined,
 			version: project.version,
 			timelineViewState: project.timelineViewState
 				? this.cloneData(project.timelineViewState)
@@ -380,6 +383,9 @@ export class CommandManager {
 			})),
 			currentSceneId: snapshot.currentSceneId,
 			settings: this.cloneData(snapshot.settings),
+			customFonts: snapshot.customFonts
+				? this.cloneData(snapshot.customFonts)
+				: undefined,
 			version: snapshot.version,
 			timelineViewState: snapshot.timelineViewState
 				? this.cloneData(snapshot.timelineViewState)
