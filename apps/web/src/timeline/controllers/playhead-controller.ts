@@ -14,12 +14,9 @@ import {
 import { getBookmarkSnapPoints } from "@/timeline/bookmarks/index";
 import { getElementEdgeSnapPoints } from "@/timeline/element-snap-source";
 import { getAnimationKeyframeSnapPointsForTimeline } from "@/timeline/animation-snap-points";
-import {
-	getCenteredLineLeft,
-	timelineTimeToPixels,
-	timelineTimeToSnappedPixels,
-} from "@/timeline";
+import { timelineTimeToPixels } from "@/timeline";
 import { BASE_TIMELINE_PIXELS_PER_SECOND } from "@/timeline/scale";
+import { getPlayheadLeftPx } from "@/timeline/playhead-position";
 import type { Bookmark, SceneTracks } from "@/timeline";
 
 // --- Session ---
@@ -142,7 +139,14 @@ export class PlayheadController {
 
 	onRulerMouseDown(event: ReactMouseEvent): void {
 		if (event.button !== 0) return;
-		if (this.config.getPlayheadEl()?.contains(event.target as Node)) return;
+		const eventTarget = event.target;
+		if (
+			typeof Node !== "undefined" &&
+			eventTarget instanceof Node &&
+			this.config.getPlayheadEl()?.contains(eventTarget)
+		) {
+			return;
+		}
 
 		event.preventDefault();
 		this.session = {
@@ -168,12 +172,14 @@ export class PlayheadController {
 		const playheadEl = this.config.getPlayheadEl();
 		if (!playheadEl) return;
 
-		const centerPixel = timelineTimeToSnappedPixels({
+		const scrollLeft = this.config.getRulerScrollEl()?.scrollLeft ?? 0;
+		const left = getPlayheadLeftPx({
 			time,
 			zoomLevel: this.config.zoomLevel,
+			scrollLeft,
 		});
-		const scrollLeft = this.config.getRulerScrollEl()?.scrollLeft ?? 0;
-		playheadEl.style.left = `${getCenteredLineLeft({ centerPixel }) - scrollLeft}px`;
+		playheadEl.style.left = `${left}px`;
+		playheadEl.setAttribute("aria-valuenow", String(time));
 	}
 
 	/**

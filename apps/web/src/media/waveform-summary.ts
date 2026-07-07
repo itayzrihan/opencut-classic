@@ -5,32 +5,80 @@ import type { RetimeConfig } from "@/timeline";
 
 const RMS_ANALYSIS_WINDOW_SECONDS = 0.02;
 const DEFAULT_SOURCE_WAVEFORM_BUCKET_SIZE = 128;
+const DEFAULT_WAVEFORM_SUMMARY_YIELD_BUCKETS = 2048;
 
-function computePeakBuckets({
-	buffer,
-	buckets,
-}: {
-	buffer: AudioBuffer;
-	buckets: SampleBucket[];
-}): number[] {
+type YieldToMainThread = () => Promise<void> | void;
+
+function getWaveformChannelData({ buffer }: { buffer: AudioBuffer }) {
 	const channels = buffer.numberOfChannels;
-	const channelData: Float32Array[] = Array.from({ length: channels }, (_, c) =>
-		buffer.getChannelData(c),
-	);
+	return Array.from({ length: channels }, (_, c) => buffer.getChannelData(c));
+}
 
-	return buckets.map(({ bucketStart, bucketEnd }) => {
-		let peak = 0;
-		for (let c = 0; c < channels; c++) {
-			const data = channelData[c];
-			for (let j = bucketStart; j < bucketEnd; j++) {
-				const abs = Math.abs(data[j] ?? 0);
-				if (abs > peak) {
-					peak = abs;
-				}
+function computePeakForRange({
+	channelData,
+	bucketStart,
+	bucketEnd,
+}: {
+	channelData: Float32Array[];
+	bucketStart: number;
+	bucketEnd: number;
+}) {
+	let peak = 0;
+	for (let c = 0; c < channelData.length; c++) {
+		const data = channelData[c];
+		for (let j = bucketStart; j < bucketEnd; j++) {
+			const abs = Math.abs(data[j] ?? 0);
+			if (abs > peak) {
+				peak = abs;
 			}
 		}
-		return peak;
+	}
+	return peak;
+}
+
+function yieldToEventLoop(): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, 0);
 	});
+}
+
+async function buildPeakAmplitudeSummaryAsync({
+	channelData,
+	totalSamples,
+	bucketSize,
+	yieldEveryBuckets,
+	yieldToMainThread,
+}: {
+	channelData: Float32Array[];
+	totalSamples: number;
+	bucketSize: number;
+	yieldEveryBuckets: number;
+	yieldToMainThread: YieldToMainThread;
+}) {
+	const bucketCount = Math.max(1, Math.ceil(totalSamples / bucketSize));
+	const amplitudes = new Float32Array(bucketCount);
+	const safeYieldEveryBuckets = Math.max(0, Math.floor(yieldEveryBuckets));
+
+	for (let bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
+		const bucketStart = bucketIndex * bucketSize;
+		const bucketEnd = Math.min(totalSamples, bucketStart + bucketSize);
+		amplitudes[bucketIndex] = computePeakForRange({
+			channelData,
+			bucketStart,
+			bucketEnd,
+		});
+
+		if (
+			safeYieldEveryBuckets > 0 &&
+			bucketIndex > 0 &&
+			bucketIndex < bucketCount - 1 &&
+			bucketIndex % safeYieldEveryBuckets === 0
+		) {
+			await yieldToMainThread();
+		}
+	}
+
+	return amplitudes;
 }
 
 export interface SampleBucket {
@@ -44,6 +92,14 @@ export interface SourceWaveformSummary {
 	totalSamples: number;
 	bucketSize: number;
 	amplitudes: Float32Array;
+}
+
+export interface SourceWaveformChannelSummaryInput {
+	sourceKey: string;
+	channelData: Float32Array[];
+	sampleRate: number;
+	totalSamples: number;
+	bucketSize?: number;
 }
 
 export function buildWaveformSourceKey({
@@ -65,24 +121,97 @@ export function buildSourceWaveformSummary({
 	buffer: AudioBuffer;
 	bucketSize?: number;
 }): SourceWaveformSummary {
+	return buildSourceWaveformSummaryFromChannels({
+		sourceKey,
+		channelData: getWaveformChannelData({ buffer }),
+		sampleRate: buffer.sampleRate,
+		totalSamples: buffer.length,
+		bucketSize,
+	});
+}
+
+export function buildSourceWaveformSummaryFromChannels({
+	sourceKey,
+	channelData,
+	sampleRate,
+	totalSamples,
+	bucketSize = DEFAULT_SOURCE_WAVEFORM_BUCKET_SIZE,
+}: SourceWaveformChannelSummaryInput): SourceWaveformSummary {
 	const safeBucketSize = Math.max(1, Math.floor(bucketSize));
-	const bucketCount = Math.max(1, Math.ceil(buffer.length / safeBucketSize));
-	const amplitudes = computePeakBuckets({
-		buffer,
-		buckets: Array.from({ length: bucketCount }, (_, bucketIndex) => {
-			const bucketStart = bucketIndex * safeBucketSize;
-			const bucketEnd = Math.min(buffer.length, bucketStart + safeBucketSize);
-			return { bucketStart, bucketEnd };
-		}),
+	const bucketCount = Math.max(1, Math.ceil(totalSamples / safeBucketSize));
+	const amplitudes = new Float32Array(bucketCount);
+
+	for (let bucketIndex = 0; bucketIndex < bucketCount; bucketIndex++) {
+		const bucketStart = bucketIndex * safeBucketSize;
+		const bucketEnd = Math.min(totalSamples, bucketStart + safeBucketSize);
+		amplitudes[bucketIndex] = computePeakForRange({
+			channelData,
+			bucketStart,
+			bucketEnd,
+		});
+	}
+
+	return {
+		sourceKey,
+		sampleRate,
+		totalSamples,
+		bucketSize: safeBucketSize,
+		amplitudes,
+	};
+}
+
+async function buildSourceWaveformSummaryFromChannelsAsync({
+	sourceKey,
+	channelData,
+	sampleRate,
+	totalSamples,
+	bucketSize = DEFAULT_SOURCE_WAVEFORM_BUCKET_SIZE,
+	yieldEveryBuckets,
+	yieldToMainThread,
+}: SourceWaveformChannelSummaryInput & {
+	yieldEveryBuckets: number;
+	yieldToMainThread: YieldToMainThread;
+}): Promise<SourceWaveformSummary> {
+	const safeBucketSize = Math.max(1, Math.floor(bucketSize));
+	const amplitudes = await buildPeakAmplitudeSummaryAsync({
+		channelData,
+		totalSamples,
+		bucketSize: safeBucketSize,
+		yieldEveryBuckets,
+		yieldToMainThread,
 	});
 
 	return {
 		sourceKey,
+		sampleRate,
+		totalSamples,
+		bucketSize: safeBucketSize,
+		amplitudes,
+	};
+}
+
+export async function buildSourceWaveformSummaryAsync({
+	sourceKey,
+	buffer,
+	bucketSize = DEFAULT_SOURCE_WAVEFORM_BUCKET_SIZE,
+	yieldEveryBuckets = DEFAULT_WAVEFORM_SUMMARY_YIELD_BUCKETS,
+	yieldToMainThread = yieldToEventLoop,
+}: {
+	sourceKey: string;
+	buffer: AudioBuffer;
+	bucketSize?: number;
+	yieldEveryBuckets?: number;
+	yieldToMainThread?: YieldToMainThread;
+}): Promise<SourceWaveformSummary> {
+	return buildSourceWaveformSummaryFromChannelsAsync({
+		sourceKey,
+		channelData: getWaveformChannelData({ buffer }),
 		sampleRate: buffer.sampleRate,
 		totalSamples: buffer.length,
-		bucketSize: safeBucketSize,
-		amplitudes: Float32Array.from(amplitudes),
-	};
+		bucketSize,
+		yieldEveryBuckets,
+		yieldToMainThread,
+	});
 }
 
 export function buildWaveformSampleBuckets({

@@ -67,7 +67,6 @@ export class UpdateElementsCommand extends Command {
 			tracks: updatedTracks,
 			previousTracks: this.savedState,
 			updates: this.updates,
-			canvasSize: editor.project.getActive().settings.canvasSize,
 		});
 		updatedTracks = syncTextLayerWordsIntoCaptionSource({
 			tracks: updatedTracks,

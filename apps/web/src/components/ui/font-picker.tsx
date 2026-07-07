@@ -3,6 +3,7 @@
 import {
 	type CSSProperties,
 	useCallback,
+	useEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -18,16 +19,18 @@ import { Button } from "@/components/ui/button";
 import { loadFullFont } from "@/fonts/google-fonts";
 import { CUSTOM_FONT_ACCEPT, loadProjectFont } from "@/fonts/custom-fonts";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
+import { loadTypekitFont, loadTypekitFonts } from "@/fonts/typekit-fonts";
 import type { FontAtlas, FontAtlasEntry } from "@/fonts/types";
 import { useFontAtlas } from "@/fonts/use-font-atlas";
 import { cn } from "@/utils/ui";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorProject } from "@/editor/use-editor";
 import { ChevronDown, Loader2, Search, Upload } from "lucide-react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { TextIcon } from "@hugeicons/core-free-icons";
 
 const FONT_TABS = [
 	{ key: "all", label: "All fonts" },
+	{ key: "adobe", label: "Adobe" },
 	{ key: "my-fonts", label: "My fonts" },
 	{ key: "favorites", label: "Favorites" },
 ] as const;
@@ -55,10 +58,14 @@ export function FontPicker({
 	const [search, setSearch] = useState("");
 	const [activeTab, setActiveTab] = useState<FontTab>("all");
 	const [isImporting, setIsImporting] = useState(false);
+	const [typekitStatus, setTypekitStatus] = useState<
+		"idle" | "loading" | "error"
+	>("loading");
+	const [typekitFontNames, setTypekitFontNames] = useState<string[]>([]);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const fontInputRef = useRef<HTMLInputElement>(null);
 	const editor = useEditor();
-	const customFonts = useEditor(
+	const customFonts = useEditorProject(
 		(e) => e.project.getActiveOrNull()?.customFonts ?? [],
 	);
 	const {
@@ -79,11 +86,18 @@ export function FontPicker({
 		() => new Set(customFontNames),
 		[customFontNames],
 	);
+	const typekitFontNameSet = useMemo(
+		() => new Set(typekitFontNames),
+		[typekitFontNames],
+	);
 	const fontNames = useMemo(() => {
 		if (activeTab === "my-fonts") return customFontNames;
 		if (activeTab === "favorites") return [];
-		return Array.from(new Set([...customFontNames, ...atlasFontNames])).sort();
-	}, [activeTab, atlasFontNames, customFontNames]);
+		if (activeTab === "adobe") return typekitFontNames;
+		return Array.from(
+			new Set([...customFontNames, ...typekitFontNames, ...atlasFontNames]),
+		).sort();
+	}, [activeTab, atlasFontNames, customFontNames, typekitFontNames]);
 
 	const filteredFonts = useMemo(() => {
 		if (!search) return fontNames;
@@ -106,6 +120,22 @@ export function FontPicker({
 		resetPicker();
 	}, [resetPicker]);
 
+	useEffect(() => {
+		if (!open) return;
+
+		let isCancelled = false;
+		setTypekitStatus("loading");
+		loadTypekitFonts({ refresh: true }).then((fonts) => {
+			if (isCancelled) return;
+			setTypekitFontNames(fonts.map((font) => font.family));
+			setTypekitStatus(fonts.length > 0 ? "idle" : "error");
+		});
+
+		return () => {
+			isCancelled = true;
+		};
+	}, [open]);
+
 	const handleSelect = useCallback(
 		async ({ family }: { family: string }) => {
 			const customFont = customFontByFamily.get(family);
@@ -115,6 +145,8 @@ export function FontPicker({
 				} catch {
 					// ignore load failure, font will fall back to system default
 				}
+			} else if (typekitFontNameSet.has(family)) {
+				await loadTypekitFont({ family });
 			} else if (!SYSTEM_FONTS.has(family)) {
 				try {
 					await loadFullFont({ family });
@@ -125,7 +157,7 @@ export function FontPicker({
 			onValueChange?.(family);
 			closePicker();
 		},
-		[closePicker, customFontByFamily, onValueChange],
+		[closePicker, customFontByFamily, onValueChange, typekitFontNameSet],
 	);
 
 	const handleImportFonts = useCallback(
@@ -282,6 +314,20 @@ export function FontPicker({
 						No fonts imported.
 					</div>
 				)}
+				{activeTab === "adobe" &&
+					typekitStatus === "loading" &&
+					fontNames.length === 0 && (
+						<div className="py-8 text-center text-sm text-muted-foreground">
+							Loading Adobe fonts...
+						</div>
+					)}
+				{activeTab === "adobe" &&
+					typekitStatus === "error" &&
+					fontNames.length === 0 && (
+						<div className="py-6 text-center text-sm text-muted-foreground">
+							No Adobe fonts found.
+						</div>
+					)}
 				{(status === "idle" ||
 					activeTab !== "all" ||
 					filteredFonts.length > 0) &&
@@ -296,6 +342,7 @@ export function FontPicker({
 								customFontNameSet,
 								filteredFonts,
 								selectedFont: defaultValue,
+								typekitFontNameSet,
 								onFontSelect: handleSelect,
 							}}
 							style={{ height: listHeight, width: LIST_WIDTH }}
@@ -332,6 +379,7 @@ type FontRowProps = {
 	customFontNameSet: Set<string>;
 	filteredFonts: string[];
 	selectedFont: string | undefined;
+	typekitFontNameSet: Set<string>;
 	onFontSelect: (params: { family: string }) => void;
 };
 
@@ -342,6 +390,7 @@ function FontRow({
 	customFontNameSet,
 	filteredFonts,
 	selectedFont,
+	typekitFontNameSet,
 	onFontSelect,
 }: RowComponentProps<FontRowProps>) {
 	const fontName = filteredFonts[index];
@@ -349,6 +398,7 @@ function FontRow({
 	const isSelected = fontName === selectedFont;
 	const isSystemFont = SYSTEM_FONTS.has(fontName);
 	const isCustomFont = customFontNameSet.has(fontName);
+	const isTypekitFont = typekitFontNameSet.has(fontName);
 
 	return (
 		<button
@@ -368,7 +418,7 @@ function FontRow({
 			aria-label={fontName}
 		>
 			<div className="min-w-0 overflow-hidden">
-				{isSystemFont || isCustomFont || !entry ? (
+				{isSystemFont || isCustomFont || isTypekitFont || !entry ? (
 					<span
 						className="text-xl text-foreground/85"
 						style={{ fontFamily: fontName }}

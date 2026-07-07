@@ -65,8 +65,8 @@ export function TextWordsTab({
 	const values = {
 		wordAnimationId:
 			settings.wordAnimationId ?? CAPTION_WORD_ANIMATIONS[0]?.id ?? "",
-		revealMode: settings.revealMode ?? "emphasize-spoken",
-		transitionIn: settings.transitionIn ?? "blur-zoom",
+		revealMode: settings.revealMode ?? "determined-by-preset",
+		transitionIn: settings.transitionIn ?? "none",
 		accentColor: settings.accentColor ?? CAPTION_ACCENT_COLORS[0]?.value ?? "",
 		wordDirection: settings.wordDirection ?? "auto",
 	};
@@ -179,7 +179,15 @@ export function TextWordsTab({
 						<Select
 							value={values.wordAnimationId}
 							onValueChange={(wordAnimationId) =>
-								updateScopedSettings({ wordAnimationId })
+								updateScopedSettings(
+									wordAnimationId === "none"
+										? {
+												wordAnimationId,
+												revealMode: "determined-by-preset",
+												transitionIn: "none",
+											}
+										: { wordAnimationId },
+								)
 							}
 						>
 							<SelectTrigger>

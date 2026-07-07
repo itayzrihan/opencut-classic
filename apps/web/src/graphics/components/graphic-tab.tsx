@@ -8,7 +8,11 @@ import {
 } from "@/components/editor/panels/properties/hooks/use-keyframed-param-property";
 import type { ParamDefinition, ParamValues } from "@/params";
 import type { GraphicElement } from "@/timeline";
-import { graphicsRegistry, registerDefaultGraphics, resolveGraphicElementParamsAtTime } from "@/graphics";
+import {
+	graphicsRegistry,
+	registerDefaultGraphics,
+	resolveGraphicElementParamsAtTime,
+} from "@/graphics";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { useEditor } from "@/editor/use-editor";
 import {
@@ -189,13 +193,14 @@ function StrokeSection({
 	);
 }
 
-function AnimatedGraphicParamField({
+export function AnimatedGraphicParamField({
 	param,
 	trackId,
 	element,
 	localTime,
 	isPlayheadWithinElementRange,
 	resolvedParams,
+	buildBaseUpdates,
 }: {
 	key?: string;
 	param: ParamDefinition;
@@ -204,6 +209,9 @@ function AnimatedGraphicParamField({
 	localTime: MediaTime;
 	isPlayheadWithinElementRange: boolean;
 	resolvedParams: ParamValues;
+	buildBaseUpdates?: ({ value }: { value: ParamValues[string] }) => {
+		params?: ParamValues;
+	};
 }) {
 	const animatedParam: KeyframedParamPropertyResult = useKeyframedParamProperty(
 		{
@@ -214,12 +222,14 @@ function AnimatedGraphicParamField({
 			localTime,
 			isPlayheadWithinElementRange,
 			resolvedValue: resolvedParams[param.key] ?? param.default,
-			buildBaseUpdates: ({ value }) => ({
-				params: {
-					...element.params,
-					[param.key]: value,
-				},
-			}),
+			buildBaseUpdates:
+				buildBaseUpdates ??
+				(({ value }) => ({
+					params: {
+						...element.params,
+						[param.key]: value,
+					},
+				})),
 		},
 	);
 

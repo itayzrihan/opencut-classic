@@ -1,6 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+} from "react";
+import {
+	List,
+	type ListImperativeAPI,
+	type RowComponentProps,
+} from "react-window";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -22,7 +35,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
+import { useContainerSize } from "@/hooks/use-container-size";
 import { useFileUpload } from "@/media/use-file-upload";
 import { useSoundSearch } from "@/sounds/use-sound-search";
 import { useSoundsStore } from "@/sounds/sounds-store";
@@ -46,6 +59,11 @@ import {
 	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+
+const SOUND_ROW_HEIGHT_PX = 64;
+const SOUND_LIST_OVERSCAN_ROWS = 8;
+const SOUND_LIST_LOAD_MORE_THRESHOLD_ROWS = 8;
+const SOUND_LIST_FALLBACK_HEIGHT_PX = 480;
 
 export function SoundsView() {
 	return (
@@ -104,7 +122,40 @@ function formatFileSize({ bytes }: { bytes: number }): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getAudioScope({ folder }: { folder: SharedAudioFolder }): SharedCategoryScope {
+function savedSoundToSoundEffect({
+	savedSound,
+}: {
+	savedSound: SavedSound;
+}): SoundEffect {
+	return {
+		id: savedSound.id,
+		name: savedSound.name,
+		description: "",
+		url: "",
+		previewUrl: savedSound.previewUrl,
+		downloadUrl: savedSound.downloadUrl,
+		duration: savedSound.duration,
+		filesize: 0,
+		type: "audio",
+		channels: 0,
+		bitrate: 0,
+		bitdepth: 0,
+		samplerate: 0,
+		username: savedSound.username,
+		tags: savedSound.tags,
+		license: savedSound.license,
+		created: savedSound.savedAt,
+		downloads: 0,
+		rating: 0,
+		ratingCount: 0,
+	};
+}
+
+function getAudioScope({
+	folder,
+}: {
+	folder: SharedAudioFolder;
+}): SharedCategoryScope {
 	return folder === "music" ? "audio:music" : "audio:sfx";
 }
 
@@ -118,7 +169,9 @@ function SharedAudioFolderView({ folder }: { folder: SharedAudioFolder }) {
 		addAssetToCategory,
 		isLoading,
 	} = useSharedLibraryStore();
-	const { addSharedAudioToTimeline } = useSoundsStore();
+	const addSharedAudioToTimeline = useSoundsStore(
+		(state) => state.addSharedAudioToTimeline,
+	);
 	const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
 		null,
 	);
@@ -130,14 +183,24 @@ function SharedAudioFolderView({ folder }: { folder: SharedAudioFolder }) {
 	);
 	const scope = getAudioScope({ folder });
 	const folderLabel = folder === "music" ? "Music" : "Sound effects";
-	const scopedCategories = categories.filter((category) => category.scope === scope);
-	const folderAssets = audioAssets.filter((asset) => asset.folder === folder);
+	const scopedCategories = useMemo(
+		() => categories.filter((category) => category.scope === scope),
+		[categories, scope],
+	);
+	const folderAssets = useMemo(
+		() => audioAssets.filter((asset) => asset.folder === folder),
+		[audioAssets, folder],
+	);
 	const selectedCategory = selectedCategoryId
 		? scopedCategories.find((category) => category.id === selectedCategoryId)
 		: null;
-	const displayedAssets = selectedCategory
-		? folderAssets.filter((asset) => selectedCategory.assetIds.includes(asset.id))
-		: folderAssets;
+	const displayedAssets = useMemo(() => {
+		if (!selectedCategory) {
+			return folderAssets;
+		}
+		const categoryAssetIds = new Set(selectedCategory.assetIds);
+		return folderAssets.filter((asset) => categoryAssetIds.has(asset.id));
+	}, [folderAssets, selectedCategory]);
 	const { openFilePicker, fileInputProps } = useFileUpload({
 		accept: "audio/*",
 		multiple: true,
@@ -180,27 +243,32 @@ function SharedAudioFolderView({ folder }: { folder: SharedAudioFolder }) {
 		await addAssetToCategory({ categoryId: category.id, assetId });
 	};
 
-	const playAsset = async ({ asset }: { asset: SharedAudioAsset }) => {
-		if (playingId === asset.id) {
+	const playAsset = useCallback(
+		async ({ asset }: { asset: SharedAudioAsset }) => {
+			if (playingId === asset.id) {
+				audioElement?.pause();
+				setPlayingId(null);
+				return;
+			}
+
 			audioElement?.pause();
-			setPlayingId(null);
-			return;
-		}
+			const audioUrl = await sharedLibraryService.getAudioAssetUrl({
+				id: asset.id,
+			});
+			if (!audioUrl) return;
 
-		audioElement?.pause();
-		const audioUrl = await sharedLibraryService.getAudioAssetUrl({ id: asset.id });
-		if (!audioUrl) return;
-
-		const audio = new Audio(audioUrl);
-		audio.addEventListener("ended", () => setPlayingId(null));
-		audio.addEventListener("error", () => setPlayingId(null));
-		audio.play().catch((error) => {
-			console.error("Failed to play shared audio:", error);
-			setPlayingId(null);
-		});
-		setAudioElement(audio);
-		setPlayingId(asset.id);
-	};
+			const audio = new Audio(audioUrl);
+			audio.addEventListener("ended", () => setPlayingId(null));
+			audio.addEventListener("error", () => setPlayingId(null));
+			audio.play().catch((error) => {
+				console.error("Failed to play shared audio:", error);
+				setPlayingId(null);
+			});
+			setAudioElement(audio);
+			setPlayingId(asset.id);
+		},
+		[audioElement, playingId],
+	);
 
 	return (
 		<div className="mt-1 flex h-full flex-col gap-4">
@@ -337,7 +405,7 @@ function SharedAudioFolderView({ folder }: { folder: SharedAudioFolder }) {
 	);
 }
 
-function SharedAudioItem({
+const SharedAudioItem = memo(function SharedAudioItem({
 	asset,
 	isPlaying,
 	onPlay,
@@ -394,28 +462,164 @@ function SharedAudioItem({
 			</Button>
 		</div>
 	);
+});
+SharedAudioItem.displayName = "SharedAudioItem";
+
+function VirtualSoundList({
+	sounds,
+	playingId,
+	onPlay,
+	isLoadingMore = false,
+	hasMore = false,
+	isLoading = false,
+	onLoadMore,
+	initialScrollTop = 0,
+	onScrollTopChange,
+}: {
+	sounds: SoundEffect[];
+	playingId: number | null;
+	onPlay: ({ sound }: { sound: SoundEffect }) => void;
+	isLoadingMore?: boolean;
+	hasMore?: boolean;
+	isLoading?: boolean;
+	onLoadMore?: () => void;
+	initialScrollTop?: number;
+	onScrollTopChange?: ({ scrollTop }: { scrollTop: number }) => void;
+}) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const listRef = useRef<ListImperativeAPI | null>(null);
+	const hasRestoredScrollRef = useRef(false);
+	const { height: containerHeight } = useContainerSize({ containerRef });
+	const rowCount = sounds.length + (isLoadingMore ? 1 : 0);
+	const listHeight = Math.max(
+		1,
+		containerHeight || SOUND_LIST_FALLBACK_HEIGHT_PX,
+	);
+
+	useEffect(() => {
+		if (hasRestoredScrollRef.current || initialScrollTop <= 0) {
+			return;
+		}
+
+		const timeoutId = setTimeout(() => {
+			listRef.current?.element?.scrollTo({ top: initialScrollTop });
+			hasRestoredScrollRef.current = true;
+		}, 0);
+
+		return () => clearTimeout(timeoutId);
+	}, [initialScrollTop]);
+
+	const handleRowsRendered = useCallback(
+		({ stopIndex }: { startIndex: number; stopIndex: number }) => {
+			if (!onLoadMore || !hasMore || isLoading || isLoadingMore) {
+				return;
+			}
+
+			if (stopIndex >= sounds.length - SOUND_LIST_LOAD_MORE_THRESHOLD_ROWS) {
+				onLoadMore();
+			}
+		},
+		[hasMore, isLoading, isLoadingMore, onLoadMore, sounds.length],
+	);
+
+	const handleScroll = useCallback(
+		(event: React.UIEvent<HTMLDivElement>) => {
+			onScrollTopChange?.({ scrollTop: event.currentTarget.scrollTop });
+		},
+		[onScrollTopChange],
+	);
+
+	if (rowCount === 0) {
+		return null;
+	}
+
+	return (
+		<div ref={containerRef} className="relative h-full overflow-hidden">
+			<List
+				className="scrollbar-thin"
+				listRef={listRef}
+				rowCount={rowCount}
+				rowHeight={SOUND_ROW_HEIGHT_PX}
+				overscanCount={SOUND_LIST_OVERSCAN_ROWS}
+				onRowsRendered={handleRowsRendered}
+				onScroll={handleScroll}
+				rowComponent={VirtualSoundRow}
+				rowProps={{
+					isLoadingMore,
+					onPlay,
+					playingId,
+					sounds,
+				}}
+				style={{ height: listHeight, width: "100%" }}
+			/>
+		</div>
+	);
+}
+
+type VirtualSoundRowProps = {
+	isLoadingMore: boolean;
+	onPlay: ({ sound }: { sound: SoundEffect }) => void;
+	playingId: number | null;
+	sounds: SoundEffect[];
+};
+
+function VirtualSoundRow({
+	index,
+	style,
+	isLoadingMore,
+	onPlay,
+	playingId,
+	sounds,
+}: RowComponentProps<VirtualSoundRowProps>) {
+	const sound = sounds[index];
+	if (!sound) {
+		return isLoadingMore ? (
+			<div
+				className="text-muted-foreground flex items-center justify-center text-sm"
+				style={style as CSSProperties}
+			>
+				Loading more sounds...
+			</div>
+		) : null;
+	}
+
+	return (
+		<div className="pr-2" style={style as CSSProperties}>
+			<AudioItem
+				sound={sound}
+				isPlaying={playingId === sound.id}
+				onPlay={onPlay}
+			/>
+		</div>
+	);
 }
 
 function SoundEffectsView() {
-	const {
-		topSoundEffects,
-		isLoading,
-		searchQuery,
-		setSearchQuery,
-		scrollPosition,
-		setScrollPosition,
-		loadSavedSounds,
-		showCommercialOnly,
-		toggleCommercialFilter,
-		hasLoaded,
-		setTopSoundEffects,
-		setLoading,
-		setError,
-		setHasLoaded,
-		setCurrentPage,
-		setHasNextPage,
-		setTotalCount,
-	} = useSoundsStore();
+	const topSoundEffects = useSoundsStore((state) => state.topSoundEffects);
+	const isLoading = useSoundsStore((state) => state.isLoading);
+	const searchQuery = useSoundsStore((state) => state.searchQuery);
+	const setSearchQuery = useSoundsStore((state) => state.setSearchQuery);
+	const setScrollPosition = useSoundsStore((state) => state.setScrollPosition);
+	const loadSavedSounds = useSoundsStore((state) => state.loadSavedSounds);
+	const showCommercialOnly = useSoundsStore(
+		(state) => state.showCommercialOnly,
+	);
+	const toggleCommercialFilter = useSoundsStore(
+		(state) => state.toggleCommercialFilter,
+	);
+	const hasLoaded = useSoundsStore((state) => state.hasLoaded);
+	const setTopSoundEffects = useSoundsStore(
+		(state) => state.setTopSoundEffects,
+	);
+	const setLoading = useSoundsStore((state) => state.setLoading);
+	const setError = useSoundsStore((state) => state.setError);
+	const setHasLoaded = useSoundsStore((state) => state.setHasLoaded);
+	const setCurrentPage = useSoundsStore((state) => state.setCurrentPage);
+	const setHasNextPage = useSoundsStore((state) => state.setHasNextPage);
+	const setTotalCount = useSoundsStore((state) => state.setTotalCount);
+	const [initialScrollTop] = useState(
+		() => useSoundsStore.getState().scrollPosition,
+	);
 	const {
 		results: searchResults,
 		isLoading: isSearching,
@@ -431,12 +635,6 @@ function SoundEffectsView() {
 	const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(
 		null,
 	);
-
-	const { scrollAreaRef, handleScroll } = useInfiniteScroll({
-		onLoadMore: loadMore,
-		hasMore: hasNextPage,
-		isLoading: isLoadingMore || isSearching,
-	});
 
 	useEffect(() => {
 		loadSavedSounds();
@@ -505,56 +703,48 @@ function SoundEffectsView() {
 		setTotalCount,
 	]);
 
-	useEffect(() => {
-		if (!scrollAreaRef.current || scrollPosition <= 0) {
-			return;
-		}
-
-		const restoreScrollPosition = () => {
-			scrollAreaRef.current?.scrollTo({ top: scrollPosition });
-		};
-
-		const timeoutId = setTimeout(restoreScrollPosition, 100, {});
-
-		return () => clearTimeout(timeoutId);
-	}, [scrollPosition, scrollAreaRef]);
-
-	const handleScrollWithPosition = ({
-		currentTarget,
-	}: React.UIEvent<HTMLDivElement>) => {
-		const { scrollTop } = currentTarget;
-		setScrollPosition({ position: scrollTop });
-		handleScroll({ currentTarget } as React.UIEvent<HTMLDivElement>);
-	};
+	const handleScrollTopChange = useCallback(
+		({ scrollTop }: { scrollTop: number }) => {
+			setScrollPosition({ position: scrollTop });
+		},
+		[setScrollPosition],
+	);
 
 	const displayedSounds = searchQuery ? searchResults : topSoundEffects;
 
-	const playSound = ({ sound }: { sound: SoundEffect }) => {
-		if (playingId === sound.id) {
+	const playSound = useCallback(
+		({ sound }: { sound: SoundEffect }) => {
+			if (playingId === sound.id) {
+				audioElement?.pause();
+				setPlayingId(null);
+				return;
+			}
+
 			audioElement?.pause();
-			setPlayingId(null);
-			return;
-		}
 
-		audioElement?.pause();
+			if (sound.previewUrl) {
+				const audio = new Audio(sound.previewUrl);
+				audio.addEventListener("ended", () => {
+					setPlayingId(null);
+				});
+				audio.addEventListener("error", () => {
+					setPlayingId(null);
+				});
+				audio.play().catch((error) => {
+					console.error("Failed to play sound preview:", error);
+					setPlayingId(null);
+				});
 
-		if (sound.previewUrl) {
-			const audio = new Audio(sound.previewUrl);
-			audio.addEventListener("ended", () => {
-				setPlayingId(null);
-			});
-			audio.addEventListener("error", () => {
-				setPlayingId(null);
-			});
-			audio.play().catch((error) => {
-				console.error("Failed to play sound preview:", error);
-				setPlayingId(null);
-			});
+				setAudioElement(audio);
+				setPlayingId(sound.id);
+			}
+		},
+		[audioElement, playingId],
+	);
 
-			setAudioElement(audio);
-			setPlayingId(sound.id);
-		}
-	};
+	const handleLoadMore = useCallback(() => {
+		void loadMore();
+	}, [loadMore]);
 
 	return (
 		<div className="mt-1 flex h-full flex-col gap-5">
@@ -597,53 +787,40 @@ function SoundEffectsView() {
 			</div>
 
 			<div className="relative h-full overflow-hidden">
-				<ScrollArea
-					className="h-full flex-1"
-					ref={scrollAreaRef}
-					onScrollCapture={handleScrollWithPosition}
-				>
-					<div className="flex flex-col gap-4">
-						{isLoading && !searchQuery && (
-							<div className="text-muted-foreground text-sm">
-								Loading sounds...
-							</div>
-						)}
-						{isSearching && searchQuery && (
-							<div className="text-muted-foreground text-sm">Searching...</div>
-						)}
-						{displayedSounds.map((sound) => (
-							<AudioItem
-								key={sound.id}
-								sound={sound}
-								isPlaying={playingId === sound.id}
-								onPlay={playSound}
-							/>
-						))}
-						{!isLoading && !isSearching && displayedSounds.length === 0 && (
-							<div className="text-muted-foreground text-sm">
-								{searchQuery ? "No sounds found" : "No sounds available"}
-							</div>
-						)}
-						{isLoadingMore && (
-							<div className="text-muted-foreground py-4 text-center text-sm">
-								Loading more sounds...
-							</div>
-						)}
+				{isLoading && !searchQuery ? (
+					<div className="text-muted-foreground text-sm">Loading sounds...</div>
+				) : isSearching && searchQuery ? (
+					<div className="text-muted-foreground text-sm">Searching...</div>
+				) : displayedSounds.length > 0 ? (
+					<VirtualSoundList
+						sounds={displayedSounds}
+						playingId={playingId}
+						onPlay={playSound}
+						isLoadingMore={isLoadingMore}
+						hasMore={hasNextPage}
+						isLoading={isSearching}
+						onLoadMore={handleLoadMore}
+						initialScrollTop={initialScrollTop}
+						onScrollTopChange={handleScrollTopChange}
+					/>
+				) : (
+					<div className="text-muted-foreground text-sm">
+						{searchQuery ? "No sounds found" : "No sounds available"}
 					</div>
-				</ScrollArea>
+				)}
 			</div>
 		</div>
 	);
 }
 
 function SavedSoundsView() {
-	const {
-		savedSounds,
-		isLoadingSavedSounds,
-		savedSoundsError,
-		loadSavedSounds,
-		clearSavedSounds,
-	} = useSoundsStore();
+	const savedSounds = useSoundsStore((state) => state.savedSounds);
+	const isLoadingSavedSounds = useSoundsStore(
+		(state) => state.isLoadingSavedSounds,
+	);
+	const savedSoundsError = useSoundsStore((state) => state.savedSoundsError);
+	const loadSavedSounds = useSoundsStore((state) => state.loadSavedSounds);
+	const clearSavedSounds = useSoundsStore((state) => state.clearSavedSounds);
 
 	const [playingId, setPlayingId] = useState<number | null>(null);
 	const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(
@@ -656,59 +833,40 @@ function SavedSoundsView() {
 		loadSavedSounds();
 	}, [loadSavedSounds]);
 
-	const playSound = ({ sound }: { sound: SoundEffect }) => {
-		if (playingId === sound.id) {
+	const playSound = useCallback(
+		({ sound }: { sound: SoundEffect }) => {
+			if (playingId === sound.id) {
+				audioElement?.pause();
+				setPlayingId(null);
+				return;
+			}
+
 			audioElement?.pause();
-			setPlayingId(null);
-			return;
-		}
 
-		audioElement?.pause();
+			if (sound.previewUrl) {
+				const audio = new Audio(sound.previewUrl);
+				audio.addEventListener("ended", () => {
+					setPlayingId(null);
+				});
+				audio.addEventListener("error", () => {
+					setPlayingId(null);
+				});
+				audio.play().catch((error) => {
+					console.error("Failed to play sound preview:", error);
+					setPlayingId(null);
+				});
 
-		if (sound.previewUrl) {
-			const audio = new Audio(sound.previewUrl);
-			audio.addEventListener("ended", () => {
-				setPlayingId(null);
-			});
-			audio.addEventListener("error", () => {
-				setPlayingId(null);
-			});
-			audio.play().catch((error) => {
-				console.error("Failed to play sound preview:", error);
-				setPlayingId(null);
-			});
-
-			setAudioElement(audio);
-			setPlayingId(sound.id);
-		}
-	};
-
-	const convertToSoundEffect = ({
-		savedSound,
-	}: {
-		savedSound: SavedSound;
-	}): SoundEffect => ({
-		id: savedSound.id,
-		name: savedSound.name,
-		description: "",
-		url: "",
-		previewUrl: savedSound.previewUrl,
-		downloadUrl: savedSound.downloadUrl,
-		duration: savedSound.duration,
-		filesize: 0,
-		type: "audio",
-		channels: 0,
-		bitrate: 0,
-		bitdepth: 0,
-		samplerate: 0,
-		username: savedSound.username,
-		tags: savedSound.tags,
-		license: savedSound.license,
-		created: savedSound.savedAt,
-		downloads: 0,
-		rating: 0,
-		ratingCount: 0,
-	});
+				setAudioElement(audio);
+				setPlayingId(sound.id);
+			}
+		},
+		[audioElement, playingId],
+	);
+	const savedSoundEffects = useMemo(
+		() =>
+			savedSounds.map((savedSound) => savedSoundToSoundEffect({ savedSound })),
+		[savedSounds],
+	);
 
 	if (isLoadingSavedSounds) {
 		return (
@@ -794,18 +952,11 @@ function SavedSoundsView() {
 			</div>
 
 			<div className="relative h-full overflow-hidden">
-				<ScrollArea className="h-full flex-1">
-					<div className="flex flex-col gap-4">
-						{savedSounds.map((sound) => (
-							<AudioItem
-								key={sound.id}
-								sound={convertToSoundEffect({ savedSound: sound })}
-								isPlaying={playingId === sound.id}
-								onPlay={playSound}
-							/>
-						))}
-					</div>
-				</ScrollArea>
+				<VirtualSoundList
+					sounds={savedSoundEffects}
+					playingId={playingId}
+					onPlay={playSound}
+				/>
 			</div>
 		</div>
 	);
@@ -817,10 +968,18 @@ interface AudioItemProps {
 	onPlay: ({ sound }: { sound: SoundEffect }) => void;
 }
 
-function AudioItem({ sound, isPlaying, onPlay }: AudioItemProps) {
-	const { addSoundToTimeline, isSoundSaved, toggleSavedSound } =
-		useSoundsStore();
-	const isSaved = isSoundSaved({ soundId: sound.id });
+const AudioItem = memo(function AudioItem({
+	sound,
+	isPlaying,
+	onPlay,
+}: AudioItemProps) {
+	const addSoundToTimeline = useSoundsStore(
+		(state) => state.addSoundToTimeline,
+	);
+	const toggleSavedSound = useSoundsStore((state) => state.toggleSavedSound);
+	const isSaved = useSoundsStore((state) =>
+		state.savedSounds.some((savedSound) => savedSound.id === sound.id),
+	);
 
 	const handleClick = () => {
 		onPlay({ sound });
@@ -893,4 +1052,5 @@ function AudioItem({ sound, isPlaying, onPlay }: AudioItemProps) {
 			</div>
 		</div>
 	);
-}
+});
+AudioItem.displayName = "AudioItem";

@@ -5,6 +5,10 @@ import {
 	CanvasSink,
 	type WrappedCanvas,
 } from "mediabunny";
+import { incrementCounter, recordSpan } from "@/diagnostics/render-perf";
+
+const FRAME_CACHE_LIMIT = 48;
+const FRAME_TIME_PRECISION = 1000;
 
 interface VideoSinkData {
 	input: Input;
@@ -22,8 +26,58 @@ export class VideoCache {
 	private initPromises = new Map<string, Promise<void>>();
 	private frameChain = new Map<string, Promise<unknown>>();
 	private seekGenerations = new Map<string, number>();
+	private frameCache = new Map<string, WrappedCanvas>();
+	private pendingFrameRequests = new Map<
+		string,
+		Promise<WrappedCanvas | null>
+	>();
 
 	async getFrameAt({
+		mediaId,
+		file,
+		time,
+	}: {
+		mediaId: string;
+		file: File;
+		time: number;
+	}): Promise<WrappedCanvas | null> {
+		const cachedFrame = this.getCachedFrame({ mediaId, time });
+		if (cachedFrame) {
+			incrementCounter({ name: "videoCache.frameCacheHit" });
+			return cachedFrame;
+		}
+
+		const requestKey = this.getFrameCacheKey({ mediaId, time });
+		const pendingRequest = this.pendingFrameRequests.get(requestKey);
+		if (pendingRequest) {
+			incrementCounter({ name: "videoCache.requestCoalesced" });
+			return pendingRequest;
+		}
+
+		const start = performance.now();
+		const request = this.loadFrameAt({ mediaId, file, time })
+			.then((frame) => {
+				if (
+					frame &&
+					this.sinks.has(mediaId) &&
+					this.isFrameValid({ frame, time })
+				) {
+					this.storeCachedFrame({ mediaId, time, frame });
+				}
+				return frame;
+			})
+			.finally(() => {
+				this.pendingFrameRequests.delete(requestKey);
+				recordSpan({
+					name: "videoCache.getFrameAt",
+					durationMs: performance.now() - start,
+				});
+			});
+		this.pendingFrameRequests.set(requestKey, request);
+		return request;
+	}
+
+	private async loadFrameAt({
 		mediaId,
 		file,
 		time,
@@ -52,6 +106,56 @@ export class VideoCache {
 			current.catch(() => {}),
 		);
 		return current;
+	}
+
+	private getFrameCacheKey({
+		mediaId,
+		time,
+	}: {
+		mediaId: string;
+		time: number;
+	}): string {
+		return `${mediaId}:${Math.round(time * FRAME_TIME_PRECISION)}`;
+	}
+
+	private getCachedFrame({
+		mediaId,
+		time,
+	}: {
+		mediaId: string;
+		time: number;
+	}): WrappedCanvas | null {
+		const key = this.getFrameCacheKey({ mediaId, time });
+		const frame = this.frameCache.get(key);
+		if (!frame) {
+			return null;
+		}
+		if (!this.isFrameValid({ frame, time })) {
+			this.frameCache.delete(key);
+			return null;
+		}
+		this.frameCache.delete(key);
+		this.frameCache.set(key, frame);
+		return frame;
+	}
+
+	private storeCachedFrame({
+		mediaId,
+		time,
+		frame,
+	}: {
+		mediaId: string;
+		time: number;
+		frame: WrappedCanvas;
+	}): void {
+		const key = this.getFrameCacheKey({ mediaId, time });
+		this.frameCache.delete(key);
+		this.frameCache.set(key, frame);
+		while (this.frameCache.size > FRAME_CACHE_LIMIT) {
+			const oldestKey = this.frameCache.keys().next().value;
+			if (oldestKey === undefined) break;
+			this.frameCache.delete(oldestKey);
+		}
 	}
 
 	private async resolveFrame({
@@ -314,6 +418,16 @@ export class VideoCache {
 		this.initPromises.delete(mediaId);
 		this.frameChain.delete(mediaId);
 		this.seekGenerations.delete(mediaId);
+		for (const key of this.frameCache.keys()) {
+			if (key.startsWith(`${mediaId}:`)) {
+				this.frameCache.delete(key);
+			}
+		}
+		for (const key of this.pendingFrameRequests.keys()) {
+			if (key.startsWith(`${mediaId}:`)) {
+				this.pendingFrameRequests.delete(key);
+			}
+		}
 	}
 
 	clearAll(): void {
@@ -327,9 +441,10 @@ export class VideoCache {
 			totalSinks: this.sinks.size,
 			activeSinks: Array.from(this.sinks.values()).filter((s) => s.iterator)
 				.length,
-			cachedFrames: Array.from(this.sinks.values()).filter(
-				(s) => s.currentFrame,
-			).length,
+			cachedFrames:
+				Array.from(this.sinks.values()).filter((s) => s.currentFrame).length +
+				this.frameCache.size,
+			pendingFrameRequests: this.pendingFrameRequests.size,
 		};
 	}
 }

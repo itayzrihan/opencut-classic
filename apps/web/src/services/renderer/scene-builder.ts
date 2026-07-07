@@ -20,7 +20,7 @@ import {
 } from "@/rendering";
 import { buildTransitionAnimationsFromElement } from "@/transitions";
 
-const PREVIEW_MAX_IMAGE_SIZE = 2048;
+const PREVIEW_MAX_IMAGE_SIZE = 1920;
 
 function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
 	return track.elements

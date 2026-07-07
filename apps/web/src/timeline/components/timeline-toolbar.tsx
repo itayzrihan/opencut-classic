@@ -1,5 +1,10 @@
-import { useEditor } from "@/editor/use-editor";
-import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
+import {
+	useEditorMediaAsset,
+	useEditorPlayback,
+	useEditorProject,
+	useEditorTimelineScenes,
+	useEditorTimelineSelection,
+} from "@/editor/use-editor";
 import {
 	TooltipProvider,
 	Tooltip,
@@ -50,6 +55,7 @@ import { OcRippleIcon } from "@/components/icons";
 import { GraphEditorPopover } from "./graph-editor/popover";
 import { PopoverTrigger } from "@/components/ui/popover";
 import { useGraphEditorController } from "./graph-editor/use-controller";
+import { getToolbarFrameTime } from "./toolbar-frame-time";
 
 export function TimelineToolbar({
 	zoomLevel,
@@ -87,35 +93,22 @@ export function TimelineToolbar({
 }
 
 function ToolbarLeftSection() {
-	const editor = useEditor();
-	const mediaAssets = useEditor((currentEditor) =>
-		currentEditor.media.getAssets(),
-	);
-	const { selectedElements } = useElementSelection();
 	const graphEditor = useGraphEditorController();
 	const aiRangeSelection = useTimelineStore((s) => s.aiRangeSelection);
 	const armRangeSelection = useTimelineStore((s) => s.armRangeSelection);
-	const isCurrentlyBookmarked = useEditor((e) =>
-		e.scenes.isBookmarked({ time: e.playback.getCurrentTime() }),
-	);
-	const selectedElement =
-		selectedElements.length === 1
+	const selectedElement = useEditorTimelineSelection((editor) => {
+		const selectedElements = editor.selection.getSelectedElements();
+		return selectedElements.length === 1
 			? (editor.timeline.getElementsWithTracks({
 					elements: selectedElements,
 				})[0] ?? null)
 			: null;
-	const selectedMediaAsset = (() => {
-		if (!selectedElement) {
-			return null;
-		}
-
-		const { element } = selectedElement;
-		if (!hasMediaId(element)) {
-			return null;
-		}
-
-		return mediaAssets.find((asset) => asset.id === element.mediaId) ?? null;
-	})();
+	});
+	const selectedMediaId =
+		selectedElement && hasMediaId(selectedElement.element)
+			? selectedElement.element.mediaId
+			: null;
+	const selectedMediaAsset = useEditorMediaAsset({ mediaId: selectedMediaId });
 	const canToggleSelectedSourceAudio =
 		!!selectedElement &&
 		canToggleSourceAudio(selectedElement.element, selectedMediaAsset);
@@ -203,16 +196,7 @@ function ToolbarLeftSection() {
 
 				<div className="bg-border mx-1 h-6 w-px" />
 
-				<Tooltip>
-					<ToolbarButton
-						icon={<HugeiconsIcon icon={Bookmark02Icon} />}
-						isActive={isCurrentlyBookmarked}
-						tooltip={isCurrentlyBookmarked ? "Remove bookmark" : "Add bookmark"}
-						onClick={({ event }) =>
-							handleAction({ action: "toggle-bookmark", event })
-						}
-					/>
-				</Tooltip>
+				<BookmarkToolbarButton />
 
 				<ToolbarButton
 					icon={<HugeiconsIcon icon={CursorRectangleSelection01Icon} />}
@@ -264,9 +248,35 @@ function ToolbarLeftSection() {
 	);
 }
 
+function BookmarkToolbarButton() {
+	const fps = useEditorProject((e) => e.project.getActive().settings.fps);
+	const currentFrameTime = useEditorPlayback((e) =>
+		getToolbarFrameTime({
+			time: e.playback.getCurrentTime(),
+			fps,
+		}),
+	);
+	const isCurrentlyBookmarked = useEditorTimelineScenes((e) =>
+		e.scenes.isBookmarked({ time: currentFrameTime }),
+	);
+
+	return (
+		<ToolbarButton
+			icon={<HugeiconsIcon icon={Bookmark02Icon} />}
+			isActive={isCurrentlyBookmarked}
+			tooltip={isCurrentlyBookmarked ? "Remove bookmark" : "Add bookmark"}
+			onClick={({ event }) => {
+				event.stopPropagation();
+				invokeAction("toggle-bookmark");
+			}}
+		/>
+	);
+}
+
 function SceneSelector() {
-	const editor = useEditor();
-	const currentScene = editor.scenes.getActiveScene();
+	const currentScene = useEditorTimelineScenes((editor) =>
+		editor.scenes.getActiveScene(),
+	);
 
 	return (
 		<div>

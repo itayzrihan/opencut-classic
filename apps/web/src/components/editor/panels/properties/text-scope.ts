@@ -1,5 +1,6 @@
 import type { ParamValue } from "@/params";
 import type { BlendMode } from "@/rendering";
+import { DEFAULTS } from "@/timeline/defaults";
 import type {
 	TextCaptionRevealMode,
 	TextElement,
@@ -9,6 +10,7 @@ import type {
 	TextWordStyle,
 	TextWordTransitionIn,
 } from "@/timeline";
+import { normalizeTextFontWeight } from "@/text/primitives";
 import { mediaTime } from "@/wasm";
 
 export type TextOverrideScope =
@@ -250,7 +252,7 @@ export function getScopedSettings({
 			? wordRuns.find((word) => word.id === scope.wordId)
 			: scope.type === "words"
 				? wordRuns.find((word) => scope.wordIds.includes(word.id))
-			: undefined;
+				: undefined;
 	const scopedRow =
 		scope.type === "row"
 			? getRowOverride({ element, lineIndex: scope.lineIndex })
@@ -363,7 +365,14 @@ export function textParamToScopedPatch({
 				},
 			};
 		case "fontWeight":
-			return { style: { fontWeight: value === "bold" ? "bold" : "normal" } };
+			return {
+				style: {
+					fontWeight: normalizeTextFontWeight({
+						value,
+						fallback: "normal",
+					}),
+				},
+			};
 		case "fontStyle":
 			return { style: { fontStyle: value === "italic" ? "italic" : "normal" } };
 		case "textDecoration":
@@ -379,6 +388,62 @@ export function textParamToScopedPatch({
 			};
 		case "lineHeight":
 			return { style: { lineHeight: typeof value === "number" ? value : 1.2 } };
+		case "stroke.enabled":
+			return {
+				style: {
+					strokeWidth: value ? DEFAULTS.text.stroke.width : 0,
+				},
+			};
+		case "stroke.color":
+			return {
+				style: {
+					strokeColor:
+						typeof value === "string" ? value : DEFAULTS.text.stroke.color,
+				},
+			};
+		case "stroke.width":
+			return {
+				style: {
+					strokeWidth:
+						typeof value === "number" ? value : DEFAULTS.text.stroke.width,
+				},
+			};
+		case "shadow.enabled":
+			return {
+				style: {
+					shadowBlur: value ? DEFAULTS.text.shadow.blur : 0,
+					shadowOffsetX: value ? DEFAULTS.text.shadow.offsetX : 0,
+					shadowOffsetY: value ? DEFAULTS.text.shadow.offsetY : 0,
+				},
+			};
+		case "shadow.color":
+			return {
+				style: {
+					shadowColor:
+						typeof value === "string" ? value : DEFAULTS.text.shadow.color,
+				},
+			};
+		case "shadow.blur":
+			return {
+				style: {
+					shadowBlur:
+						typeof value === "number" ? value : DEFAULTS.text.shadow.blur,
+				},
+			};
+		case "shadow.offsetX":
+			return {
+				style: {
+					shadowOffsetX:
+						typeof value === "number" ? value : DEFAULTS.text.shadow.offsetX,
+				},
+			};
+		case "shadow.offsetY":
+			return {
+				style: {
+					shadowOffsetY:
+						typeof value === "number" ? value : DEFAULTS.text.shadow.offsetY,
+				},
+			};
 		case "transform.positionX":
 			return { style: { offsetX: typeof value === "number" ? value : 0 } };
 		case "transform.positionY":
@@ -454,6 +519,50 @@ export function readScopedTextParamValue({
 		case "letterSpacing":
 		case "lineHeight":
 			return style[key] ?? inheritedStyle[key] ?? fallbackValue;
+		case "stroke.enabled":
+			return (style.strokeWidth ?? inheritedStyle.strokeWidth ?? 0) > 0;
+		case "stroke.color":
+			return (
+				style.strokeColor ??
+				inheritedStyle.strokeColor ??
+				DEFAULTS.text.stroke.color
+			);
+		case "stroke.width":
+			return (
+				style.strokeWidth ??
+				inheritedStyle.strokeWidth ??
+				DEFAULTS.text.stroke.width
+			);
+		case "shadow.enabled":
+			return (
+				(style.shadowBlur ?? inheritedStyle.shadowBlur ?? 0) > 0 ||
+				(style.shadowOffsetX ?? inheritedStyle.shadowOffsetX ?? 0) !== 0 ||
+				(style.shadowOffsetY ?? inheritedStyle.shadowOffsetY ?? 0) !== 0
+			);
+		case "shadow.color":
+			return (
+				style.shadowColor ??
+				inheritedStyle.shadowColor ??
+				DEFAULTS.text.shadow.color
+			);
+		case "shadow.blur":
+			return (
+				style.shadowBlur ??
+				inheritedStyle.shadowBlur ??
+				DEFAULTS.text.shadow.blur
+			);
+		case "shadow.offsetX":
+			return (
+				style.shadowOffsetX ??
+				inheritedStyle.shadowOffsetX ??
+				DEFAULTS.text.shadow.offsetX
+			);
+		case "shadow.offsetY":
+			return (
+				style.shadowOffsetY ??
+				inheritedStyle.shadowOffsetY ??
+				DEFAULTS.text.shadow.offsetY
+			);
 		case "transform.positionX":
 			return style.offsetX ?? inheritedStyle.offsetX ?? 0;
 		case "transform.positionY":

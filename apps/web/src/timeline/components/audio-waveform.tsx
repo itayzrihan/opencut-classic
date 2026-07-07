@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { useCommittedRef } from "@/hooks/use-committed-ref";
 import { useResizeObserver } from "@/hooks/use-resize-observer";
 import { TIMELINE_AUDIO_WAVEFORM_COLOR } from "./theme";
@@ -19,7 +26,32 @@ const BAR_WIDTH = 1;
 const BAR_GAP = 1;
 const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const WAVEFORM_BURN_COLOR = "rgba(255, 110, 20, 0.9)";
+const WAVEFORM_SUMMARY_PRELOAD_MARGIN_PX = 480;
 export const WAVEFORM_GAIN_SAMPLE_COUNT = 200;
+
+let nextWaveformArraySignatureId = 1;
+const waveformArraySignatureIds = new WeakMap<readonly number[], number>();
+
+function getWaveformArraySignature(values?: readonly number[]) {
+	if (!values) {
+		return "none";
+	}
+
+	let id = waveformArraySignatureIds.get(values);
+	if (id == null) {
+		id = nextWaveformArraySignatureId++;
+		waveformArraySignatureIds.set(values, id);
+	}
+
+	return `${id}:${values.length}`;
+}
+
+function getRetimeSignature(retime?: RetimeConfig) {
+	if (!retime) {
+		return "none";
+	}
+	return `${retime.rate}:${retime.maintainPitch ? 1 : 0}`;
+}
 
 function sampleGainAtClipTime({
 	samples,
@@ -56,7 +88,7 @@ interface AudioWaveformProps {
 	className?: string;
 }
 
-export function AudioWaveform({
+function AudioWaveformComponent({
 	sourceKey,
 	sourceFile,
 	audioUrl,
@@ -85,6 +117,10 @@ export function AudioWaveform({
 	const scrollParentRef = useRef<HTMLElement | null>(null);
 	const heightRef = useRef<number>(0);
 	const lastRenderSignatureRef = useRef<string | null>(null);
+	const drawRafIdRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(
+		null,
+	);
+	const [shouldLoadSummary, setShouldLoadSummary] = useState(false);
 
 	const clearCanvas = useCallback(() => {
 		const canvas = canvasRef.current;
@@ -154,7 +190,7 @@ export function AudioWaveform({
 		const canvasW = Math.max(1, Math.ceil(visibleWidth * dpr));
 		const canvasH = Math.max(1, Math.round(height * dpr));
 		const barCount = Math.max(1, Math.floor(visibleWidth / BAR_STEP));
-		const renderSignature = JSON.stringify({
+		const renderSignature = [
 			elementWidth,
 			clipLeft,
 			clipRight,
@@ -163,18 +199,18 @@ export function AudioWaveform({
 			canvasH,
 			barCount,
 			dpr,
-			clipDurationSec: clipDurationSecValue,
-			sourceStartSec: sourceStartSecValue,
-			pixelsPerSecond: pixelsPerSecondValue,
-			retime: retimeValue ?? null,
-			summarySourceKey: summary.sourceKey,
-			summarySampleRate: summary.sampleRate,
-			summaryTotalSamples: summary.totalSamples,
-			summaryBucketSize: summary.bucketSize,
-			gainSamples: gainSamplesValue ?? null,
-			color: colorValue,
-			burnColor: burnColorValue,
-		});
+			clipDurationSecValue,
+			sourceStartSecValue,
+			pixelsPerSecondValue,
+			getRetimeSignature(retimeValue),
+			summary.sourceKey,
+			summary.sampleRate,
+			summary.totalSamples,
+			summary.bucketSize,
+			getWaveformArraySignature(gainSamplesValue),
+			colorValue,
+			burnColorValue,
+		].join("|");
 		if (lastRenderSignatureRef.current === renderSignature) {
 			return;
 		}
@@ -269,10 +305,61 @@ export function AudioWaveform({
 		}
 	}, [clearCanvas, waveformConfigRef]);
 
+	const scheduleDrawVisible = useCallback(() => {
+		if (drawRafIdRef.current !== null) {
+			return;
+		}
+
+		drawRafIdRef.current = requestAnimationFrame(() => {
+			drawRafIdRef.current = null;
+			drawVisible();
+		});
+	}, [drawVisible]);
+
+	useEffect(() => {
+		return () => {
+			if (drawRafIdRef.current !== null) {
+				cancelAnimationFrame(drawRafIdRef.current);
+				drawRafIdRef.current = null;
+			}
+		};
+	}, []);
+
+	useEffect(() => {
+		const container = containerRef.current;
+		if (!container || typeof IntersectionObserver === "undefined") {
+			setShouldLoadSummary(true);
+			return;
+		}
+
+		const scrollParent = findScrollParent({ element: container });
+		scrollParentRef.current = scrollParent;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((entry) => entry.isIntersecting)) {
+					return;
+				}
+				setShouldLoadSummary(true);
+				observer.disconnect();
+			},
+			{
+				root: scrollParent,
+				rootMargin: `0px ${WAVEFORM_SUMMARY_PRELOAD_MARGIN_PX}px`,
+			},
+		);
+		observer.observe(container);
+		return () => observer.disconnect();
+	}, []);
+
 	useEffect(() => {
 		let isCancelled = false;
 		summaryRef.current = null;
 		clearCanvas();
+		if (!shouldLoadSummary) {
+			return () => {
+				isCancelled = true;
+			};
+		}
 
 		void waveformCache
 			.getSourceSummary({
@@ -299,7 +386,15 @@ export function AudioWaveform({
 		return () => {
 			isCancelled = true;
 		};
-	}, [audioBuffer, audioUrl, clearCanvas, drawVisible, sourceFile, sourceKey]);
+	}, [
+		audioBuffer,
+		audioUrl,
+		clearCanvas,
+		drawVisible,
+		shouldLoadSummary,
+		sourceFile,
+		sourceKey,
+	]);
 
 	useLayoutEffect(() => {
 		drawVisible();
@@ -326,19 +421,17 @@ export function AudioWaveform({
 			return;
 		}
 
-		const handleScroll = () => {
-			drawVisible();
-		};
+		const handleScroll = () => scheduleDrawVisible();
 		scrollParent.addEventListener("scroll", handleScroll, { passive: true });
 		return () => scrollParent.removeEventListener("scroll", handleScroll);
-	}, [drawVisible]);
+	}, [scheduleDrawVisible]);
 
 	const onResize = useCallback(
 		(entry: ResizeObserverEntry) => {
 			heightRef.current = entry.contentRect.height;
-			drawVisible();
+			scheduleDrawVisible();
 		},
-		[drawVisible],
+		[scheduleDrawVisible],
 	);
 
 	useResizeObserver({ ref: containerRef, onResize });
@@ -349,3 +442,6 @@ export function AudioWaveform({
 		</div>
 	);
 }
+
+export const AudioWaveform = memo(AudioWaveformComponent);
+AudioWaveform.displayName = "AudioWaveform";

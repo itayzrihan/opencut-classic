@@ -12,6 +12,7 @@ import { BlurBackgroundNode } from "../nodes/blur-background-node";
 import { ColorNode } from "../nodes/color-node";
 import { EffectLayerNode } from "../nodes/effect-layer-node";
 import type { EffectLayerOverlay } from "../nodes/effect-layer-node";
+import type { OverlayMovementFrame } from "@/effects/overlay-movement-presets";
 import {
 	GraphicNode,
 	type ResolvedGraphicNodeState,
@@ -145,6 +146,34 @@ async function collectNode({
 				textures,
 			});
 		}
+		if (node.resolved.movement) {
+			applyOverlayMovementToCollectedLayers({
+				movement: node.resolved.movement,
+				renderer,
+				items,
+			});
+			if (node.resolved.movement.flashAlpha > 0) {
+				collectOverlayMovementFlash({
+					movement: node.resolved.movement,
+					renderer,
+					path,
+					items,
+					textures,
+				});
+			}
+			if (
+				node.resolved.movement.overlayAlpha > 0 ||
+				node.resolved.movement.vignetteAlpha > 0
+			) {
+				collectOverlayMovementVisuals({
+					movement: node.resolved.movement,
+					renderer,
+					path,
+					items,
+					textures,
+				});
+			}
+		}
 		if (node.resolved.overlay) {
 			collectAiEffectOverlay({
 				overlay: node.resolved.overlay,
@@ -229,6 +258,150 @@ async function collectNode({
 			textures,
 		});
 	}
+}
+
+function applyOverlayMovementToCollectedLayers({
+	movement,
+	renderer,
+	items,
+}: {
+	movement: OverlayMovementFrame;
+	renderer: RendererSize;
+	items: FrameItemDescriptor[];
+}) {
+	for (const item of items) {
+		if (item.type !== "layer") continue;
+		item.transform = transformQuad({
+			transform: item.transform,
+			movement,
+			renderer,
+		});
+	}
+}
+
+function transformQuad({
+	transform,
+	movement,
+	renderer,
+}: {
+	transform: QuadTransformDescriptor;
+	movement: OverlayMovementFrame;
+	renderer: RendererSize;
+}): QuadTransformDescriptor {
+	const originX = renderer.width / 2;
+	const originY = renderer.height / 2;
+	const offsetX = (transform.centerX - originX) * movement.scale;
+	const offsetY = (transform.centerY - originY) * movement.scale;
+	const radians = (movement.rotate * Math.PI) / 180;
+	const cos = Math.cos(radians);
+	const sin = Math.sin(radians);
+
+	return {
+		...transform,
+		centerX: originX + offsetX * cos - offsetY * sin + movement.translateX,
+		centerY: originY + offsetX * sin + offsetY * cos + movement.translateY,
+		width: transform.width * movement.scale,
+		height: transform.height * movement.scale,
+		rotationDegrees: transform.rotationDegrees + movement.rotate,
+	};
+}
+
+function collectOverlayMovementFlash({
+	movement,
+	renderer,
+	path,
+	items,
+	textures,
+}: {
+	movement: OverlayMovementFrame;
+	renderer: RendererSize;
+	path: string;
+	items: FrameItemDescriptor[];
+	textures: Map<string, TextureUploadDescriptor>;
+}) {
+	const textureId = `${path}:overlay-movement-flash`;
+	const { width, height } = renderer;
+	textures.set(textureId, {
+		kind: "rendered",
+		id: textureId,
+		contentHash: `overlay-movement-flash:${width}x${height}:${movement.presetId}:${movement.flashAlpha}`,
+		width,
+		height,
+		draw: (ctx) => {
+			ctx.fillStyle = "white";
+			ctx.fillRect(0, 0, width, height);
+		},
+	});
+	items.push({
+		type: "layer",
+		textureId,
+		transform: fullCanvasTransform(renderer),
+		opacity: movement.flashAlpha,
+		blendMode: "screen",
+		effectPassGroups: [],
+		mask: null,
+	});
+}
+
+function collectOverlayMovementVisuals({
+	movement,
+	renderer,
+	path,
+	items,
+	textures,
+}: {
+	movement: OverlayMovementFrame;
+	renderer: RendererSize;
+	path: string;
+	items: FrameItemDescriptor[];
+	textures: Map<string, TextureUploadDescriptor>;
+}) {
+	const textureId = `${path}:overlay-movement-visuals`;
+	const { width, height } = renderer;
+	textures.set(textureId, {
+		kind: "rendered",
+		id: textureId,
+		contentHash: `overlay-movement-visuals:${width}x${height}:${movement.presetId}:${movement.overlayColor ?? ""}:${movement.overlayAlpha}:${movement.vignetteAlpha}`,
+		width,
+		height,
+		draw: (ctx) => {
+			if (movement.overlayColor && movement.overlayAlpha > 0) {
+				ctx.save();
+				ctx.globalAlpha = movement.overlayAlpha;
+				ctx.fillStyle = movement.overlayColor;
+				ctx.fillRect(0, 0, width, height);
+				ctx.restore();
+			}
+			if (movement.vignetteAlpha > 0) {
+				const radius = Math.max(width, height) * 0.72;
+				const vignette = ctx.createRadialGradient(
+					width / 2,
+					height / 2,
+					Math.min(width, height) * 0.16,
+					width / 2,
+					height / 2,
+					radius,
+				);
+				vignette.addColorStop(0, "rgba(0,0,0,0)");
+				vignette.addColorStop(
+					0.62,
+					`rgba(0,0,0,${movement.vignetteAlpha * 0.28})`,
+				);
+				vignette.addColorStop(1, `rgba(0,0,0,${movement.vignetteAlpha})`);
+				ctx.fillStyle = vignette;
+				ctx.fillRect(0, 0, width, height);
+			}
+		},
+	});
+	items.push({
+		type: "layer",
+		textureId,
+		transform: fullCanvasTransform(renderer),
+		opacity: 1,
+		blendMode: movement.overlayBlendMode,
+		effectPassGroups: [],
+		mask: null,
+	});
 }
 
 function collectEffectVisualOverlay({

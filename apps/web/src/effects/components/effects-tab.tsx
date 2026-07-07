@@ -1,12 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import type { ParamValues } from "@/params";
 import type { Effect } from "@/effects/types";
 import type { EffectElement, VisualElement } from "@/timeline";
 import { getEffectDefinition } from "@/effects";
 import { useEditor } from "@/editor/use-editor";
+import { createAudioContext } from "@/media/audio";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
+import { getOverlayMovementDefaultSfx } from "@/effects/overlay-movement-presets";
+import { sharedLibraryService } from "@/shared-library";
+import { buildLibraryAudioElement } from "@/timeline/element-utils";
+import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import {
 	Section,
 	SectionContent,
@@ -19,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	Delete02Icon,
+	PlusSignIcon,
 	ViewIcon,
 	ViewOffSlashIcon,
 	MagicWand05Icon,
@@ -63,6 +70,7 @@ export function StandaloneEffectTab({
 				renderParams={(renderElement as EffectElement).params}
 				previewParam={previewParam}
 				onCommit={commit}
+				standaloneElement={renderElement as EffectElement}
 			/>
 		</div>
 	);
@@ -237,6 +245,7 @@ function EffectSection({
 	onCommit,
 	onToggle,
 	onRemove,
+	standaloneElement,
 }: {
 	effect: Effect;
 	renderParams: ParamValues;
@@ -244,8 +253,13 @@ function EffectSection({
 	onCommit: () => void;
 	onToggle?: () => void;
 	onRemove?: () => void;
+	standaloneElement?: EffectElement;
 }) {
 	const definition = getEffectDefinition(effect.type);
+	const displayName =
+		typeof renderParams.label === "string" && renderParams.label.trim()
+			? renderParams.label.trim()
+			: definition.name;
 
 	return (
 		<Section
@@ -282,12 +296,15 @@ function EffectSection({
 				<SectionTitle
 					className={cn(onToggle && !effect.enabled && "text-muted-foreground")}
 				>
-					{definition.name}
+					{displayName}
 				</SectionTitle>
 			</SectionHeader>
 			<SectionContent
 				className={cn("p-0", onToggle && !effect.enabled && "opacity-50")}
 			>
+				{standaloneElement && (
+					<OverlayMovementSfxButton element={standaloneElement} />
+				)}
 				<SectionFields>
 					{definition.params.map((param) => (
 						<div key={param.key} className="flex flex-col gap-3.5">
@@ -305,5 +322,88 @@ function EffectSection({
 				</SectionFields>
 			</SectionContent>
 		</Section>
+	);
+}
+
+function OverlayMovementSfxButton({ element }: { element: EffectElement }) {
+	const [isAdding, setIsAdding] = useState(false);
+	const editor = useEditor();
+	const defaultSfx = getOverlayMovementDefaultSfx({ params: element.params });
+
+	if (!defaultSfx) {
+		return null;
+	}
+
+	const handleAddSfx = async () => {
+		if (isAdding) return;
+		setIsAdding(true);
+		try {
+			const [assets, file] = await Promise.all([
+				sharedLibraryService.listAudioAssets({ folder: "sfx" }),
+				sharedLibraryService.getAudioAssetFile({ id: defaultSfx.assetId }),
+			]);
+			const asset =
+				assets.find((candidate) => candidate.id === defaultSfx.assetId) ?? null;
+			if (!asset || !file) {
+				toast.error("Default SFX is missing from the shared library");
+				return;
+			}
+
+			let buffer: AudioBuffer | undefined;
+			let durationSeconds = asset.duration;
+			try {
+				const audioContext = createAudioContext();
+				const arrayBuffer = await file.arrayBuffer();
+				buffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+				durationSeconds = durationSeconds ?? buffer.duration;
+			} catch (error) {
+				console.warn("Failed to decode default movement SFX:", error);
+			}
+
+			const movementDurationSeconds = Math.max(
+				0.05,
+				mediaTimeToSeconds({ time: element.duration }),
+			);
+			const resolvedDurationSeconds = Math.min(
+				durationSeconds ?? movementDurationSeconds,
+				movementDurationSeconds,
+			);
+			const audioElement = buildLibraryAudioElement({
+				libraryAssetId: asset.id,
+				librarySourceType: "shared",
+				name: `${element.name} SFX`,
+				duration: mediaTimeFromSeconds({ seconds: resolvedDurationSeconds }),
+				startTime: element.startTime,
+				buffer,
+			});
+
+			editor.timeline.insertElement({
+				placement: { mode: "auto", trackType: "audio" },
+				element: audioElement,
+			});
+			toast.success("Default SFX added");
+		} catch (error) {
+			console.error("Failed to add default movement SFX:", error);
+			toast.error(
+				error instanceof Error ? error.message : "Failed to add default SFX",
+			);
+		} finally {
+			setIsAdding(false);
+		}
+	};
+
+	return (
+		<div className="border-b px-4 py-3">
+			<Button
+				size="sm"
+				variant="secondary"
+				className="w-full"
+				onClick={() => void handleAddSfx()}
+				disabled={isAdding}
+			>
+				<HugeiconsIcon icon={PlusSignIcon} />
+				{isAdding ? "Adding SFX..." : `Add ${defaultSfx.name} SFX`}
+			</Button>
+		</div>
 	);
 }

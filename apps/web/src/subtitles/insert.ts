@@ -27,6 +27,9 @@ export function buildCaptionTextTracks({
 }): TextTrack[] {
 	const layers = splitCaptionCuesByLayer({ captions, layerCount });
 	const layoutSettings = captionSource?.settings ?? settings;
+	const captionSourceId = captionSource
+		? (captionSource.sourceId ?? generateUUID())
+		: undefined;
 
 	return layers.map((layerCaptions, layerIndex) => {
 		const track = buildEmptyTrack({
@@ -53,6 +56,7 @@ export function buildCaptionTextTracks({
 			captionSource: captionSource
 				? {
 						...captionSource,
+						sourceId: captionSourceId,
 						layerIndex,
 						layerCount: layers.length,
 					}

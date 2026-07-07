@@ -1,9 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	Profiler,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
+import type { ProfilerOnRenderCallback } from "react";
 import useDeepCompareEffect from "use-deep-compare-effect";
-import { useEditor } from "@/editor/use-editor";
-import { useRafLoop } from "@/hooks/use-raf-loop";
+import {
+	useEditor,
+	useEditorMedia,
+	useEditorProject,
+	useEditorRenderer,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { useContainerSize } from "@/hooks/use-container-size";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
@@ -23,9 +36,15 @@ import {
 	PreviewViewportProvider,
 	usePreviewViewportState,
 } from "./preview-viewport";
+import {
+	incrementCounter,
+	isRenderPerfEnabled,
+	recordFrameInterval,
+	recordSpan,
+} from "@/diagnostics/render-perf";
 
 function usePreviewSize() {
-	const canvasSize = useEditor(
+	const canvasSize = useEditorProject(
 		(e) => e.project.getActive()?.settings.canvasSize,
 	);
 
@@ -94,11 +113,11 @@ export function PreviewPanel({
 
 function RenderTreeController() {
 	const editor = useEditor();
-	const tracks = useEditor(
+	const tracks = useEditorTimelineScenes(
 		(e) => e.timeline.getPreviewTracks() ?? e.scenes.getActiveScene().tracks,
 	);
-	const mediaAssets = useEditor((e) => e.media.getAssets());
-	const activeProject = useEditor((e) => e.project.getActive());
+	const mediaAssets = useEditorMedia((e) => e.media.getAssets());
+	const activeProject = useEditorProject((e) => e.project.getActive());
 
 	const { width, height } = usePreviewSize();
 
@@ -142,11 +161,14 @@ function PreviewCanvas({
 	const lastFrameRef = useRef(-1);
 	const lastSceneRef = useRef<RootNode | null>(null);
 	const renderingRef = useRef(false);
+	const pendingRenderRef = useRef(false);
+	const scheduledRenderRef = useRef<number | null>(null);
+	const runRenderRef = useRef<() => void>(() => {});
 	const { width: nativeWidth, height: nativeHeight } = usePreviewSize();
 	const viewportSize = useContainerSize({ containerRef: viewportRef });
 	const editor = useEditor();
-	const activeProject = useEditor((e) => e.project.getActive());
-	const renderTree = useEditor((e) => e.renderer.getRenderTree());
+	const activeProject = useEditorProject((e) => e.project.getActive());
+	const renderTree = useEditorRenderer((e) => e.renderer.getRenderTree());
 	const viewport = usePreviewViewportState({
 		canvasHeight: nativeHeight,
 		canvasWidth: nativeWidth,
@@ -155,6 +177,23 @@ function PreviewCanvas({
 		viewportWidth: viewportSize.width,
 	});
 	const { canPan, panByScreenDelta, scaleZoom } = viewport;
+
+	const handleProfilerRender = useCallback<ProfilerOnRenderCallback>(
+		(...args) => {
+			if (!isRenderPerfEnabled()) return;
+
+			const [, , actualDuration, , startTime, commitTime] = args;
+			recordSpan({
+				name: "react.previewRender",
+				durationMs: actualDuration,
+			});
+			recordSpan({
+				name: "react.previewCommit",
+				durationMs: Math.max(0, commitTime - startTime),
+			});
+		},
+		[],
+	);
 
 	const renderer = useMemo(() => {
 		return new CanvasRenderer({
@@ -182,8 +221,35 @@ function PreviewCanvas({
 		};
 	}, [renderer]);
 
+	const scheduleRender = useCallback((reason: string) => {
+		incrementCounter({ name: "preview.renderRequest" });
+		incrementCounter({ name: `preview.renderRequest.${reason}` });
+
+		if (renderingRef.current) {
+			pendingRenderRef.current = true;
+			incrementCounter({ name: "preview.renderCoalesced" });
+			return;
+		}
+
+		if (scheduledRenderRef.current !== null) {
+			pendingRenderRef.current = true;
+			incrementCounter({ name: "preview.renderCoalesced" });
+			return;
+		}
+
+		scheduledRenderRef.current = requestAnimationFrame(() => {
+			scheduledRenderRef.current = null;
+			runRenderRef.current();
+		});
+	}, []);
+
 	const render = useCallback(() => {
-		if (!renderTree || renderingRef.current) return;
+		if (!renderTree) return;
+		if (renderingRef.current) {
+			pendingRenderRef.current = true;
+			incrementCounter({ name: "preview.renderCoalesced" });
+			return;
+		}
 
 		const renderTime = Math.min(
 			editor.playback.getCurrentTime(),
@@ -194,24 +260,80 @@ function PreviewCanvas({
 		);
 		const frame = Math.floor(renderTime / ticksPerFrame);
 
-		if (
-			frame === lastFrameRef.current &&
-			renderTree === lastSceneRef.current
-		) {
+		if (frame === lastFrameRef.current && renderTree === lastSceneRef.current) {
+			incrementCounter({ name: "preview.renderSkipped.sameFrame" });
 			return;
 		}
 
 		renderingRef.current = true;
+		pendingRenderRef.current = false;
 		lastSceneRef.current = renderTree;
 		lastFrameRef.current = frame;
-		renderer
+		const start = performance.now();
+		void renderer
 			.render({ node: renderTree, time: renderTime })
 			.then(() => {
-				renderingRef.current = false;
-			});
-	}, [renderer, renderTree, editor.playback, editor.timeline]);
+				incrementCounter({ name: "preview.rendered" });
+				recordSpan({
+					name: "preview.renderTotal",
+					durationMs: performance.now() - start,
+				});
+				recordFrameInterval({ name: "preview.frame" });
+			})
+			.catch((error: unknown) => {
+				lastFrameRef.current = -1;
+				console.error("Preview render failed:", error);
+			})
+			.finally(() => {
+				const hasQueuedRender = pendingRenderRef.current;
+				if (hasQueuedRender) {
+					incrementCounter({ name: "preview.renderStale" });
+				}
 
-	useRafLoop(render);
+				renderingRef.current = false;
+				if (hasQueuedRender) {
+					pendingRenderRef.current = false;
+					scheduleRender("queued");
+				}
+			});
+	}, [renderer, renderTree, editor.playback, editor.timeline, scheduleRender]);
+
+	useEffect(() => {
+		runRenderRef.current = render;
+	}, [render]);
+
+	useEffect(() => {
+		lastFrameRef.current = -1;
+		lastSceneRef.current = null;
+		scheduleRender("renderTree");
+	}, [renderer, renderTree, scheduleRender]);
+
+	useEffect(() => {
+		const unsubscribeUpdate = editor.playback.onUpdate(() => {
+			scheduleRender("playback");
+		});
+		const unsubscribeSeek = editor.playback.onSeek(() => {
+			scheduleRender("seek");
+		});
+		const unsubscribeState = editor.playback.subscribe(() => {
+			scheduleRender("playbackState");
+		});
+		scheduleRender("mount");
+		return () => {
+			unsubscribeUpdate();
+			unsubscribeSeek();
+			unsubscribeState();
+		};
+	}, [editor.playback, scheduleRender]);
+
+	useEffect(() => {
+		return () => {
+			if (scheduledRenderRef.current !== null) {
+				cancelAnimationFrame(scheduledRenderRef.current);
+				scheduledRenderRef.current = null;
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		const container = viewportRef.current;
@@ -299,54 +421,56 @@ function PreviewCanvas({
 	}, [canPan, panByScreenDelta, scaleZoom]);
 
 	return (
-		<PreviewViewportProvider value={viewport}>
-			<div className="flex size-full min-h-0 min-w-0 flex-col">
-				<div className="flex min-h-0 min-w-0 flex-1 p-2 pb-0">
-					<ContextMenu>
-						<ContextMenuTrigger asChild>
-							<div
-								ref={viewportRef}
-								className="relative flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden"
-							>
-							<div
-								ref={canvasMountRef}
-								className="absolute block border"
-								style={{
-									left: viewport.sceneLeft,
-									top: viewport.sceneTop,
-									width: viewport.sceneWidth,
-									height: viewport.sceneHeight,
-									background:
-										activeProject.settings.background.type === "blur"
-											? "transparent"
-											: activeProject?.settings.background.color,
-								}}
+		<Profiler id="PreviewCanvas" onRender={handleProfilerRender}>
+			<PreviewViewportProvider value={viewport}>
+				<div className="flex size-full min-h-0 min-w-0 flex-col">
+					<div className="flex min-h-0 min-w-0 flex-1 p-2 pb-0">
+						<ContextMenu>
+							<ContextMenuTrigger asChild>
+								<div
+									ref={viewportRef}
+									className="relative flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden"
+								>
+									<div
+										ref={canvasMountRef}
+										className="absolute block border"
+										style={{
+											left: viewport.sceneLeft,
+											top: viewport.sceneTop,
+											width: viewport.sceneWidth,
+											height: viewport.sceneHeight,
+											background:
+												activeProject.settings.background.type === "blur"
+													? "transparent"
+													: activeProject?.settings.background.color,
+										}}
+									/>
+									<PreviewOverlayLayer
+										instances={overlayInstances}
+										plane="under-interaction"
+									/>
+									<PreviewInteractionOverlay />
+									<PreviewOverlayLayer
+										instances={overlayInstances}
+										plane="over-interaction"
+									/>
+								</div>
+							</ContextMenuTrigger>
+							<PreviewContextMenu
+								onToggleFullscreen={onToggleFullscreen}
+								container={container}
+								overlayControls={overlayControls}
+								onOverlayVisibilityChange={onOverlayVisibilityChange}
 							/>
-								<PreviewOverlayLayer
-									instances={overlayInstances}
-									plane="under-interaction"
-								/>
-								<PreviewInteractionOverlay />
-								<PreviewOverlayLayer
-									instances={overlayInstances}
-									plane="over-interaction"
-								/>
-							</div>
-						</ContextMenuTrigger>
-						<PreviewContextMenu
-							onToggleFullscreen={onToggleFullscreen}
-							container={container}
-							overlayControls={overlayControls}
-							onOverlayVisibilityChange={onOverlayVisibilityChange}
-						/>
-					</ContextMenu>
+						</ContextMenu>
+					</div>
+					<PreviewToolbar
+						onToggleFullscreen={onToggleFullscreen}
+						overlayControls={overlayControls}
+						onOverlayVisibilityChange={onOverlayVisibilityChange}
+					/>
 				</div>
-				<PreviewToolbar
-					onToggleFullscreen={onToggleFullscreen}
-					overlayControls={overlayControls}
-					onOverlayVisibilityChange={onOverlayVisibilityChange}
-				/>
-			</div>
-		</PreviewViewportProvider>
+			</PreviewViewportProvider>
+		</Profiler>
 	);
 }

@@ -4,14 +4,17 @@ import type { TextElement } from "@/timeline";
 import type { TextRowOverride, TextWordRun, TextWordStyle } from "@/timeline";
 import type { TextCaptionRevealMode, TextWordTransitionIn } from "@/timeline";
 import type { TextBackground } from "@/text/background";
-import { resolveNumberAtTime } from "@/animation/values";
+import { resolveColorAtTime, resolveNumberAtTime } from "@/animation/values";
 import { getTextVisualRect, type TextLayoutMeasurementContext } from "./layout";
 import {
 	buildTextFontString,
 	measureTextLayout,
+	normalizeTextFontWeight,
 	type MeasuredTextLayout,
 	type MeasuredWordGlyph,
 	type MeasuredWordLine,
+	type ResolvedTextShadow,
+	type ResolvedTextStroke,
 	type TextAlign,
 	type TextDecoration,
 	type TextFontStyle,
@@ -125,7 +128,11 @@ export function measureTextElement({
 	localTime: number;
 	ctx: TextLayoutMeasurementContext;
 }): MeasuredTextElement {
-	const text = buildTextLayoutParamsFromElement({ element });
+	const text = resolveTextEffectParamsAtTime({
+		text: buildTextLayoutParamsFromElement({ element }),
+		element,
+		localTime,
+	});
 	const measuredLayout = measureTextLayout({
 		text,
 		canvasHeight,
@@ -174,18 +181,136 @@ export function measureTextElement({
 			localTime,
 		}),
 	};
+	const resolvedStroke = resolveTextStroke({
+		text,
+	});
+	const resolvedShadow = resolveTextShadow({
+		text,
+	});
 
-	const visualRect = getTextVisualRect({
-		textAlign: text.textAlign,
-		block: measuredTextWithWords.block,
-		background: resolvedBackground,
-		fontSizeRatio: measuredTextWithWords.fontSizeRatio,
+	const visualRect = inflateTextVisualRectForEffects({
+		rect: getTextVisualRect({
+			textAlign: text.textAlign,
+			block: measuredTextWithWords.block,
+			background: resolvedBackground,
+			fontSizeRatio: measuredTextWithWords.fontSizeRatio,
+		}),
+		stroke: resolvedStroke,
+		shadow: resolvedShadow,
 	});
 
 	return {
 		...measuredTextWithWords,
+		stroke: resolvedStroke,
+		shadow: resolvedShadow,
 		resolvedBackground,
 		visualRect,
+	};
+}
+
+function resolveTextEffectParamsAtTime({
+	text,
+	element,
+	localTime,
+}: {
+	text: TextLayoutParams;
+	element: TextElement;
+	localTime: number;
+}): TextLayoutParams {
+	return {
+		...text,
+		strokeWidth: resolveNumberAtTime({
+			baseValue: text.strokeWidth ?? 0,
+			animations: element.animations,
+			propertyPath: "stroke.width",
+			localTime,
+		}),
+		strokeColor: resolveColorAtTime({
+			baseColor: text.strokeColor ?? DEFAULTS.text.stroke.color,
+			animations: element.animations,
+			propertyPath: "stroke.color",
+			localTime,
+		}),
+		shadowBlur: resolveNumberAtTime({
+			baseValue: text.shadowBlur ?? 0,
+			animations: element.animations,
+			propertyPath: "shadow.blur",
+			localTime,
+		}),
+		shadowColor: resolveColorAtTime({
+			baseColor: text.shadowColor ?? DEFAULTS.text.shadow.color,
+			animations: element.animations,
+			propertyPath: "shadow.color",
+			localTime,
+		}),
+		shadowOffsetX: resolveNumberAtTime({
+			baseValue: text.shadowOffsetX ?? 0,
+			animations: element.animations,
+			propertyPath: "shadow.offsetX",
+			localTime,
+		}),
+		shadowOffsetY: resolveNumberAtTime({
+			baseValue: text.shadowOffsetY ?? 0,
+			animations: element.animations,
+			propertyPath: "shadow.offsetY",
+			localTime,
+		}),
+	};
+}
+
+function resolveTextStroke({
+	text,
+}: {
+	text: TextLayoutParams;
+}): ResolvedTextStroke | null {
+	const width = text.strokeWidth ?? 0;
+	if (width <= 0) return null;
+	return {
+		color: text.strokeColor ?? DEFAULTS.text.stroke.color,
+		width,
+	};
+}
+
+function resolveTextShadow({
+	text,
+}: {
+	text: TextLayoutParams;
+}): ResolvedTextShadow | null {
+	const shadow = {
+		color: text.shadowColor ?? DEFAULTS.text.shadow.color,
+		blur: text.shadowBlur ?? 0,
+		offsetX: text.shadowOffsetX ?? 0,
+		offsetY: text.shadowOffsetY ?? 0,
+	};
+	if (shadow.blur <= 0 && shadow.offsetX === 0 && shadow.offsetY === 0) {
+		return null;
+	}
+	return shadow;
+}
+
+function inflateTextVisualRectForEffects({
+	rect,
+	stroke,
+	shadow,
+}: {
+	rect: MeasuredTextElement["visualRect"];
+	stroke: ResolvedTextStroke | null;
+	shadow: ResolvedTextShadow | null;
+}): MeasuredTextElement["visualRect"] {
+	const strokeOutset = (stroke?.width ?? 0) / 2;
+	const shadowBlur = shadow?.blur ?? 0;
+	const shadowOffsetX = shadow?.offsetX ?? 0;
+	const shadowOffsetY = shadow?.offsetY ?? 0;
+	const leftOutset = strokeOutset + shadowBlur + Math.max(0, -shadowOffsetX);
+	const rightOutset = strokeOutset + shadowBlur + Math.max(0, shadowOffsetX);
+	const topOutset = strokeOutset + shadowBlur + Math.max(0, -shadowOffsetY);
+	const bottomOutset = strokeOutset + shadowBlur + Math.max(0, shadowOffsetY);
+
+	return {
+		left: rect.left - leftOutset,
+		top: rect.top - topOutset,
+		width: rect.width + leftOutset + rightOutset,
+		height: rect.height + topOutset + bottomOutset,
 	};
 }
 
@@ -278,7 +403,7 @@ function measureWordRunsLayout({
 					run.transitionIn ??
 					rowOverride?.transitionIn ??
 					element.captionTransitionIn ??
-					"blur-zoom",
+					"none",
 				preset,
 				accentColor:
 					run.accentColor ??
@@ -363,6 +488,10 @@ function measureWordRunsLayout({
 				blur: word.style.blur ?? 0,
 				shadowBlur: word.style.shadowBlur ?? 0,
 				shadowColor: word.style.shadowColor ?? word.style.color ?? "#ffffff",
+				shadowOffsetX: word.style.shadowOffsetX ?? 0,
+				shadowOffsetY: word.style.shadowOffsetY ?? 0,
+				strokeWidth: word.style.strokeWidth ?? 0,
+				strokeColor: word.style.strokeColor ?? "#000000",
 				offsetX: word.style.offsetX ?? 0,
 				offsetY: word.style.offsetY ?? 0,
 				blendMode: word.style.blendMode ?? "normal",
@@ -463,6 +592,9 @@ function resolveWordStyle({
 		: isSpoken && preset.spokenStyle
 			? preset.spokenStyle
 			: preset.idleStyle;
+	const animationStyle = isPresetDriven
+		? presetStyle
+		: stripPresetRevealStyle({ style: presetStyle });
 	const revealStyle = isPresetDriven
 		? {}
 		: resolveRevealStyle({
@@ -481,8 +613,8 @@ function resolveWordStyle({
 				: presetStyle.color;
 	const wordStyle = run.style;
 	const animationScale = isPresetDriven
-		? (presetStyle.scale ?? 1)
-		: (revealStyle.scale ?? presetStyle.scale ?? 1);
+		? (animationStyle.scale ?? 1)
+		: (revealStyle.scale ?? animationStyle.scale ?? 1);
 	const scopedScale = (rowStyle?.scale ?? 1) * (wordStyle?.scale ?? 1);
 	const scopedScaleX =
 		(rowStyle?.scaleX ?? rowStyle?.scale ?? 1) *
@@ -491,24 +623,26 @@ function resolveWordStyle({
 		(rowStyle?.scaleY ?? rowStyle?.scale ?? 1) *
 		(wordStyle?.scaleY ?? wordStyle?.scale ?? 1);
 	const animationOpacity = isPresetDriven
-		? (presetStyle.opacity ?? 1)
+		? (animationStyle.opacity ?? 1)
 		: (revealStyle.opacity ?? 1);
 	const scopedOpacity = wordStyle?.opacity ?? rowStyle?.opacity ?? 1;
 	const animationOffsetX = isPresetDriven
-		? (presetStyle.offsetX ?? 0)
-		: (revealStyle.offsetX ?? presetStyle.offsetX ?? 0);
+		? (animationStyle.offsetX ?? 0)
+		: (revealStyle.offsetX ?? animationStyle.offsetX ?? 0);
 	const animationOffsetY = isPresetDriven
-		? (presetStyle.offsetY ?? 0)
-		: (revealStyle.offsetY ?? presetStyle.offsetY ?? 0);
+		? (animationStyle.offsetY ?? 0)
+		: (revealStyle.offsetY ?? animationStyle.offsetY ?? 0);
 	const animationBlur = isPresetDriven
-		? (presetStyle.blur ?? 0)
-		: (revealStyle.blur ?? presetStyle.blur ?? 0);
+		? (animationStyle.blur ?? 0)
+		: (revealStyle.blur ?? animationStyle.blur ?? 0);
 	const animationShadowBlur = isPresetDriven
-		? (presetStyle.shadowBlur ?? 0)
-		: (revealStyle.shadowBlur ?? presetStyle.shadowBlur ?? 0);
+		? (animationStyle.shadowBlur ?? 0)
+		: (revealStyle.shadowBlur ?? animationStyle.shadowBlur ?? 0);
+	const scopedShadowBlur = wordStyle?.shadowBlur ?? rowStyle?.shadowBlur;
+	const scopedStrokeWidth = wordStyle?.strokeWidth ?? rowStyle?.strokeWidth;
 	const finalStyle = {
 		...base,
-		...presetStyle,
+		...animationStyle,
 		...rowStyle,
 		...wordStyle,
 		...revealStyle,
@@ -521,6 +655,11 @@ function resolveWordStyle({
 		shadowColor:
 			wordStyle?.shadowColor ??
 			rowStyle?.shadowColor ??
+			((base.shadowBlur ?? 0) > 0 ||
+			(base.shadowOffsetX ?? 0) !== 0 ||
+			(base.shadowOffsetY ?? 0) !== 0
+				? base.shadowColor
+				: undefined) ??
 			((presetStyle.shadowBlur ?? 0) > 0
 				? (accentColor ?? color ?? baseColor ?? "#ffffff")
 				: presetStyle.shadowColor),
@@ -533,12 +672,33 @@ function resolveWordStyle({
 		offsetY:
 			animationOffsetY + (rowStyle?.offsetY ?? 0) + (wordStyle?.offsetY ?? 0),
 		blur: Math.max(animationBlur, rowStyle?.blur ?? 0, wordStyle?.blur ?? 0),
-		shadowBlur: Math.max(
-			animationShadowBlur,
-			rowStyle?.shadowBlur ?? 0,
-			wordStyle?.shadowBlur ?? 0,
-		),
+		shadowBlur:
+			scopedShadowBlur ?? Math.max(base.shadowBlur ?? 0, animationShadowBlur),
+		shadowOffsetX:
+			wordStyle?.shadowOffsetX ??
+			rowStyle?.shadowOffsetX ??
+			base.shadowOffsetX ??
+			0,
+		shadowOffsetY:
+			wordStyle?.shadowOffsetY ??
+			rowStyle?.shadowOffsetY ??
+			base.shadowOffsetY ??
+			0,
+		strokeWidth: scopedStrokeWidth ?? base.strokeWidth ?? 0,
+		strokeColor:
+			wordStyle?.strokeColor ?? rowStyle?.strokeColor ?? base.strokeColor,
 	};
+}
+
+function stripPresetRevealStyle({
+	style,
+}: {
+	style: TextWordStyle;
+}): TextWordStyle {
+	const visualStyle = { ...style };
+	delete visualStyle.characterReveal;
+	delete visualStyle.opacity;
+	return visualStyle;
 }
 
 function resolveRevealMode({
@@ -783,7 +943,10 @@ function measureStyledWord({
 		(style.fontSize ?? 15) * (canvasHeight / FONT_SIZE_SCALE_REFERENCE);
 	const fontString = buildTextFontString({
 		fontFamily: style.fontFamily ?? "Arial",
-		fontWeight: style.fontWeight === "bold" ? "bold" : "normal",
+		fontWeight: normalizeTextFontWeight({
+			value: style.fontWeight,
+			fallback: "normal",
+		}),
 		fontStyle: style.fontStyle === "italic" ? "italic" : "normal",
 		scaledFontSize,
 	});
@@ -845,6 +1008,60 @@ export function buildTextLayoutParamsFromElement({
 			key: "lineHeight",
 			fallback: DEFAULTS.text.lineHeight,
 		}),
+		strokeWidth: readBooleanParam({
+			params: element.params,
+			key: "stroke.enabled",
+			fallback: DEFAULTS.text.stroke.enabled,
+		})
+			? readNumberParam({
+					params: element.params,
+					key: "stroke.width",
+					fallback: DEFAULTS.text.stroke.width,
+				})
+			: 0,
+		strokeColor: readStringParam({
+			params: element.params,
+			key: "stroke.color",
+			fallback: DEFAULTS.text.stroke.color,
+		}),
+		shadowBlur: readBooleanParam({
+			params: element.params,
+			key: "shadow.enabled",
+			fallback: DEFAULTS.text.shadow.enabled,
+		})
+			? readNumberParam({
+					params: element.params,
+					key: "shadow.blur",
+					fallback: DEFAULTS.text.shadow.blur,
+				})
+			: 0,
+		shadowColor: readStringParam({
+			params: element.params,
+			key: "shadow.color",
+			fallback: DEFAULTS.text.shadow.color,
+		}),
+		shadowOffsetX: readBooleanParam({
+			params: element.params,
+			key: "shadow.enabled",
+			fallback: DEFAULTS.text.shadow.enabled,
+		})
+			? readNumberParam({
+					params: element.params,
+					key: "shadow.offsetX",
+					fallback: DEFAULTS.text.shadow.offsetX,
+				})
+			: 0,
+		shadowOffsetY: readBooleanParam({
+			params: element.params,
+			key: "shadow.enabled",
+			fallback: DEFAULTS.text.shadow.enabled,
+		})
+			? readNumberParam({
+					params: element.params,
+					key: "shadow.offsetY",
+					fallback: DEFAULTS.text.shadow.offsetY,
+				})
+			: 0,
 	};
 }
 
@@ -950,7 +1167,7 @@ function readFontWeight({
 	value: unknown;
 	fallback: TextFontWeight;
 }): TextFontWeight {
-	return value === "bold" || value === "normal" ? value : fallback;
+	return normalizeTextFontWeight({ value, fallback });
 }
 
 function readFontStyle({

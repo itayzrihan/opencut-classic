@@ -18,7 +18,13 @@ import { TICKS_PER_SECOND } from "@/wasm";
 import { frameRateToFloat } from "@/fps/utils";
 import type { RootNode } from "./nodes/root-node";
 import type { ExportFormat, ExportQuality } from "@/export";
+import {
+	getAudioBitrateCandidates,
+	getPreferredAudioBitrate,
+	type ExportAudioCodec,
+} from "@/export/audio-quality";
 import { CanvasRenderer } from "./canvas-renderer";
+import { incrementCounter, measureSpanAsync } from "@/diagnostics/render-perf";
 
 type ExportParams = {
 	width: number;
@@ -36,6 +42,32 @@ const qualityMap = {
 	high: QUALITY_HIGH,
 	very_high: QUALITY_VERY_HIGH,
 };
+
+async function getFirstSupportedAacBitrate({
+	sampleRate,
+	numberOfChannels,
+	bitrates,
+}: {
+	sampleRate: number;
+	numberOfChannels: number;
+	bitrates: readonly number[];
+}): Promise<number | null> {
+	for (const bitrate of bitrates) {
+		try {
+			const { supported } = await AudioEncoder.isConfigSupported({
+				codec: "mp4a.40.2",
+				sampleRate,
+				numberOfChannels,
+				bitrate,
+			});
+			if (supported) return bitrate;
+		} catch {
+			continue;
+		}
+	}
+
+	return null;
+}
 
 export type SceneExporterEvents = {
 	progress: [progress: number];
@@ -108,21 +140,36 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 		let audioSource: AudioBufferSource | null = null;
 		if (this.shouldIncludeAudio && this.audioBuffer) {
-			let audioCodec: "aac" | "opus" = this.format === "webm" ? "opus" : "aac";
+			let audioCodec: ExportAudioCodec =
+				this.format === "webm" ? "opus" : "aac";
+			let audioBitrate = getPreferredAudioBitrate({
+				codec: audioCodec,
+				quality: this.quality,
+			});
 
 			if (audioCodec === "aac" && typeof AudioEncoder !== "undefined") {
-				const { supported } = await AudioEncoder.isConfigSupported({
-					codec: "mp4a.40.2",
+				const supportedBitrate = await getFirstSupportedAacBitrate({
 					sampleRate: this.audioBuffer.sampleRate,
 					numberOfChannels: this.audioBuffer.numberOfChannels,
-					bitrate: 192000,
+					bitrates: getAudioBitrateCandidates({
+						codec: audioCodec,
+						quality: this.quality,
+					}),
 				});
-				if (!supported) audioCodec = "opus";
+				if (supportedBitrate) {
+					audioBitrate = supportedBitrate;
+				} else {
+					audioCodec = "opus";
+					audioBitrate = getPreferredAudioBitrate({
+						codec: audioCodec,
+						quality: this.quality,
+					});
+				}
 			}
 
 			audioSource = new AudioBufferSource({
 				codec: audioCodec,
-				bitrate: qualityMap[this.quality],
+				bitrate: audioBitrate,
 			});
 			output.addAudioTrack(audioSource);
 		}
@@ -143,8 +190,15 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 			const timeTicks = i * ticksPerFrame;
 			const timeSeconds = mediaTimeToSeconds({ time: timeTicks });
-			await this.renderer.render({ node: rootNode, time: timeTicks });
-			await videoSource.add(timeSeconds, 1 / fpsFloat);
+			await measureSpanAsync({
+				name: "export.renderFrame",
+				fn: () => this.renderer.render({ node: rootNode, time: timeTicks }),
+			});
+			await measureSpanAsync({
+				name: "export.encodeFrame",
+				fn: () => videoSource.add(timeSeconds, 1 / fpsFloat),
+			});
+			incrementCounter({ name: "export.frames" });
 
 			this.emit("progress", i / frameCount);
 		}

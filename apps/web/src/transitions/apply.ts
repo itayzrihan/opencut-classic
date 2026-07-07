@@ -5,7 +5,11 @@ import type {
 } from "@/animation/types";
 import type { TimelineElement } from "@/timeline";
 import { generateUUID } from "@/utils/id";
-import { mediaTimeFromSeconds, mediaTimeToSeconds, type MediaTime } from "@/wasm";
+import {
+	mediaTimeFromSeconds,
+	mediaTimeToSeconds,
+	type MediaTime,
+} from "@/wasm";
 import {
 	CONTROLLED_TRANSITION_PROPERTIES,
 	getTransitionPreset,
@@ -93,14 +97,38 @@ function getPresetProperties({ preset }: { preset: TransitionPreset }) {
 	);
 }
 
+function getPresetPropertiesById({ presetId }: { presetId: string }) {
+	return getPresetProperties({ preset: getTransitionPreset({ id: presetId }) });
+}
+
+function getTransitionProperties({
+	inTransitionId,
+	outTransitionId,
+}: {
+	inTransitionId: string;
+	outTransitionId: string;
+}) {
+	return new Set([
+		...getPresetPropertiesById({ presetId: inTransitionId }),
+		...getPresetPropertiesById({ presetId: outTransitionId }),
+	]);
+}
+
 function stripTransitionAnimationChannels({
 	animations,
+	inTransitionId,
+	outTransitionId,
 }: {
 	animations: ElementAnimations | undefined;
+	inTransitionId: string;
+	outTransitionId: string;
 }): ElementAnimations | undefined {
 	if (!animations) return undefined;
 	const nextAnimations: ElementAnimations = { ...animations };
-	for (const property of CONTROLLED_TRANSITION_PROPERTIES) {
+	for (const property of getTransitionProperties({
+		inTransitionId,
+		outTransitionId,
+	})) {
 		delete nextAnimations[property];
 	}
 	return Object.keys(nextAnimations).length > 0 ? nextAnimations : undefined;
@@ -110,20 +138,22 @@ function buildInKeysForProperty({
 	element,
 	property,
 	preset,
+	inStart,
 	inEnd,
 }: {
 	element: TimelineElement;
 	property: TransitionProperty;
 	preset: TransitionPreset;
+	inStart: number;
 	inEnd: number;
 }) {
 	const base = readBaseValue({ element, property });
-	if (inEnd <= 0) return [{ time: 0, value: base }];
+	if (inEnd <= inStart) return [{ time: inStart, value: base }];
 
 	const recipe = preset.recipe?.[property];
 	if (recipe?.length) {
 		return recipe.map((key) => ({
-			time: key.at * inEnd,
+			time: inStart + key.at * (inEnd - inStart),
 			value: transitionRecipeValue({
 				element,
 				property,
@@ -134,7 +164,7 @@ function buildInKeysForProperty({
 
 	return [
 		{
-			time: 0,
+			time: inStart,
 			value: transitionValue({ element, property, state: preset.state }),
 		},
 		{ time: inEnd, value: base },
@@ -146,23 +176,23 @@ function buildOutKeysForProperty({
 	property,
 	preset,
 	outStart,
-	durationSeconds,
+	outEnd,
 }: {
 	element: TimelineElement;
 	property: TransitionProperty;
 	preset: TransitionPreset;
 	outStart: number;
-	durationSeconds: number;
+	outEnd: number;
 }) {
 	const base = readBaseValue({ element, property });
-	if (outStart >= durationSeconds) {
-		return [{ time: durationSeconds, value: base }];
+	if (outEnd <= outStart) {
+		return [{ time: outStart, value: base }];
 	}
 
 	const recipe = preset.recipe?.[property];
 	if (recipe?.length) {
 		return recipe.map((key) => ({
-			time: outStart + (1 - key.at) * (durationSeconds - outStart),
+			time: outStart + (1 - key.at) * (outEnd - outStart),
 			value: transitionRecipeValue({
 				element,
 				property,
@@ -174,7 +204,7 @@ function buildOutKeysForProperty({
 	return [
 		{ time: outStart, value: base },
 		{
-			time: durationSeconds,
+			time: outEnd,
 			value: transitionValue({ element, property, state: preset.state }),
 		},
 	];
@@ -221,6 +251,8 @@ export function buildTransitionAnimations({
 	outTransitionId,
 	inDuration,
 	outDuration,
+	inStartTime,
+	outStartTime,
 	inPercent,
 	outPercent,
 }: BuildTransitionAnimationsParams) {
@@ -230,7 +262,7 @@ export function buildTransitionAnimations({
 	);
 	const inPreset = getTransitionPreset({ id: inTransitionId });
 	const outPreset = getTransitionPreset({ id: outTransitionId });
-	const inEnd =
+	const inDurationSeconds =
 		inDuration !== undefined
 			? mediaTimeToSeconds({ time: inDuration })
 			: durationSeconds * (clampTransitionPercent(inPercent ?? 0) / 100);
@@ -238,42 +270,69 @@ export function buildTransitionAnimations({
 		outDuration !== undefined
 			? mediaTimeToSeconds({ time: outDuration })
 			: durationSeconds * (clampTransitionPercent(outPercent ?? 0) / 100);
-	const outStart = Math.max(inEnd, durationSeconds - outDurationSeconds);
+	const inStart = clampTransitionSeconds({
+		value:
+			inStartTime !== undefined ? mediaTimeToSeconds({ time: inStartTime }) : 0,
+		durationSeconds,
+	});
+	const inEnd = clampTransitionSeconds({
+		value: inStart + inDurationSeconds,
+		durationSeconds,
+	});
+	const outStart = clampTransitionSeconds({
+		value:
+			outStartTime !== undefined
+				? mediaTimeToSeconds({ time: outStartTime })
+				: durationSeconds - outDurationSeconds,
+		durationSeconds,
+	});
+	const outEnd = clampTransitionSeconds({
+		value: outStart + outDurationSeconds,
+		durationSeconds,
+	});
 	const nextAnimations: ElementAnimations = { ...(element.animations ?? {}) };
 	const inProperties = getPresetProperties({ preset: inPreset });
 	const outProperties = getPresetProperties({ preset: outPreset });
 
 	for (const property of CONTROLLED_TRANSITION_PROPERTIES) {
-		delete nextAnimations[property];
 		const usesIn = inProperties.has(property);
 		const usesOut = outProperties.has(property);
 		if (!usesIn && !usesOut) continue;
 
+		delete nextAnimations[property];
 		const base = readBaseValue({ element, property });
-		const keys: Array<{ time: number; value: number }> = [
-			{ time: 0, value: base },
-			{ time: durationSeconds, value: base },
-		];
+		const keys: Array<{ time: number; value: number }> = [];
 		if (usesIn) {
-			keys.push(
-				...buildInKeysForProperty({
-					element,
-					property,
-					preset: inPreset,
-					inEnd,
-				}),
-			);
+			const inKeys = buildInKeysForProperty({
+				element,
+				property,
+				preset: inPreset,
+				inStart,
+				inEnd,
+			});
+			const firstInKey = inKeys[0];
+			if (firstInKey && firstInKey.time > 0) {
+				keys.push({ time: 0, value: firstInKey.value });
+			}
+			keys.push(...inKeys);
+		} else {
+			keys.push({ time: 0, value: base });
 		}
 		if (usesOut) {
-			keys.push(
-				...buildOutKeysForProperty({
-					element,
-					property,
-					preset: outPreset,
-					outStart,
-					durationSeconds,
-				}),
-			);
+			const outKeys = buildOutKeysForProperty({
+				element,
+				property,
+				preset: outPreset,
+				outStart,
+				outEnd,
+			});
+			keys.push(...outKeys);
+			const lastOutKey = outKeys[outKeys.length - 1];
+			if (lastOutKey && lastOutKey.time < durationSeconds) {
+				keys.push({ time: durationSeconds, value: lastOutKey.value });
+			}
+		} else {
+			keys.push({ time: durationSeconds, value: base });
 		}
 
 		nextAnimations[property] = scalarChannel({
@@ -282,6 +341,17 @@ export function buildTransitionAnimations({
 	}
 
 	return Object.keys(nextAnimations).length > 0 ? nextAnimations : undefined;
+}
+
+function clampTransitionSeconds({
+	value,
+	durationSeconds,
+}: {
+	value: number;
+	durationSeconds: number;
+}) {
+	if (!Number.isFinite(value)) return 0;
+	return Math.max(0, Math.min(durationSeconds, value));
 }
 
 export function buildTransitionPatch({
@@ -309,6 +379,8 @@ export function buildTransitionPatch({
 		return {
 			animations: stripTransitionAnimationChannels({
 				animations: element.animations,
+				inTransitionId: nextTransitions.in?.presetId ?? "none",
+				outTransitionId: nextTransitions.out?.presetId ?? "none",
 			}),
 			transitions:
 				nextTransitions.in || nextTransitions.out ? nextTransitions : undefined,
@@ -318,6 +390,10 @@ export function buildTransitionPatch({
 	return {
 		animations: stripTransitionAnimationChannels({
 			animations: element.animations,
+			inTransitionId:
+				side === "in" ? presetId : (nextTransitions.in?.presetId ?? "none"),
+			outTransitionId:
+				side === "out" ? presetId : (nextTransitions.out?.presetId ?? "none"),
 		}),
 		transitions: {
 			...nextTransitions,
@@ -343,10 +419,7 @@ export function getDefaultTransitionDurationSeconds({
 	const elementSeconds = mediaTimeToSeconds({ time: element.duration });
 	const percentSeconds =
 		(elementSeconds * clampTransitionPercent(percent)) / 100;
-	return Math.max(
-		0,
-		Math.min(percentSeconds, MAX_DEFAULT_TRANSITION_SECONDS),
-	);
+	return Math.max(0, Math.min(percentSeconds, MAX_DEFAULT_TRANSITION_SECONDS));
 }
 
 export function buildTransitionAnimationsFromElement({
@@ -366,5 +439,7 @@ export function buildTransitionAnimationsFromElement({
 		outTransitionId,
 		inDuration: element.transitions?.in?.duration,
 		outDuration: element.transitions?.out?.duration,
+		inStartTime: element.transitions?.in?.startTime,
+		outStartTime: element.transitions?.out?.startTime,
 	});
 }

@@ -10,23 +10,23 @@ import { TIMELINE_LAYERS } from "./layers";
 interface SnapIndicatorProps {
 	snapPoint: SnapPoint | null;
 	zoomLevel: number;
+	scrollLeft: number;
 	isVisible: boolean;
 	timelineRef: React.RefObject<HTMLDivElement | null>;
-	tracksScrollRef: React.RefObject<HTMLDivElement | null>;
 }
 
 export function SnapIndicator({
 	snapPoint,
 	zoomLevel,
+	scrollLeft,
 	isVisible,
 	timelineRef,
-	tracksScrollRef,
 }: SnapIndicatorProps) {
 	const { leftPosition, topPosition, height } = useSnapIndicatorPosition({
 		snapPoint,
 		zoomLevel,
+		scrollLeft,
 		timelineRef,
-		tracksScrollRef,
 	});
 
 	if (!isVisible || !snapPoint) {

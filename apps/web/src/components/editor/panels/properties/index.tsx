@@ -15,7 +15,12 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorMedia,
+	useEditorSelection,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import { usePropertiesStore } from "./stores/properties-store";
 import { getPropertiesConfig } from "./registry";
@@ -29,12 +34,13 @@ import type { ElementWithTrackForParams } from "./components/element-params-tab"
 
 export function PropertiesPanel() {
 	const editor = useEditor();
-	useEditor((e) => e.scenes.getActiveSceneOrNull());
-	useEditor((e) => e.media.getAssets());
+	useEditorTimelineScenes((e) => e.scenes.getActiveSceneOrNull());
+	const mediaAssets = useEditorMedia((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
-	const selectedTextWords = useEditor((e) => e.selection.getSelectedTextWords());
+	const selectedTextWords = useEditorSelection((e) =>
+		e.selection.getSelectedTextWords(),
+	);
 	const { activeTabPerType, setActiveTab } = usePropertiesStore();
-	const mediaAssets = editor.media.getAssets();
 	const elementsWithTracks = addSelectedTextWordIds({
 		elementsWithTracks: editor.timeline.getElementsWithTracks({
 			elements: selectedElements,
@@ -269,9 +275,7 @@ function addSelectedTextWordIds({
 
 	return elementsWithTracks.map((entry) => ({
 		...entry,
-		textWordIds: wordIdsByElement.get(
-			`${entry.track.id}:${entry.element.id}`,
-		),
+		textWordIds: wordIdsByElement.get(`${entry.track.id}:${entry.element.id}`),
 	}));
 }
 
@@ -306,7 +310,10 @@ function TextScopeBar({
 	onLineChange: (lineIndex: number) => void;
 	selectedWordId: string;
 	onWordChange: (wordId: string) => void;
-	selectedTextWordScope?: Extract<TextOverrideScope, { type: "word" | "words" }>;
+	selectedTextWordScope?: Extract<
+		TextOverrideScope,
+		{ type: "word" | "words" }
+	>;
 	selectedTextWordCount: number;
 }) {
 	const wordRuns = useMemo(() => getWordRuns({ element }), [element]);

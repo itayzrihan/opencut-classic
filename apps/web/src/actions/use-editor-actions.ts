@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTimelineStore } from "@/timeline/timeline-store";
 import { useActionHandler } from "@/actions/use-action-handler";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorSelection } from "@/editor/use-editor";
 import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import {
 	addMediaTime,
@@ -31,7 +31,7 @@ export function useEditorActions() {
 	const editor = useEditor();
 	const { selectedElements, setElementSelection } = useElementSelection();
 	const { selectedKeyframes, clearKeyframeSelection } = useKeyframeSelection();
-	const selectedMaskPointSelection = useEditor((e) =>
+	const selectedMaskPointSelection = useEditorSelection((e) =>
 		e.selection.getSelectedMaskPointSelection(),
 	);
 	const toggleSnapping = useTimelineStore((s) => s.toggleSnapping);
@@ -126,9 +126,7 @@ export function useEditorActions() {
 		() => {
 			const fps = editor.project.getActive().settings.fps;
 			const ticksPerFrame = mediaTime({
-				ticks: Math.round(
-					(TICKS_PER_SECOND * fps.denominator) / fps.numerator,
-				),
+				ticks: Math.round((TICKS_PER_SECOND * fps.denominator) / fps.numerator),
 			});
 			editor.playback.seek({
 				time: minMediaTime({
@@ -148,9 +146,7 @@ export function useEditorActions() {
 		() => {
 			const fps = editor.project.getActive().settings.fps;
 			const ticksPerFrame = mediaTime({
-				ticks: Math.round(
-					(TICKS_PER_SECOND * fps.denominator) / fps.numerator,
-				),
+				ticks: Math.round((TICKS_PER_SECOND * fps.denominator) / fps.numerator),
 			});
 			editor.playback.seek({
 				time: maxMediaTime({

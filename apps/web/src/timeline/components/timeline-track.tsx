@@ -1,15 +1,23 @@
 "use client";
 
-import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
+import { memo, useMemo } from "react";
 import { TimelineElement } from "./timeline-element";
-import type { TimelineTrack } from "@/timeline";
-import type { TimelineElement as TimelineElementType } from "@/timeline";
+import type {
+	TimelineTrack,
+	TimelineElement as TimelineElementType,
+} from "@/timeline";
 import { TIMELINE_LAYERS } from "./layers";
 import type { ElementDragView } from "@/timeline";
+import {
+	getTimelineElementVisibilityIndex,
+	getVisibleTimelineElements,
+} from "./visible-elements";
 
 interface TimelineTrackContentProps {
 	track: TimelineTrack;
 	zoomLevel: number;
+	scrollLeft: number;
+	viewportWidth: number;
 	dragView: ElementDragView;
 	onResizeStart: (params: {
 		event: React.MouseEvent;
@@ -31,11 +39,15 @@ interface TimelineTrackContentProps {
 	onTrackMouseUp?: (event: React.MouseEvent) => void;
 	shouldIgnoreClick?: () => boolean;
 	targetElementId?: string | null;
+	selectedElementIds: ReadonlySet<string>;
+	expandedElementIds: ReadonlySet<string>;
 }
 
-export function TimelineTrackContent({
+function TimelineTrackContentComponent({
 	track,
 	zoomLevel,
+	scrollLeft,
+	viewportWidth,
 	dragView,
 	onResizeStart,
 	onElementMouseDown,
@@ -44,8 +56,35 @@ export function TimelineTrackContent({
 	onTrackMouseUp,
 	shouldIgnoreClick,
 	targetElementId = null,
+	selectedElementIds,
+	expandedElementIds,
 }: TimelineTrackContentProps) {
-	const { isElementSelected } = useElementSelection();
+	const elementVisibilityIndex = useMemo(
+		() => getTimelineElementVisibilityIndex({ elements: track.elements }),
+		[track.elements],
+	);
+	const visibleElements = useMemo(() => {
+		return getVisibleTimelineElements({
+			track,
+			zoomLevel,
+			scrollLeft,
+			viewportWidth,
+			selectedElementIds,
+			targetElementId,
+			draggedElementIds:
+				dragView.kind === "dragging" ? dragView.memberTimeOffsets : null,
+			visibilityIndex: elementVisibilityIndex,
+		});
+	}, [
+		dragView,
+		elementVisibilityIndex,
+		scrollLeft,
+		selectedElementIds,
+		targetElementId,
+		track,
+		viewportWidth,
+		zoomLevel,
+	]);
 
 	return (
 		<div className="relative size-full">
@@ -80,11 +119,8 @@ export function TimelineTrackContent({
 				{track.elements.length === 0 ? (
 					<div className="text-muted-foreground border-muted/30 pointer-events-none flex size-full items-center justify-center rounded-sm border-2 border-dashed text-xs" />
 				) : (
-					track.elements.map((element) => {
-						const isSelected = isElementSelected({
-							trackId: track.id,
-							elementId: element.id,
-						});
+					visibleElements.map((element) => {
+						const isSelected = selectedElementIds.has(element.id);
 
 						return (
 							<TimelineElement
@@ -93,17 +129,12 @@ export function TimelineTrackContent({
 								track={track}
 								zoomLevel={zoomLevel}
 								isSelected={isSelected}
-								onResizeStart={({ event, element, side }) =>
-									onResizeStart({ event, element, track, side })
-								}
-								onElementMouseDown={({ event, element }) =>
-									onElementMouseDown({ event, element, track })
-								}
-								onElementClick={({ event, element }) =>
-									onElementClick({ event, element, track })
-								}
+								onResizeStart={onResizeStart}
+								onElementMouseDown={onElementMouseDown}
+								onElementClick={onElementClick}
 								dragView={dragView}
 								isDropTarget={element.id === targetElementId}
+								isExpanded={expandedElementIds.has(element.id)}
 							/>
 						);
 					})
@@ -112,3 +143,6 @@ export function TimelineTrackContent({
 		</div>
 	);
 }
+
+export const TimelineTrackContent = memo(TimelineTrackContentComponent);
+TimelineTrackContent.displayName = "TimelineTrackContent";

@@ -1,15 +1,19 @@
-import { useEditor } from "@/editor/use-editor";
+import { useEditorPlayback } from "@/editor/use-editor";
 import { getElementLocalTime } from "@/animation";
 import { addMediaTime, mediaTime, type MediaTime } from "@/wasm";
 
 export function useElementPlayhead({
 	startTime,
 	duration,
+	enabled = true,
 }: {
 	startTime: MediaTime;
 	duration: MediaTime;
+	enabled?: boolean;
 }) {
-	const playheadTime = useEditor((editor) => editor.playback.getCurrentTime());
+	const playheadTime = useEditorPlayback((editor) =>
+		enabled ? editor.playback.getCurrentTime() : startTime,
+	);
 	const localTime = mediaTime({
 		ticks: getElementLocalTime({
 			timelineTime: playheadTime,

@@ -54,6 +54,7 @@ export interface TextTrack extends BaseTrack {
 	elements: TextElement[];
 	hidden: boolean;
 	captionSource?: {
+		sourceId?: string;
 		words: TranscriptionWord[];
 		settings: CaptionLayoutSettings;
 		layerIndex?: number;
@@ -219,6 +220,10 @@ export interface TextWordStyle {
 	blur?: number;
 	shadowBlur?: number;
 	shadowColor?: string;
+	shadowOffsetX?: number;
+	shadowOffsetY?: number;
+	strokeWidth?: number;
+	strokeColor?: string;
 	characterReveal?: boolean;
 	offsetX?: number;
 	offsetY?: number;

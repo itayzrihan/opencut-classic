@@ -56,7 +56,7 @@ export function toRevealMode(value: string): TextCaptionRevealMode {
 		value === "letter-by-letter" ||
 		value === "growing-row"
 		? value
-		: "emphasize-spoken";
+		: "determined-by-preset";
 }
 
 export function toTransitionIn(value: string): TextWordTransitionIn {
@@ -70,7 +70,7 @@ export function toTransitionIn(value: string): TextWordTransitionIn {
 		value === "typewriter" ||
 		value === "glow-dissolve"
 		? value
-		: "blur-zoom";
+		: "none";
 }
 
 export function usesTransitionIn(revealMode: TextCaptionRevealMode): boolean {

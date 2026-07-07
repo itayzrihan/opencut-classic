@@ -4,7 +4,10 @@ import {
 	CUSTOM_AI_EFFECT_TYPE,
 } from "@/effects/custom-ai-effect";
 import { buildFrameDescriptor } from "@/services/renderer/compositor/frame-descriptor";
+import { OVERLAY_MOVEMENT_PRESETS } from "@/effects/overlay-movement-presets";
+import { ColorNode } from "@/services/renderer/nodes/color-node";
 import { EffectLayerNode } from "@/services/renderer/nodes/effect-layer-node";
+import { RootNode } from "@/services/renderer/nodes/root-node";
 import { resolveRenderTree } from "@/services/renderer/resolve";
 
 const renderer = {
@@ -156,5 +159,62 @@ describe("effect layer node resolution", () => {
 			effect_pass_groups: expect.any(Array),
 		});
 		expect("effectPassGroups" in (frame.items[0] ?? {})).toBe(false);
+	});
+
+	test("applies overlay movement to layers below the effect layer", async () => {
+		const preset = OVERLAY_MOVEMENT_PRESETS.find(
+			(item) => item.id === "curve-zoom-in-out",
+		);
+		if (!preset) throw new Error("Missing movement preset");
+
+		const root = new RootNode({ duration: 100 });
+		root.add(new ColorNode({ color: "#111111" }));
+		root.add(
+			new EffectLayerNode({
+				effectType: CUSTOM_AI_EFFECT_TYPE,
+				effectParams: preset.params,
+				timeOffset: 0,
+				duration: 100,
+			}),
+		);
+
+		await resolveRenderTree({ node: root, renderer, time: 50 });
+		const { frame } = await buildFrameDescriptor({ node: root, renderer });
+
+		if (frame.items[0]?.type !== "layer") {
+			throw new Error("Expected first frame item to be a layer");
+		}
+		const { width, height } = frame.items[0].transform;
+		expect(Number.isFinite(width)).toBe(true);
+		expect(Number.isFinite(height)).toBe(true);
+		expect(width > renderer.width).toBe(true);
+		expect(height > renderer.height).toBe(true);
+	});
+
+	test("emits overlay movement visual layers above moved content", async () => {
+		const preset = OVERLAY_MOVEMENT_PRESETS.find(
+			(item) => item.id === "darken-room-push",
+		);
+		if (!preset) throw new Error("Missing movement preset");
+
+		const root = new RootNode({ duration: 100 });
+		root.add(new ColorNode({ color: "#111111" }));
+		root.add(
+			new EffectLayerNode({
+				effectType: CUSTOM_AI_EFFECT_TYPE,
+				effectParams: preset.params,
+				timeOffset: 0,
+				duration: 100,
+			}),
+		);
+
+		await resolveRenderTree({ node: root, renderer, time: 50 });
+		const { frame } = await buildFrameDescriptor({ node: root, renderer });
+
+		expect(frame.items[1]).toMatchObject({
+			type: "layer",
+			textureId: expect.stringContaining("overlay-movement-visuals"),
+			blendMode: "normal",
+		});
 	});
 });

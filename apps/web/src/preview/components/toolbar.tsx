@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorPlayback,
+	useEditorProject,
+	useEditorTimeline,
+} from "@/editor/use-editor";
 import { formatTimecode } from "opencut-wasm";
 import { invokeAction } from "@/actions";
 import { EditableTimecode } from "@/components/editable-timecode";
@@ -112,8 +117,8 @@ function SafeAreaToggleButton({
 
 function TimecodeDisplay() {
 	const editor = useEditor();
-	const totalDuration = useEditor((e) => e.timeline.getTotalDuration());
-	const fps = useEditor((e) => e.project.getActive().settings.fps);
+	const totalDuration = useEditorTimeline((e) => e.timeline.getTotalDuration());
+	const fps = useEditorProject((e) => e.project.getActive().settings.fps);
 	const [currentTime, setCurrentTime] = useState<MediaTime>(() =>
 		editor.playback.getCurrentTime(),
 	);
@@ -183,7 +188,7 @@ function ZoomSelect() {
 }
 
 function PlayPauseButton() {
-	const isPlaying = useEditor((e) => e.playback.getIsPlaying());
+	const isPlaying = useEditorPlayback((e) => e.playback.getIsPlaying());
 
 	return (
 		<Button

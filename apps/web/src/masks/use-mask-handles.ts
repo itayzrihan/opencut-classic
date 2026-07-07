@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreviewViewport } from "@/preview/components/preview-viewport";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorMediaAsset,
+	useEditorPlayback,
+	useEditorProject,
+	useEditorSelection,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { useShiftKey } from "@/hooks/use-shift-key";
 import { getMaskDefinition } from "@/masks";
 import { appendPointToFreeformPathMask } from "@/masks/freeform/definition";
 import {
-	getVisibleElementsWithBounds,
+	getElementWithBounds,
 	type ElementBounds,
 } from "@/preview/element-bounds";
 import {
@@ -17,6 +24,7 @@ import type { Mask, MaskHandleId, MaskInteractionResult } from "@/masks/types";
 import type { MaskableElement } from "@/timeline";
 import { isMaskableElement } from "@/timeline/element-utils";
 import { registerCanceller } from "@/editor/cancel-interaction";
+import type { ElementRef, SceneTracks, TimelineElement } from "@/timeline";
 
 interface DragState {
 	trackId: string;
@@ -88,6 +96,36 @@ function withUpdatedMaskParams<TMask extends Mask>({
 	};
 }
 
+function getElementForRef({
+	tracks,
+	elementRef,
+}: {
+	tracks: SceneTracks;
+	elementRef: ElementRef;
+}): TimelineElement | null {
+	const track =
+		tracks.main.id === elementRef.trackId
+			? tracks.main
+			: (tracks.overlay.find(
+					(candidate) => candidate.id === elementRef.trackId,
+				) ??
+				tracks.audio.find((candidate) => candidate.id === elementRef.trackId));
+	const element = track?.elements.find(
+		(candidate) => candidate.id === elementRef.elementId,
+	);
+	return element ?? null;
+}
+
+function getMediaIdForElement({
+	element,
+}: {
+	element: TimelineElement | null;
+}): string | null {
+	return element?.type === "video" || element?.type === "image"
+		? element.mediaId
+		: null;
+}
+
 export function useMaskHandles({
 	onSnapLinesChange,
 }: {
@@ -96,7 +134,9 @@ export function useMaskHandles({
 	const editor = useEditor();
 	const isShiftHeldRef = useShiftKey();
 	const viewport = usePreviewViewport();
-	const [activeHandleId, setActiveHandleId] = useState<MaskHandleId | null>(null);
+	const [activeHandleId, setActiveHandleId] = useState<MaskHandleId | null>(
+		null,
+	);
 	const dragStateRef = useRef<DragState | null>(null);
 	const pendingSegmentInsertRef = useRef<PendingSegmentInsertState | null>(
 		null,
@@ -105,55 +145,71 @@ export function useMaskHandles({
 		null,
 	);
 
-	const tracks = useEditor(
+	const tracks = useEditorTimelineScenes(
 		(e) => e.timeline.getPreviewTracks() ?? e.scenes.getActiveScene().tracks,
 	);
-	const currentTime = useEditor((e) => e.playback.getCurrentTime());
-	const mediaAssets = useEditor((e) => e.media.getAssets());
-	const canvasSize = useEditor(
-		(e) => e.project.getActive().settings.canvasSize,
+	const selectedElements = useEditorSelection((e) =>
+		e.selection.getSelectedElements(),
 	);
-	const selectedElements = useEditor((e) => e.selection.getSelectedElements());
-	const selectedMaskPointSelection = useEditor((e) =>
+	const selectedMaskPointSelection = useEditorSelection((e) =>
 		e.selection.getSelectedMaskPointSelection(),
 	);
-
-	const elementsWithBounds = getVisibleElementsWithBounds({
-		tracks,
-		currentTime,
-		canvasSize,
-		mediaAssets,
-	});
-
-	const selectedWithMask =
-		selectedElements.length === 1
-			? (() => {
-					const sel = selectedElements[0];
-					const entry = elementsWithBounds.find(
-						(item) =>
-							item.trackId === sel.trackId && item.elementId === sel.elementId,
-					);
-					if (!entry) return null;
-					if (!isMaskableElement(entry.element)) return null;
-					const element = entry.element;
-					const masks = element.masks ?? [];
-					if (masks.length === 0) return null;
-					const activeMaskId = masks.some((mask) =>
-						isMaskSelectionForElement({
-							trackId: entry.trackId,
-							elementId: entry.elementId,
-							maskId: mask.id,
-							selection: selectedMaskPointSelection,
-						}),
-					)
-						? selectedMaskPointSelection?.maskId
-						: masks[0].id;
-					const mask =
-						masks.find((candidate) => candidate.id === activeMaskId) ??
-						masks[0];
-					return { ...entry, element, mask };
-				})()
+	const selectedElementRef =
+		selectedElements.length === 1 ? selectedElements[0] : null;
+	const selectedElement = useMemo(
+		() =>
+			selectedElementRef
+				? getElementForRef({ tracks, elementRef: selectedElementRef })
+				: null,
+		[selectedElementRef, tracks],
+	);
+	const selectedMaskableElement =
+		selectedElement && isMaskableElement(selectedElement)
+			? selectedElement
 			: null;
+	const shouldTrackPlaybackForMasks =
+		(selectedMaskableElement?.masks?.length ?? 0) > 0;
+	const currentTime = useEditorPlayback((e) =>
+		shouldTrackPlaybackForMasks ? e.playback.getCurrentTime() : 0,
+	);
+	const canvasSize = useEditorProject(
+		(e) => e.project.getActive().settings.canvasSize,
+	);
+	const selectedMediaId = useMemo(
+		() => getMediaIdForElement({ element: selectedMaskableElement }),
+		[selectedMaskableElement],
+	);
+	const selectedMediaAsset = useEditorMediaAsset({ mediaId: selectedMediaId });
+
+	const selectedWithMask = selectedElementRef
+		? (() => {
+				const entry = getElementWithBounds({
+					tracks,
+					elementRef: selectedElementRef,
+					currentTime,
+					canvasSize,
+					mediaAsset: selectedMediaAsset,
+				});
+				if (!entry) return null;
+				if (!isMaskableElement(entry.element)) return null;
+				const element = entry.element;
+				const masks = element.masks ?? [];
+				if (masks.length === 0) return null;
+				const activeMaskId = masks.some((mask) =>
+					isMaskSelectionForElement({
+						trackId: entry.trackId,
+						elementId: entry.elementId,
+						maskId: mask.id,
+						selection: selectedMaskPointSelection,
+					}),
+				)
+					? selectedMaskPointSelection?.maskId
+					: masks[0].id;
+				const mask =
+					masks.find((candidate) => candidate.id === activeMaskId) ?? masks[0];
+				return { ...entry, element, mask };
+			})()
+		: null;
 
 	const { handles: baseHandlePositions, overlays }: MaskInteractionResult =
 		selectedWithMask

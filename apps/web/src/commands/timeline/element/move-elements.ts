@@ -128,6 +128,7 @@ export class MoveElementCommand extends Command {
 		});
 		updatedTracks = syncTextLayerWordsIntoCaptionSource({
 			tracks: updatedTracks,
+			previousTracks: this.savedState,
 			elements: this.moves.map(({ targetTrackId, elementId }) => ({
 				trackId: targetTrackId,
 				elementId,

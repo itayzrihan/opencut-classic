@@ -1,20 +1,24 @@
-import type {
-	ParamDefinition,
-	ParamValue,
-	ParamValues,
-} from "@/params";
+import type { ParamDefinition, ParamValue, ParamValues } from "@/params";
 import { MIN_TRANSFORM_SCALE } from "@/animation/transform";
 import type { BlendMode } from "@/rendering";
-import type {
-	ElementType,
-	TimelineElement,
-} from "@/timeline";
+import type { ElementType, TimelineElement } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "@/timeline/audio-constants";
-import {
-	CORNER_RADIUS_MAX,
-	CORNER_RADIUS_MIN,
-} from "@/text/background";
+import { CORNER_RADIUS_MAX, CORNER_RADIUS_MIN } from "@/text/background";
+
+const FONT_WEIGHT_OPTIONS = [
+	{ value: "normal", label: "Normal" },
+	{ value: "100", label: "100 Thin" },
+	{ value: "200", label: "200 Extra Light" },
+	{ value: "300", label: "300 Light" },
+	{ value: "400", label: "400 Regular" },
+	{ value: "500", label: "500 Medium" },
+	{ value: "600", label: "600 Semi Bold" },
+	{ value: "700", label: "700 Bold" },
+	{ value: "800", label: "800 Extra Bold" },
+	{ value: "900", label: "900 Black" },
+	{ value: "bold", label: "Bold" },
+];
 
 export type ElementParamDefinition<TKey extends string = string> =
 	ParamDefinition<TKey> & {
@@ -46,13 +50,7 @@ export class DefinitionRegistry<TKey extends string, TDefinition> {
 		this.entityName = entityName;
 	}
 
-	register({
-		key,
-		definition,
-	}: {
-		key: TKey;
-		definition: TDefinition;
-	}): void {
+	register({ key, definition }: { key: TKey; definition: TDefinition }): void {
 		this.definitions.set(key, definition);
 	}
 
@@ -220,10 +218,7 @@ const textElementParams: ElementParamDefinition[] = [
 		type: "select",
 		default: "normal",
 		keyframable: false,
-		options: [
-			{ value: "normal", label: "Normal" },
-			{ value: "bold", label: "Bold" },
-		],
+		options: FONT_WEIGHT_OPTIONS,
 	},
 	{
 		key: "fontStyle",
@@ -263,6 +258,78 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.lineHeight,
 		min: 0.1,
 		step: 0.1,
+	},
+	{
+		key: "stroke.enabled",
+		label: "Stroke",
+		type: "boolean",
+		default: DEFAULTS.text.stroke.enabled,
+		keyframable: false,
+	},
+	{
+		key: "stroke.color",
+		label: "Stroke Color",
+		type: "color",
+		default: DEFAULTS.text.stroke.color,
+		dependencies: [{ param: "stroke.enabled", equals: true }],
+	},
+	{
+		key: "stroke.width",
+		label: "Stroke Width",
+		type: "number",
+		default: DEFAULTS.text.stroke.width,
+		min: 0,
+		max: 100,
+		step: 0.5,
+		shortLabel: "W",
+		dependencies: [{ param: "stroke.enabled", equals: true }],
+	},
+	{
+		key: "shadow.enabled",
+		label: "Shadow",
+		type: "boolean",
+		default: DEFAULTS.text.shadow.enabled,
+		keyframable: false,
+	},
+	{
+		key: "shadow.color",
+		label: "Shadow Color",
+		type: "color",
+		default: DEFAULTS.text.shadow.color,
+		dependencies: [{ param: "shadow.enabled", equals: true }],
+	},
+	{
+		key: "shadow.blur",
+		label: "Shadow Blur",
+		type: "number",
+		default: DEFAULTS.text.shadow.blur,
+		min: 0,
+		max: 200,
+		step: 0.5,
+		shortLabel: "B",
+		dependencies: [{ param: "shadow.enabled", equals: true }],
+	},
+	{
+		key: "shadow.offsetX",
+		label: "Shadow X",
+		type: "number",
+		default: DEFAULTS.text.shadow.offsetX,
+		min: -500,
+		max: 500,
+		step: 0.5,
+		shortLabel: "X",
+		dependencies: [{ param: "shadow.enabled", equals: true }],
+	},
+	{
+		key: "shadow.offsetY",
+		label: "Shadow Y",
+		type: "number",
+		default: DEFAULTS.text.shadow.offsetY,
+		min: -500,
+		max: 500,
+		step: 0.5,
+		shortLabel: "Y",
+		dependencies: [{ param: "shadow.enabled", equals: true }],
 	},
 	{
 		key: "background.enabled",
@@ -335,7 +402,10 @@ elementParamRegistry.register({
 	key: "video",
 	definition: [...visualElementParams, ...audioElementParams],
 });
-elementParamRegistry.register({ key: "image", definition: visualElementParams });
+elementParamRegistry.register({
+	key: "image",
+	definition: visualElementParams,
+});
 elementParamRegistry.register({
 	key: "text",
 	definition: [...textElementParams, ...visualElementParams],
@@ -435,4 +505,3 @@ export function buildElementParamValues({
 	}
 	return values;
 }
-

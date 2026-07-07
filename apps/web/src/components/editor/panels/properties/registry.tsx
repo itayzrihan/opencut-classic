@@ -33,6 +33,8 @@ import {
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
+import { UI_ELEMENT_GRAPHIC_ID } from "@/graphics/definitions/ui-element";
+import { UiElementPropertiesTab } from "@/ui-elements/components/properties-tab";
 import { OcShapesIcon } from "@/components/icons";
 import { TextTransitionsTab } from "./components/text-transitions-tab";
 import { TextWordsTab } from "./components/text-words-tab";
@@ -60,6 +62,14 @@ const TEXT_PARAM_KEYS = [
 	"textDecoration",
 	"letterSpacing",
 	"lineHeight",
+	"stroke.enabled",
+	"stroke.color",
+	"stroke.width",
+	"shadow.enabled",
+	"shadow.color",
+	"shadow.blur",
+	"shadow.offsetX",
+	"shadow.offsetY",
 	"background.enabled",
 	"background.color",
 	"background.cornerRadius",
@@ -276,13 +286,17 @@ function buildGraphicTab({
 }: {
 	element: GraphicElement;
 }): PropertiesTabDef {
+	const isUiElement = element.definitionId === UI_ELEMENT_GRAPHIC_ID;
 	return {
 		id: "graphic",
-		label: "Graphic",
+		label: isUiElement ? "UI" : "Graphic",
 		icon: <OcShapesIcon size={16} />,
-		content: ({ trackId }) => (
-			<GraphicTab element={element} trackId={trackId} />
-		),
+		content: ({ trackId }) =>
+			isUiElement ? (
+				<UiElementPropertiesTab element={element} trackId={trackId} />
+			) : (
+				<GraphicTab element={element} trackId={trackId} />
+			),
 	};
 }
 

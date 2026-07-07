@@ -6,6 +6,10 @@ import {
 	intensityToSigma,
 } from "@/effects/definitions/blur";
 import { getEffectDefinition, resolveEffectPasses } from "@/effects";
+import {
+	isOverlayMovementParams,
+	resolveOverlayMovementFrame,
+} from "@/effects/overlay-movement-presets";
 import type { Effect, EffectPass } from "@/effects/types";
 import { getSourceTimeAtClipTime } from "@/retime";
 import { CUSTOM_AI_EFFECT_TYPE } from "@/effects/custom-ai-effect";
@@ -210,7 +214,9 @@ async function resolveVideoNode({
 	const frame = await videoCache.getFrameAt({
 		mediaId: node.params.mediaId,
 		file: node.params.file,
-		time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+		time: mediaTimeToSeconds({
+			time: roundMediaTime({ time: sourceTimeTicks }),
+		}),
 	});
 	if (!frame) {
 		return null;
@@ -446,7 +452,9 @@ async function resolveBackdropSource({
 		const frame = await videoCache.getFrameAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
-			time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+			time: mediaTimeToSeconds({
+				time: roundMediaTime({ time: sourceTimeTicks }),
+			}),
 		});
 		if (!frame) {
 			return null;
@@ -482,27 +490,41 @@ function resolveEffectLayerNode({
 		return null;
 	}
 
+	const localTime = time - node.params.timeOffset;
 	const definition = getEffectDefinition(node.params.effectType);
-	const passes = resolveEffectPasses({
-		definition,
-		effectParams: node.params.effectParams,
-		width: context.renderer.width,
-		height: context.renderer.height,
-		localTime: time - node.params.timeOffset,
-	});
-	const visualOverlay =
+	const movement =
 		definition.type === CUSTOM_AI_EFFECT_TYPE
+			? resolveOverlayMovementFrame({
+					effectParams: node.params.effectParams,
+					localTime,
+					duration: node.params.duration,
+					width: context.renderer.width,
+					height: context.renderer.height,
+				})
+			: null;
+	const passes = movement
+		? []
+		: resolveEffectPasses({
+				definition,
+				effectParams: node.params.effectParams,
+				width: context.renderer.width,
+				height: context.renderer.height,
+				localTime,
+			});
+	const visualOverlay =
+		definition.type === CUSTOM_AI_EFFECT_TYPE && !movement
 			? resolveEffectLayerVisualOverlay({
 					effectType: node.params.effectType,
 					effectParams: node.params.effectParams,
-					localTime: time - node.params.timeOffset,
+					localTime,
 					duration: node.params.duration,
 				})
 			: null;
-	if (passes.length > 0 || visualOverlay) {
+	if (passes.length > 0 || visualOverlay || movement) {
 		return {
 			passes,
 			visualOverlay,
+			movement,
 			overlay: null,
 		};
 	}
@@ -519,6 +541,7 @@ function resolveEffectLayerNode({
 	return {
 		passes: [],
 		visualOverlay: null,
+		movement: null,
 		overlay,
 	};
 }
@@ -533,6 +556,9 @@ function buildCustomAiEffectOverlay({
 	definitionType: string;
 }): EffectLayerOverlay | null {
 	if (definitionType !== CUSTOM_AI_EFFECT_TYPE) {
+		return null;
+	}
+	if (isOverlayMovementParams({ params: effectParams })) {
 		return null;
 	}
 

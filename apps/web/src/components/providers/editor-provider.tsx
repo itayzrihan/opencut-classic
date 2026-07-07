@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { EditorCore } from "@/core";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorProject } from "@/editor/use-editor";
 import { useKeybindingsListener } from "@/actions/use-keybindings";
 import { useKeybindingsStore } from "@/actions/keybindings-store";
 import { useTimelineStore } from "@/timeline/timeline-store";
@@ -21,7 +21,7 @@ interface EditorProviderProps {
 }
 
 export function EditorProvider({ projectId, children }: EditorProviderProps) {
-	const activeProject = useEditor((e) => e.project.getActiveOrNull());
+	const activeProject = useEditorProject((e) => e.project.getActiveOrNull());
 	const router = useRouter();
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);

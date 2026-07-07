@@ -1,12 +1,18 @@
-import type { SceneTracks, TimelineElement } from "@/timeline";
+import type {
+	ElementRef,
+	SceneTracks,
+	TimelineElement,
+	TimelineTrack,
+} from "@/timeline";
 import { getDisplayTracks } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { STICKER_INTRINSIC_SIZE_FALLBACK } from "@/stickers/intrinsic-size";
 import { getGraphicSourceSize } from "@/graphics";
-import { measureTextElement } from "@/text/measure-element";
 import {
-	getElementLocalTime,
-} from "@/animation";
+	getTextMeasurementContext,
+	measureTextElement,
+} from "@/text/measure-element";
+import { getElementLocalTime } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
 import { buildTransitionAnimationsFromElement } from "@/transitions";
@@ -24,6 +30,49 @@ export interface ElementWithBounds {
 	elementId: string;
 	element: TimelineElement;
 	bounds: ElementBounds;
+}
+
+const mediaAssetMapCache = new WeakMap<MediaAsset[], Map<string, MediaAsset>>();
+
+function findTrackById({
+	tracks,
+	trackId,
+}: {
+	tracks: SceneTracks;
+	trackId: string;
+}): TimelineTrack | null {
+	if (tracks.main.id === trackId) {
+		return tracks.main;
+	}
+
+	for (const track of tracks.overlay) {
+		if (track.id === trackId) {
+			return track;
+		}
+	}
+
+	for (const track of tracks.audio) {
+		if (track.id === trackId) {
+			return track;
+		}
+	}
+
+	return null;
+}
+
+function getMediaAssetMap({
+	mediaAssets,
+}: {
+	mediaAssets: MediaAsset[];
+}): Map<string, MediaAsset> {
+	const cached = mediaAssetMapCache.get(mediaAssets);
+	if (cached) {
+		return cached;
+	}
+
+	const mediaMap = new Map(mediaAssets.map((asset) => [asset.id, asset]));
+	mediaAssetMapCache.set(mediaAssets, mediaMap);
+	return mediaMap;
 }
 
 function getVisualElementBounds({
@@ -182,15 +231,11 @@ function getElementBounds({
 			localTime,
 		});
 
-		const canvas = document.createElement("canvas");
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return null;
-
 		const measured = measureTextElement({
 			element,
 			canvasHeight,
 			localTime,
-			ctx,
+			ctx: getTextMeasurementContext(),
 		});
 
 		return getTransformedRectBounds({
@@ -243,7 +288,8 @@ export function getEdgeHandlePosition({
 	const angleRad = (bounds.rotation * Math.PI) / 180;
 	const cos = Math.cos(angleRad);
 	const sin = Math.sin(angleRad);
-	const localX = edge === "right" ? halfWidth : edge === "left" ? -halfWidth : 0;
+	const localX =
+		edge === "right" ? halfWidth : edge === "left" ? -halfWidth : 0;
 	const localY = edge === "bottom" ? halfHeight : 0;
 	return {
 		x: bounds.cx + (localX * cos - localY * sin),
@@ -262,28 +308,43 @@ export function getVisibleElementsWithBounds({
 	canvasSize: { width: number; height: number };
 	mediaAssets: MediaAsset[];
 }): ElementWithBounds[] {
-	const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
-	const orderedTracks = getDisplayTracks({ tracks })
-		.filter((track) => !("hidden" in track && track.hidden) && track.type !== "audio")
-		.reverse();
+	const mediaMap = getMediaAssetMap({ mediaAssets });
+	const displayTracks = getDisplayTracks({ tracks });
 
 	const result: ElementWithBounds[] = [];
 
-	for (const track of orderedTracks) {
-		const elements = track.elements
-			.filter((element) => !("hidden" in element && element.hidden))
-			.filter(
-				(element) =>
-					currentTime >= element.startTime &&
-					currentTime < element.startTime + element.duration,
-			)
-			.slice()
-			.sort((a, b) => {
+	for (
+		let trackIndex = displayTracks.length - 1;
+		trackIndex >= 0;
+		trackIndex--
+	) {
+		const track = displayTracks[trackIndex];
+		if (track.type === "audio" || ("hidden" in track && track.hidden)) {
+			continue;
+		}
+
+		const activeElements: TimelineElement[] = [];
+		for (const element of track.elements) {
+			if ("hidden" in element && element.hidden) {
+				continue;
+			}
+			if (
+				currentTime < element.startTime ||
+				currentTime >= element.startTime + element.duration
+			) {
+				continue;
+			}
+			activeElements.push(element);
+		}
+
+		if (activeElements.length > 1) {
+			activeElements.sort((a, b) => {
 				if (a.startTime !== b.startTime) return a.startTime - b.startTime;
 				return a.id.localeCompare(b.id);
 			});
+		}
 
-		for (const element of elements) {
+		for (const element of activeElements) {
 			const localTime = getElementLocalTime({
 				timelineTime: currentTime,
 				elementStartTime: element.startTime,
@@ -311,4 +372,63 @@ export function getVisibleElementsWithBounds({
 	}
 
 	return result;
+}
+
+export function getElementWithBounds({
+	tracks,
+	elementRef,
+	currentTime,
+	canvasSize,
+	mediaAssets = [],
+	mediaAsset = null,
+}: {
+	tracks: SceneTracks;
+	elementRef: ElementRef;
+	currentTime: number;
+	canvasSize: { width: number; height: number };
+	mediaAssets?: MediaAsset[];
+	mediaAsset?: MediaAsset | null;
+}): ElementWithBounds | null {
+	const track = findTrackById({ tracks, trackId: elementRef.trackId });
+	if (!track || track.type === "audio" || ("hidden" in track && track.hidden)) {
+		return null;
+	}
+
+	const element = track.elements.find(
+		(candidate) => candidate.id === elementRef.elementId,
+	);
+	if (!element || ("hidden" in element && element.hidden)) {
+		return null;
+	}
+	if (
+		currentTime < element.startTime ||
+		currentTime >= element.startTime + element.duration
+	) {
+		return null;
+	}
+
+	const resolvedMediaAsset =
+		element.type === "video" || element.type === "image"
+			? (mediaAsset ?? getMediaAssetMap({ mediaAssets }).get(element.mediaId))
+			: undefined;
+	const bounds = getElementBounds({
+		element,
+		canvasSize,
+		mediaAsset: resolvedMediaAsset,
+		localTime: getElementLocalTime({
+			timelineTime: currentTime,
+			elementStartTime: element.startTime,
+			elementDuration: element.duration,
+		}),
+	});
+	if (!bounds) {
+		return null;
+	}
+
+	return {
+		trackId: track.id,
+		elementId: element.id,
+		element,
+		bounds,
+	};
 }

@@ -10,6 +10,7 @@ import type {
 } from "@/timeline";
 import { calculateTotalDuration } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
+import { mergeElementOverlay } from "@/timeline/element-overlay";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
 import { lastFrameMediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import {
@@ -17,6 +18,10 @@ import {
 	canElementHaveAudio,
 } from "@/timeline/element-utils";
 import { isElementMuted } from "@/timeline/audio-state";
+import {
+	syncCaptionSourceWordsFromElements,
+	syncTextLayerWordsIntoCaptionSource,
+} from "@/subtitles/caption-source-sync";
 import type {
 	AnimationPath,
 	AnimationInterpolation,
@@ -71,6 +76,10 @@ import { withNormalizedTrackOrder } from "@/timeline";
 export class TimelineManager {
 	private listeners = new Set<() => void>();
 	private previewOverlay = new Map<string, Partial<TimelineElement>>();
+	private previewRefs = new Map<
+		string,
+		{ trackId: string; elementId: string }
+	>();
 	private previewTracks: SceneTracks | null = null;
 	public readonly dragSource = new TimelineDragSource();
 
@@ -757,21 +766,25 @@ export class TimelineManager {
 		}[];
 	}): void {
 		let changedOverlayCount = 0;
-		for (const { elementId, updates: elementUpdates } of updates) {
+		for (const { trackId, elementId, updates: elementUpdates } of updates) {
 			const existingOverlay = this.previewOverlay.get(elementId);
 			const changed = Object.entries(elementUpdates).some(([key, value]) => {
-				return !Object.is(
-					existingOverlay?.[key as keyof TimelineElement],
-					value,
-				);
+				const existingValue = Object.entries(existingOverlay ?? {}).find(
+					([existingKey]) => existingKey === key,
+				)?.[1];
+				return !Object.is(existingValue, value);
 			});
 			if (changed) {
 				changedOverlayCount += 1;
-				const mergedOverlay = {
-					...existingOverlay,
-					...elementUpdates,
-				} as Partial<TimelineElement>;
+				const mergedOverlay = mergeElementOverlay({
+					base: existingOverlay,
+					overlay: elementUpdates,
+				});
 				this.previewOverlay.set(elementId, mergedOverlay);
+				this.previewRefs.set(elementId, {
+					trackId,
+					elementId,
+				});
 			}
 		}
 		const committedTracks = this.editor.scenes.getActiveSceneOrNull()?.tracks;
@@ -791,14 +804,27 @@ export class TimelineManager {
 		if (!committedTracks) {
 			return;
 		}
-		const afterTracks =
+		let afterTracks =
 			this.previewTracks ?? this.applyPreviewOverlay(committedTracks);
+		const updatedRefs = [...this.previewRefs.values()].filter(
+			(ref) => ref.trackId.length > 0,
+		);
+		afterTracks = syncCaptionSourceWordsFromElements({
+			tracks: afterTracks,
+			previousTracks: committedTracks,
+			updates: updatedRefs,
+		});
+		afterTracks = syncTextLayerWordsIntoCaptionSource({
+			tracks: afterTracks,
+			elements: updatedRefs,
+		});
 		const command = new TracksSnapshotCommand({
 			before: committedTracks,
 			after: afterTracks,
 		});
 		const beforeSnapshot = this.editor.command.captureProjectSnapshot();
 		this.previewOverlay.clear();
+		this.previewRefs.clear();
 		this.previewTracks = null;
 		this.updateTracks(afterTracks);
 		this.editor.command.push({ command, beforeSnapshot });
@@ -807,6 +833,7 @@ export class TimelineManager {
 	discardPreview(): void {
 		if (this.previewOverlay.size === 0) return;
 		this.previewOverlay.clear();
+		this.previewRefs.clear();
 		this.previewTracks = null;
 		this.notify();
 	}
@@ -827,7 +854,7 @@ export class TimelineManager {
 			const nextElements = track.elements.map((element) => {
 				const overlay = this.previewOverlay.get(element.id);
 				return overlay
-					? ({ ...element, ...overlay } as TimelineElement)
+					? mergeElementOverlay({ base: element, overlay })
 					: element;
 			});
 
@@ -976,6 +1003,7 @@ export class TimelineManager {
 
 	updateTracks(newTracks: SceneTracks): void {
 		this.previewOverlay.clear();
+		this.previewRefs.clear();
 		this.previewTracks = null;
 		this.editor.scenes.updateSceneTracks({
 			tracks: withNormalizedTrackOrder({ tracks: newTracks }),

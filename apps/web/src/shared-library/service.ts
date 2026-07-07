@@ -294,6 +294,42 @@ export class SharedLibraryService {
 		return assets.find((asset) => asset.id === id) ?? null;
 	}
 
+	private async findMatchingAudioAsset({
+		asset,
+	}: {
+		asset: SharedAudioAsset;
+	}): Promise<SharedAudioAsset | null> {
+		const assets = await this.listAudioAssets();
+		return (
+			assets.find(
+				(existing) =>
+					existing.id === asset.id ||
+					(Boolean(asset.sourceUrl) &&
+						existing.sourceUrl === asset.sourceUrl) ||
+					(Boolean(asset.repositoryPath) &&
+						existing.repositoryPath === asset.repositoryPath),
+			) ?? null
+		);
+	}
+
+	private async findMatchingStickerAsset({
+		asset,
+	}: {
+		asset: SharedStickerAsset;
+	}): Promise<SharedStickerAsset | null> {
+		const assets = await this.listStickerAssets();
+		return (
+			assets.find(
+				(existing) =>
+					existing.id === asset.id ||
+					(Boolean(asset.sourceUrl) &&
+						existing.sourceUrl === asset.sourceUrl) ||
+					(Boolean(asset.repositoryPath) &&
+						existing.repositoryPath === asset.repositoryPath),
+			) ?? null
+		);
+	}
+
 	async listAudioAssets({
 		folder,
 	}: {
@@ -370,6 +406,49 @@ export class SharedLibraryService {
 			await this.audioMetadata.set({ key: asset.id, value: asset });
 		}
 		return imported;
+	}
+
+	async upsertArchiveAudioAsset({
+		asset,
+		file,
+	}: {
+		asset: SharedAudioAsset;
+		file: File | null;
+	}): Promise<{ status: "linked" | "imported"; assetId: string }> {
+		const existing = await this.findMatchingAudioAsset({ asset });
+		if (existing) {
+			return { status: "linked", assetId: existing.id };
+		}
+
+		const timestamp = nowIso();
+		let normalized: SharedAudioAsset = {
+			...asset,
+			createdAt: asset.createdAt || timestamp,
+			updatedAt: asset.updatedAt || timestamp,
+		};
+
+		if (file) {
+			await checkQuota({ file });
+			const copiedFile = await cloneStoredFile({
+				file,
+				name: asset.fileName ?? file.name ?? `${asset.id}.audio`,
+				type: asset.mimeType || file.type || "audio/mpeg",
+				lastModified: new Date(asset.updatedAt || timestamp).getTime(),
+			});
+			await this.audioFiles.set({ key: asset.id, value: copiedFile });
+			normalized = {
+				...normalized,
+				fileName: copiedFile.name,
+				mimeType: copiedFile.type || normalized.mimeType,
+				size: copiedFile.size,
+				storageKind: "browser",
+				sourceUrl: undefined,
+				repositoryPath: undefined,
+			};
+		}
+
+		await this.audioMetadata.set({ key: normalized.id, value: normalized });
+		return { status: "imported", assetId: normalized.id };
 	}
 
 	async getAudioAssetFile({
@@ -483,6 +562,52 @@ export class SharedLibraryService {
 			await this.stickerMetadata.set({ key: asset.id, value: asset });
 		}
 		return imported;
+	}
+
+	async upsertArchiveStickerAsset({
+		asset,
+		file,
+	}: {
+		asset: SharedStickerAsset;
+		file: File | null;
+	}): Promise<{ status: "linked" | "imported"; assetId: string }> {
+		const existing = await this.findMatchingStickerAsset({ asset });
+		if (existing) {
+			return { status: "linked", assetId: existing.id };
+		}
+
+		const timestamp = nowIso();
+		let normalized: SharedStickerAsset = {
+			...asset,
+			createdAt: asset.createdAt || timestamp,
+			updatedAt: asset.updatedAt || timestamp,
+		};
+
+		if (file) {
+			await checkQuota({ file });
+			const copiedFile = await cloneStoredFile({
+				file,
+				name: asset.fileName ?? file.name ?? `${asset.id}.image`,
+				type: asset.mimeType || file.type || "image/png",
+				lastModified: new Date(asset.updatedAt || timestamp).getTime(),
+			});
+			const dataUrl = await readFileAsDataUrl({ file: copiedFile });
+			await this.stickerFiles.set({ key: asset.id, value: copiedFile });
+			this.stickerDataUrlCache.set(asset.id, dataUrl);
+			normalized = {
+				...normalized,
+				fileName: copiedFile.name,
+				mimeType: copiedFile.type || normalized.mimeType,
+				size: copiedFile.size,
+				dataUrl,
+				storageKind: "browser",
+				sourceUrl: undefined,
+				repositoryPath: undefined,
+			};
+		}
+
+		await this.stickerMetadata.set({ key: normalized.id, value: normalized });
+		return { status: "imported", assetId: normalized.id };
 	}
 
 	async getStickerAssetFile({ id }: { id: string }): Promise<File | null> {

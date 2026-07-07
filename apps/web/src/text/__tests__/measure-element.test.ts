@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { TextElement, TextWordRun } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import {
+	CAPTION_WORD_ANIMATIONS,
+	getCaptionWordAnimation,
+} from "@/text/caption-presets";
+import {
 	getTextMeasurementContext,
 	measureTextElement,
 	resolveAutoTextDirection,
@@ -24,7 +28,7 @@ function createTextElement(
 		params: {
 			...DEFAULTS.text.element.params,
 			...params,
-		},
+		} as TextElement["params"],
 	};
 }
 
@@ -120,5 +124,148 @@ describe("text word direction", () => {
 
 		expect(word.direction).toBe("ltr");
 		expect(word.drawText).toBe("Hel");
+	});
+});
+
+describe("text word animation reveal precedence", () => {
+	test("exposes none as the neutral word animation fallback", () => {
+		expect(CAPTION_WORD_ANIMATIONS[0]?.id).toBe("none");
+		expect(getCaptionWordAnimation({ wordAnimationId: "none" }).name).toBe(
+			"None",
+		);
+		expect(getCaptionWordAnimation({ wordAnimationId: "missing" }).id).toBe(
+			"none",
+		);
+	});
+
+	test("none uses a whole-row reveal without word motion", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionRevealMode: "determined-by-preset",
+				captionTransitionIn: "blur-zoom",
+				captionWordAnimationId: "none",
+				wordRuns: [timedRun({ id: "hello", text: "Hello" })],
+				params: { content: "Hello" },
+			}),
+		});
+
+		expect(word.drawText).toBe("Hello");
+		expect(word.opacity).toBe(1);
+		expect(word.scale).toBe(1);
+		expect(word.blur).toBe(0);
+		expect(word.offsetX).toBe(0);
+		expect(word.offsetY).toBe(0);
+	});
+
+	test("missing transition in defaults to no entrance motion", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionRevealMode: "spoken-word",
+				captionWordAnimationId: "none",
+				wordRuns: [timedRun({ id: "hello", text: "Hello" })],
+				params: { content: "Hello" },
+			}),
+		});
+
+		expect(word.opacity).toBe(1);
+		expect(word.scale).toBe(1);
+		expect(word.blur).toBe(0);
+	});
+
+	test("fixed reveal modes ignore preset character reveal", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionRevealMode: "spoken-word",
+				captionTransitionIn: "none",
+				captionWordAnimationId: "letter-laser-1",
+				wordRuns: [timedRun({ id: "hello", text: "Hello" })],
+				params: { content: "Hello" },
+			}),
+		});
+
+		expect(word.drawText).toBe("Hello");
+	});
+
+	test("determined-by-preset keeps preset character reveal", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionRevealMode: "determined-by-preset",
+				captionWordAnimationId: "letter-laser-1",
+				wordRuns: [timedRun({ id: "hello", text: "Hello" })],
+				params: { content: "Hello" },
+			}),
+		});
+
+		expect(word.drawText).toBe("Hel");
+	});
+});
+
+describe("text stroke and shadow effects", () => {
+	test("measures layer stroke and shadow and expands visual bounds", () => {
+		const plain = measureTextElement({
+			element: createTextElement({
+				params: { content: "Hello" },
+			}),
+			canvasHeight: 1080,
+			localTime: HALF_SECOND,
+			ctx: getTextMeasurementContext(),
+		});
+		const styled = measureTextElement({
+			element: createTextElement({
+				params: {
+					content: "Hello",
+					"stroke.enabled": true,
+					"stroke.color": "#112233",
+					"stroke.width": 6,
+					"shadow.enabled": true,
+					"shadow.color": "#445566",
+					"shadow.blur": 8,
+					"shadow.offsetX": 5,
+					"shadow.offsetY": -3,
+				},
+			}),
+			canvasHeight: 1080,
+			localTime: HALF_SECOND,
+			ctx: getTextMeasurementContext(),
+		});
+
+		expect(styled.stroke).toEqual({ color: "#112233", width: 6 });
+		expect(styled.shadow).toEqual({
+			color: "#445566",
+			blur: 8,
+			offsetX: 5,
+			offsetY: -3,
+		});
+		expect(styled.visualRect.left).toBeLessThan(plain.visualRect.left);
+		expect(styled.visualRect.top).toBeLessThan(plain.visualRect.top);
+		expect(styled.visualRect.width).toBeGreaterThan(plain.visualRect.width);
+		expect(styled.visualRect.height).toBeGreaterThan(plain.visualRect.height);
+	});
+
+	test("applies layer stroke and shadow to measured caption words", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionWordAnimationId: "none",
+				wordRuns: [timedRun({ id: "hello", text: "Hello" })],
+				params: {
+					content: "Hello",
+					"stroke.enabled": true,
+					"stroke.color": "#123456",
+					"stroke.width": 4,
+					"shadow.enabled": true,
+					"shadow.color": "#654321",
+					"shadow.blur": 7,
+					"shadow.offsetX": -2,
+					"shadow.offsetY": 3,
+				},
+			}),
+		});
+
+		expect(word.strokeColor).toBe("#123456");
+		expect(word.strokeWidth).toBe(4);
+		expect(word.shadowColor).toBe("#654321");
+		expect(word.shadowBlur).toBe(7);
+		expect(word.shadowOffsetX).toBe(-2);
+		expect(word.shadowOffsetY).toBe(3);
 	});
 });

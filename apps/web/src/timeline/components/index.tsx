@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/context-menu";
 import { useTimelineZoom } from "@/timeline/hooks/use-timeline-zoom";
 import {
+	memo,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -32,7 +33,7 @@ import {
 	type ReactNode,
 } from "react";
 import { useContainerSize } from "@/hooks/use-container-size";
-import type { MediaTime } from "@/wasm";
+import { mediaTimeFromSeconds, type MediaTime } from "@/wasm";
 import type { ElementDragView, DropTarget } from "@/timeline";
 import { TimelineTrackContent } from "./timeline-track";
 import { TimelinePlayhead } from "./timeline-playhead";
@@ -57,11 +58,7 @@ import {
 	getDisplayTracks,
 } from "@/timeline";
 import { timelineTimeToPixels } from "@/timeline/pixel-utils";
-import {
-	getTrackHeight,
-	getCumulativeHeightBefore,
-	getTotalTracksHeight,
-} from "./track-layout";
+import { getTrackHeight, getTotalTracksHeight } from "./track-layout";
 import { SELECTED_TRACK_ROW_CLASS } from "./theme";
 import {
 	computeTrackExpansionHeight,
@@ -84,7 +81,7 @@ import { useEdgeAutoScroll } from "@/timeline/hooks/use-edge-auto-scroll";
 import { useInitialScrollBottom } from "@/timeline/hooks/use-initial-scroll-bottom";
 import { useTimelineResize } from "@/timeline/hooks/use-timeline-resize";
 import { useTimelineStore } from "@/timeline/timeline-store";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorTimelineScenes } from "@/editor/use-editor";
 import { useScrollPosition } from "@/timeline/hooks/use-scroll-position";
 import { useTimelinePlayhead } from "@/timeline/hooks/use-timeline-playhead";
 import { invokeAction } from "@/actions";
@@ -99,10 +96,86 @@ import {
 } from "./caption-word-timing-track";
 import { findCaptionSourceTrack } from "@/subtitles/caption-tracks";
 import { TIMELINE_SCROLL_TO_TIME_EVENT } from "@/timeline/focus-event";
+import { getVisibleTrackLayouts } from "./visible-track-layouts";
+import { getElementVisibilityScrollLeft } from "./visible-elements";
+import {
+	getTrackIndexByElementId,
+	getTrackIndexesForElementIds,
+} from "./track-element-index";
 
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
 const TRACKS_CONTAINER_HEIGHT = { min: 0, max: TRACKS_CONTAINER_MAX_HEIGHT };
+const TRACK_VERTICAL_OVERSCAN_PX = 180;
+const EMPTY_SELECTED_ELEMENT_IDS: ReadonlySet<string> = new Set();
+
+type TrackLayout = {
+	track: TimelineTrack;
+	index: number;
+	top: number;
+	height: number;
+	baseHeight: number;
+	extraHeight: number;
+};
+
+type TrackLabelTimelineActions = {
+	toggleTrackMute: ({ trackId }: { trackId: string }) => void;
+	toggleTrackVisibility: ({ trackId }: { trackId: string }) => void;
+	reorderTrack: ({
+		trackId,
+		toIndex,
+	}: {
+		trackId: string;
+		toIndex: number;
+	}) => void;
+};
+
+function getTrackLayouts({
+	tracks,
+	startTop,
+	getTrackExpansionHeight,
+}: {
+	tracks: TimelineTrack[];
+	startTop: number;
+	getTrackExpansionHeight: (trackIndex: number) => number;
+}): TrackLayout[] {
+	let top = startTop;
+
+	return tracks.map((track, index) => {
+		const baseHeight = getTrackHeight({ type: track.type });
+		const extraHeight = getTrackExpansionHeight(index);
+		const height = baseHeight + extraHeight;
+		const layout = {
+			track,
+			index,
+			top,
+			height,
+			baseHeight,
+			extraHeight,
+		};
+		top += height + TIMELINE_TRACK_GAP_PX;
+		return layout;
+	});
+}
+
+function areStringSetsEqual({
+	a,
+	b,
+}: {
+	a: ReadonlySet<string>;
+	b: ReadonlySet<string>;
+}): boolean {
+	if (a.size !== b.size) {
+		return false;
+	}
+	for (const value of b) {
+		if (!a.has(value)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 const TRACK_ICONS: Record<TimelineTrack["type"], ReactNode> = {
 	video: <OcVideoIcon className="text-muted-foreground size-4 shrink-0" />,
 	text: (
@@ -142,7 +215,7 @@ export function Timeline() {
 	} = useElementSelection();
 	const editor = useEditor();
 	const timeline = editor.timeline;
-	const scene = useEditor((currentEditor) =>
+	const scene = useEditorTimelineScenes((currentEditor) =>
 		currentEditor.scenes.getActiveSceneOrNull(),
 	);
 	const tracks = useMemo<TimelineTrack[]>(
@@ -200,8 +273,14 @@ export function Timeline() {
 	const { height: timelineHeaderHeightValue } = useContainerSize({
 		containerRef: timelineHeaderRef,
 	});
-	const { viewportWidth: tracksViewportWidth } = useScrollPosition({
-		scrollRef: tracksScrollRef,
+	const {
+		scrollLeft: tracksScrollLeft,
+		scrollTop: tracksScrollTop,
+		viewportWidth: tracksViewportWidth,
+		viewportHeight: tracksViewportHeight,
+	} = useScrollPosition({ scrollRef: tracksScrollRef });
+	const elementVisibilityScrollLeft = getElementVisibilityScrollLeft({
+		scrollLeft: tracksScrollLeft,
 	});
 
 	const handleSnapPointChange = useCallback((snapPoint: SnapPoint | null) => {
@@ -209,9 +288,21 @@ export function Timeline() {
 	}, []);
 
 	const timelineDuration = timeline.getTotalDuration() || 0;
+	const captionWordTimingDuration = captionSourceTrack?.captionSource?.words.length
+		? mediaTimeFromSeconds({
+				seconds: captionSourceTrack.captionSource.words.reduce(
+					(maxEnd, word) => Math.max(maxEnd, word.end),
+					0,
+				),
+			})
+		: 0;
+	const timelineDisplayDuration = Math.max(
+		timelineDuration,
+		captionWordTimingDuration,
+	);
 	const containerWidth = tracksContainerWidth || FALLBACK_CONTAINER_WIDTH;
 	const minZoomLevel = getTimelineZoomMin({
-		duration: timelineDuration,
+		duration: timelineDisplayDuration,
 		containerWidth,
 	});
 
@@ -484,7 +575,7 @@ export function Timeline() {
 	});
 
 	const contentWidth = timelineTimeToPixels({
-		time: timelineDuration,
+		time: timelineDisplayDuration,
 		zoomLevel,
 	});
 	const paddingPx = getTimelinePaddingPx({
@@ -625,6 +716,56 @@ export function Timeline() {
 			updateRangeSelection,
 		],
 	);
+	const handleTimelineTrackResizeStart = useCallback<
+		React.ComponentProps<typeof TimelineTrackContent>["onResizeStart"]
+	>(
+		(params) => {
+			if (handleRangeSelectionMouseDown(params.event)) return;
+			handleResizeStart(params);
+		},
+		[handleRangeSelectionMouseDown, handleResizeStart],
+	);
+	const handleTimelineElementMouseDown = useCallback<
+		React.ComponentProps<typeof TimelineTrackContent>["onElementMouseDown"]
+	>(
+		(params) => {
+			if (handleRangeSelectionMouseDown(params.event)) return;
+			handleElementMouseDown(params);
+		},
+		[handleElementMouseDown, handleRangeSelectionMouseDown],
+	);
+	const handleTimelineElementClick = useCallback<
+		React.ComponentProps<typeof TimelineTrackContent>["onElementClick"]
+	>(
+		(params) => {
+			if (isRangeSelectionLocked) {
+				params.event.preventDefault();
+				params.event.stopPropagation();
+				return;
+			}
+			handleElementClick(params);
+		},
+		[handleElementClick, isRangeSelectionLocked],
+	);
+	const handleTimelineTrackMouseDown = useCallback(
+		(event: React.MouseEvent) => {
+			if (handleRangeSelectionMouseDown(event)) return;
+			handleSelectionMouseDown(event);
+			handleTracksMouseDown(event);
+		},
+		[
+			handleRangeSelectionMouseDown,
+			handleSelectionMouseDown,
+			handleTracksMouseDown,
+		],
+	);
+	const handleTimelineTrackMouseUp = useCallback(
+		(event: React.MouseEvent) => {
+			if (isRangeSelectionLocked) return;
+			handleTracksClick(event);
+		},
+		[handleTracksClick, isRangeSelectionLocked],
+	);
 
 	return (
 		<section
@@ -648,6 +789,8 @@ export function Timeline() {
 					hasHorizontalScrollbar={hasHorizontalScrollbar}
 					getTrackExpansionHeight={getTrackExpansionHeight}
 					wordTimingTrackHeight={wordTimingTrackHeight}
+					scrollTop={tracksScrollTop}
+					viewportHeight={tracksViewportHeight}
 				/>
 
 				<div
@@ -671,8 +814,9 @@ export function Timeline() {
 							<TimelineRuler
 								zoomLevel={zoomLevel}
 								dynamicTimelineWidth={dynamicTimelineWidth}
+								scrollLeft={tracksScrollLeft}
+								viewportWidth={tracksViewportWidth}
 								rulerRef={rulerRef}
-								tracksScrollRef={rulerScrollRef}
 								handleWheel={handleWheel}
 								handleTimelineContentClick={(event) => {
 									if (isRangeSelectionLocked) return;
@@ -694,6 +838,8 @@ export function Timeline() {
 							<TimelineBookmarksRow
 								zoomLevel={zoomLevel}
 								dynamicTimelineWidth={dynamicTimelineWidth}
+								scrollLeft={tracksScrollLeft}
+								viewportWidth={tracksViewportWidth}
 								dragState={bookmarkDragState}
 								onBookmarkMouseDown={handleBookmarkMouseDown}
 								handleWheel={handleWheel}
@@ -765,16 +911,11 @@ export function Timeline() {
 										<CaptionWordTimingTrack
 											zoomLevel={zoomLevel}
 											dynamicTimelineWidth={dynamicTimelineWidth}
+											scrollLeft={elementVisibilityScrollLeft}
+											viewportWidth={tracksViewportWidth}
 											onHeightChange={handleWordTimingTrackHeightChange}
-											onMouseDown={(event) => {
-												if (handleRangeSelectionMouseDown(event)) return;
-												handleSelectionMouseDown(event);
-												handleTracksMouseDown(event);
-											}}
-											onMouseUp={(event) => {
-												if (isRangeSelectionLocked) return;
-												handleTracksClick(event);
-											}}
+											onMouseDown={handleTimelineTrackMouseDown}
+											onMouseUp={handleTimelineTrackMouseUp}
 										/>
 									</div>
 								)}
@@ -783,32 +924,16 @@ export function Timeline() {
 										mainTrackId={mainTrackId}
 										zoomLevel={zoomLevel}
 										topOffset={wordTimingTrackOffset}
+										scrollLeft={elementVisibilityScrollLeft}
+										scrollTop={tracksScrollTop}
+										viewportWidth={tracksViewportWidth}
+										viewportHeight={tracksViewportHeight}
 										dragView={dragView}
-										onResizeStart={(params) => {
-											if (handleRangeSelectionMouseDown(params.event)) return;
-											handleResizeStart(params);
-										}}
-										onElementMouseDown={(params) => {
-											if (handleRangeSelectionMouseDown(params.event)) return;
-											handleElementMouseDown(params);
-										}}
-										onElementClick={(params) => {
-											if (isRangeSelectionLocked) {
-												params.event.preventDefault();
-												params.event.stopPropagation();
-												return;
-											}
-											handleElementClick(params);
-										}}
-										onTrackMouseDown={(event) => {
-											if (handleRangeSelectionMouseDown(event)) return;
-											handleSelectionMouseDown(event);
-											handleTracksMouseDown(event);
-										}}
-										onTrackMouseUp={(event) => {
-											if (isRangeSelectionLocked) return;
-											handleTracksClick(event);
-										}}
+										onResizeStart={handleTimelineTrackResizeStart}
+										onElementMouseDown={handleTimelineElementMouseDown}
+										onElementClick={handleTimelineElementClick}
+										onTrackMouseDown={handleTimelineTrackMouseDown}
+										onTrackMouseUp={handleTimelineTrackMouseUp}
 										shouldIgnoreClick={shouldIgnoreClick}
 										isDragOver={isDragOver}
 										dropTarget={dropTarget}
@@ -851,8 +976,8 @@ export function Timeline() {
 				<SnapIndicator
 					snapPoint={currentSnapPoint}
 					zoomLevel={zoomLevel}
+					scrollLeft={tracksScrollLeft}
 					timelineRef={timelineRef}
-					tracksScrollRef={tracksScrollRef}
 					isVisible={showSnapIndicator}
 				/>
 			</div>
@@ -903,6 +1028,8 @@ function TrackLabelsPanel({
 	hasHorizontalScrollbar,
 	getTrackExpansionHeight,
 	wordTimingTrackHeight,
+	scrollTop,
+	viewportHeight,
 }: {
 	trackLabelsRef: React.RefObject<HTMLDivElement | null>;
 	trackLabelsScrollRef: React.RefObject<HTMLDivElement | null>;
@@ -910,9 +1037,13 @@ function TrackLabelsPanel({
 	hasHorizontalScrollbar: boolean;
 	getTrackExpansionHeight: (trackIndex: number) => number;
 	wordTimingTrackHeight: number;
+	scrollTop: number;
+	viewportHeight: number;
 }) {
-	const editor = useEditor();
-	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
+	const [timeline, scene] = useEditorTimelineScenes((e) => [
+		e.timeline,
+		e.scenes.getActiveSceneOrNull(),
+	]);
 	const tracks = useMemo<TimelineTrack[]>(
 		() => (scene ? getDisplayTracks({ tracks: scene.tracks }) : []),
 		[scene],
@@ -933,6 +1064,33 @@ function TrackLabelsPanel({
 			),
 		[tracks, expandedElementIds],
 	);
+	const labelTrackStartTop = hasCaptionWordTimingTrack
+		? wordTimingTrackHeight + TIMELINE_TRACK_GAP_PX
+		: 0;
+	const trackLayouts = useMemo(
+		() =>
+			getTrackLayouts({
+				tracks,
+				startTop: labelTrackStartTop,
+				getTrackExpansionHeight,
+			}),
+		[tracks, labelTrackStartTop, getTrackExpansionHeight],
+	);
+	const visibleTrackLayouts = useMemo(
+		() =>
+			getVisibleTrackLayouts({
+				layouts: trackLayouts,
+				scrollTop,
+				viewportHeight,
+				overscanPx: TRACK_VERTICAL_OVERSCAN_PX,
+			}),
+		[scrollTop, trackLayouts, viewportHeight],
+	);
+	const labelContentHeight =
+		trackLayouts.length > 0
+			? trackLayouts[trackLayouts.length - 1].top +
+				trackLayouts[trackLayouts.length - 1].height
+			: labelTrackStartTop;
 
 	return (
 		<div
@@ -947,13 +1105,14 @@ function TrackLabelsPanel({
 				<div ref={trackLabelsScrollRef} className="size-full overflow-hidden">
 					{tracks.length > 0 && (
 						<div
-							className="flex flex-col"
-							style={{ gap: `${TIMELINE_TRACK_GAP_PX}px` }}
+							className="relative"
+							style={{ height: `${labelContentHeight}px` }}
 						>
 							{hasCaptionWordTimingTrack && (
 								<div
-									className="flex items-center justify-end border-b border-red-500/20 bg-red-950/10 px-3"
+									className="absolute right-0 left-0 flex items-center justify-end border-b border-red-500/20 bg-red-950/10 px-3"
 									style={{
+										top: 0,
 										height: `${wordTimingTrackHeight}px`,
 									}}
 								>
@@ -962,92 +1121,16 @@ function TrackLabelsPanel({
 									</span>
 								</div>
 							)}
-							{tracks.map((track, index) => {
-								const expandedRows = trackExpandedRowsMap[index];
-								const baseHeight = getTrackHeight({ type: track.type });
-
+							{visibleTrackLayouts.map((layout) => {
 								return (
-									<div
-										key={track.id}
-										className={cn(
-											"group flex flex-col",
-											tracksWithSelection.has(track.id) &&
-												SELECTED_TRACK_ROW_CLASS,
-										)}
-										style={{
-											height: `${baseHeight + getTrackExpansionHeight(index)}px`,
-										}}
-									>
-										<div
-											className="flex shrink-0 items-center justify-end gap-2 px-3"
-											style={{ height: `${baseHeight}px` }}
-										>
-											{canTrackHaveAudio(track) && (
-												<TrackToggleIcon
-													isOff={track.muted}
-													icons={{
-														on: VolumeHighIcon,
-														off: VolumeOffIcon,
-													}}
-													onClick={() =>
-														editor.timeline.toggleTrackMute({
-															trackId: track.id,
-														})
-													}
-												/>
-											)}
-											{canTrackBeHidden(track) && (
-												<TrackToggleIcon
-													isOff={track.hidden}
-													icons={{
-														on: ViewIcon,
-														off: ViewOffSlashIcon,
-													}}
-													onClick={() =>
-														editor.timeline.toggleTrackVisibility({
-															trackId: track.id,
-														})
-													}
-												/>
-											)}
-											<TrackToggleIcon
-												isOff={index === 0}
-												icons={{
-													on: ArrowUpIcon,
-													off: ArrowUpIcon,
-												}}
-												destructiveOff={false}
-												onClick={() => {
-													if (index > 0) {
-														editor.timeline.reorderTrack({
-															trackId: track.id,
-															toIndex: index - 1,
-														});
-													}
-												}}
-											/>
-											<TrackToggleIcon
-												isOff={index === tracks.length - 1}
-												icons={{
-													on: ArrowDownIcon,
-													off: ArrowDownIcon,
-												}}
-												destructiveOff={false}
-												onClick={() => {
-													if (index < tracks.length - 1) {
-														editor.timeline.reorderTrack({
-															trackId: track.id,
-															toIndex: index + 1,
-														});
-													}
-												}}
-											/>
-											<TrackIcon track={track} />
-										</div>
-										{expandedRows.length > 0 && (
-											<PropertyTree rows={expandedRows} />
-										)}
-									</div>
+									<TrackLabelRow
+										key={layout.track.id}
+										layout={layout}
+										expandedRows={trackExpandedRowsMap[layout.index]}
+										isSelected={tracksWithSelection.has(layout.track.id)}
+										isLastTrack={layout.index === tracks.length - 1}
+										timeline={timeline}
+									/>
 								);
 							})}
 						</div>
@@ -1068,6 +1151,10 @@ function TimelineTrackRows({
 	mainTrackId,
 	zoomLevel,
 	topOffset,
+	scrollLeft,
+	scrollTop,
+	viewportWidth,
+	viewportHeight,
 	dragView,
 	onResizeStart,
 	onElementMouseDown,
@@ -1081,6 +1168,10 @@ function TimelineTrackRows({
 	mainTrackId: string | null;
 	zoomLevel: number;
 	topOffset: number;
+	scrollLeft: number;
+	scrollTop: number;
+	viewportWidth: number;
+	viewportHeight: number;
 	dragView: ElementDragView;
 	onResizeStart: React.ComponentProps<
 		typeof TimelineTrackContent
@@ -1097,15 +1188,33 @@ function TimelineTrackRows({
 	isDragOver: boolean;
 	dropTarget: DropTarget | null;
 }) {
-	const timeline = useEditor((e) => e.timeline);
-	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
+	const [timeline, renderSceneTracks] = useEditorTimelineScenes((e) => [
+		e.timeline,
+		e.timeline.getPreviewTracks() ??
+			e.scenes.getActiveSceneOrNull()?.tracks ??
+			null,
+	]);
 	const tracks = useMemo<TimelineTrack[]>(
-		() => (scene ? getDisplayTracks({ tracks: scene.tracks }) : []),
-		[scene],
+		() =>
+			renderSceneTracks ? getDisplayTracks({ tracks: renderSceneTracks }) : [],
+		[renderSceneTracks],
+	);
+	const trackIndexByElementId = useMemo(
+		() => getTrackIndexByElementId({ tracks }),
+		[tracks],
 	);
 	const { selectedElements } = useElementSelection();
-	const tracksWithSelection = useMemo(
-		() => new Set(selectedElements.map((el) => el.trackId)),
+	const selectedElementIdsByTrack = useMemo(
+		() => {
+			const idsByTrack = new Map<string, Set<string>>();
+			for (const selectedElement of selectedElements) {
+				const trackSelection =
+					idsByTrack.get(selectedElement.trackId) ?? new Set<string>();
+				trackSelection.add(selectedElement.elementId);
+				idsByTrack.set(selectedElement.trackId, trackSelection);
+			}
+			return idsByTrack;
+		},
 		[selectedElements],
 	);
 	const hoveredTrackIndex =
@@ -1133,109 +1242,259 @@ function TimelineTrackRows({
 				: (null as ReadonlyMap<string, MediaTime> | null),
 		[dragView],
 	);
-	const sortedTracks = useMemo(() => {
-		if (!draggingElementIds)
-			return tracks.map((track, index) => ({ track, index }));
-		return [...tracks]
-			.map((track, index) => ({ track, index }))
-			.sort((a, b) => {
-				const aHasDragged = a.track.elements.some((element) =>
-					draggingElementIds.has(element.id),
-				);
-				const bHasDragged = b.track.elements.some((element) =>
-					draggingElementIds.has(element.id),
-				);
-				if (aHasDragged) return 1;
-				if (bHasDragged) return -1;
-				return 0;
-			});
-	}, [tracks, draggingElementIds]);
+	const draggedTrackIndexes = useMemo(
+		() =>
+			draggingElementIds
+				? getTrackIndexesForElementIds({
+						elementIds: draggingElementIds.keys(),
+						trackIndexByElementId,
+					})
+				: null,
+		[draggingElementIds, trackIndexByElementId],
+	);
+	const trackLayouts = useMemo(
+		() =>
+			getTrackLayouts({
+				tracks,
+				startTop: TIMELINE_CONTENT_TOP_PADDING_PX + topOffset,
+				getTrackExpansionHeight,
+			}),
+		[tracks, topOffset, getTrackExpansionHeight],
+	);
+	const forcedTrackIndexes = useMemo(() => {
+		const indexes = new Set<number>(draggedTrackIndexes ?? []);
+		if (hoveredTrackIndex !== null) {
+			indexes.add(hoveredTrackIndex);
+		}
+		return indexes;
+	}, [draggedTrackIndexes, hoveredTrackIndex]);
+	const visibleTrackLayouts = useMemo(
+		() =>
+			getVisibleTrackLayouts({
+				layouts: trackLayouts,
+				scrollTop,
+				viewportHeight,
+				overscanPx: TRACK_VERTICAL_OVERSCAN_PX,
+				forcedIndexes: forcedTrackIndexes,
+			}),
+		[forcedTrackIndexes, scrollTop, trackLayouts, viewportHeight],
+	);
+	const sortedTrackLayouts = useMemo(() => {
+		if (!draggedTrackIndexes) return visibleTrackLayouts;
+		return [...visibleTrackLayouts].sort((a, b) => {
+			const aHasDragged = draggedTrackIndexes.has(a.index);
+			const bHasDragged = draggedTrackIndexes.has(b.index);
+			if (aHasDragged) return 1;
+			if (bHasDragged) return -1;
+			return 0;
+		});
+	}, [draggedTrackIndexes, visibleTrackLayouts]);
 
 	return (
 		<>
-			{sortedTracks.map(({ track, index }) => (
-				<ContextMenu key={track.id}>
-					<ContextMenuTrigger asChild>
-						<div
-							className={cn(
-								"absolute right-0 left-0 transition-colors",
-								tracksWithSelection.has(track.id) && SELECTED_TRACK_ROW_CLASS,
-								hoveredTrackIndex === index &&
-									"bg-primary/10 ring-1 ring-primary/35",
-							)}
-							style={{
-								top: `${TIMELINE_CONTENT_TOP_PADDING_PX + topOffset + getCumulativeHeightBefore({ tracks, trackIndex: index, getExtraHeight: getTrackExpansionHeight })}px`,
-								height: `${getTrackHeight({ type: track.type }) + getTrackExpansionHeight(index)}px`,
-							}}
-						>
-							<TimelineTrackContent
-								track={track}
-								zoomLevel={zoomLevel}
-								dragView={dragView}
-								onResizeStart={onResizeStart}
-								onElementMouseDown={onElementMouseDown}
-								onElementClick={onElementClick}
-								onTrackMouseDown={onTrackMouseDown}
-								onTrackMouseUp={onTrackMouseUp}
-								shouldIgnoreClick={shouldIgnoreClick}
-								targetElementId={
-									isDragOver
-										? (dropTarget?.targetElement?.elementId ?? null)
-										: null
-								}
-							/>
-						</div>
-					</ContextMenuTrigger>
-					<ContextMenuContent className="w-40">
-						<ContextMenuItem
-							icon={<HugeiconsIcon icon={TaskAdd02Icon} />}
-							onClick={(event: React.MouseEvent) => {
-								event.stopPropagation();
-								invokeAction("paste-copied");
-							}}
-						>
-							Paste elements
-						</ContextMenuItem>
-						{canTrackHaveAudio(track) && (
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={VolumeHighIcon} />}
-								onClick={(event: React.MouseEvent) => {
-									event.stopPropagation();
-									timeline.toggleTrackMute({ trackId: track.id });
-								}}
-							>
-								{track.muted ? "Unmute track" : "Mute track"}
-							</ContextMenuItem>
-						)}
-						{canTrackBeHidden(track) && (
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={ViewIcon} />}
-								onClick={(event: React.MouseEvent) => {
-									event.stopPropagation();
-									timeline.toggleTrackVisibility({ trackId: track.id });
-								}}
-							>
-								{track.hidden ? "Show track" : "Hide track"}
-							</ContextMenuItem>
-						)}
-						{track.id !== mainTrackId && (
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Delete02Icon} />}
-								onClick={(event: React.MouseEvent) => {
-									event.stopPropagation();
-									timeline.removeTrack({ trackId: track.id });
-								}}
-								variant="destructive"
-							>
-								Delete track
-							</ContextMenuItem>
-						)}
-					</ContextMenuContent>
-				</ContextMenu>
-			))}
+			{sortedTrackLayouts.map((layout) => {
+				const { track, index } = layout;
+				return (
+					<TimelineTrackRow
+						key={track.id}
+						layout={layout}
+						mainTrackId={mainTrackId}
+						zoomLevel={zoomLevel}
+						scrollLeft={scrollLeft}
+						viewportWidth={viewportWidth}
+						dragView={dragView}
+						onResizeStart={onResizeStart}
+						onElementMouseDown={onElementMouseDown}
+						onElementClick={onElementClick}
+						onTrackMouseDown={onTrackMouseDown}
+						onTrackMouseUp={onTrackMouseUp}
+						shouldIgnoreClick={shouldIgnoreClick}
+						isSelected={selectedElementIdsByTrack.has(track.id)}
+						isHovered={hoveredTrackIndex === index}
+						timeline={timeline}
+						selectedElementIds={
+							selectedElementIdsByTrack.get(track.id) ??
+							EMPTY_SELECTED_ELEMENT_IDS
+						}
+						expandedElementIds={expandedElementIds}
+						targetElementId={
+							isDragOver ? (dropTarget?.targetElement?.elementId ?? null) : null
+						}
+					/>
+				);
+			})}
 		</>
 	);
 }
+
+type TimelineTrackRowProps = {
+	layout: TrackLayout;
+	mainTrackId: string | null;
+	zoomLevel: number;
+	scrollLeft: number;
+	viewportWidth: number;
+	dragView: ElementDragView;
+	onResizeStart: React.ComponentProps<
+		typeof TimelineTrackContent
+	>["onResizeStart"];
+	onElementMouseDown: React.ComponentProps<
+		typeof TimelineTrackContent
+	>["onElementMouseDown"];
+	onElementClick: React.ComponentProps<
+		typeof TimelineTrackContent
+	>["onElementClick"];
+	onTrackMouseDown: (event: React.MouseEvent) => void;
+	onTrackMouseUp: (event: React.MouseEvent) => void;
+	shouldIgnoreClick: () => boolean;
+	isSelected: boolean;
+	isHovered: boolean;
+	timeline: TrackLabelTimelineActions & {
+		removeTrack: ({ trackId }: { trackId: string }) => void;
+	};
+	selectedElementIds: ReadonlySet<string>;
+	expandedElementIds: ReadonlySet<string>;
+	targetElementId: string | null;
+};
+
+function TimelineTrackRowComponent({
+	layout,
+	mainTrackId,
+	zoomLevel,
+	scrollLeft,
+	viewportWidth,
+	dragView,
+	onResizeStart,
+	onElementMouseDown,
+	onElementClick,
+	onTrackMouseDown,
+	onTrackMouseUp,
+	shouldIgnoreClick,
+	isSelected,
+	isHovered,
+	timeline,
+	selectedElementIds,
+	expandedElementIds,
+	targetElementId,
+}: TimelineTrackRowProps) {
+	const { track } = layout;
+
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>
+				<div
+					className={cn(
+						"absolute right-0 left-0 transition-colors",
+						isSelected && SELECTED_TRACK_ROW_CLASS,
+						isHovered && "bg-primary/10 ring-1 ring-primary/35",
+					)}
+					style={{
+						top: `${layout.top}px`,
+						height: `${layout.height}px`,
+					}}
+				>
+					<TimelineTrackContent
+						track={track}
+						zoomLevel={zoomLevel}
+						scrollLeft={scrollLeft}
+						viewportWidth={viewportWidth}
+						dragView={dragView}
+						onResizeStart={onResizeStart}
+						onElementMouseDown={onElementMouseDown}
+						onElementClick={onElementClick}
+						onTrackMouseDown={onTrackMouseDown}
+						onTrackMouseUp={onTrackMouseUp}
+						shouldIgnoreClick={shouldIgnoreClick}
+						selectedElementIds={selectedElementIds}
+						expandedElementIds={expandedElementIds}
+						targetElementId={targetElementId}
+					/>
+				</div>
+			</ContextMenuTrigger>
+			<ContextMenuContent className="w-40">
+				<ContextMenuItem
+					icon={<HugeiconsIcon icon={TaskAdd02Icon} />}
+					onClick={(event: React.MouseEvent) => {
+						event.stopPropagation();
+						invokeAction("paste-copied");
+					}}
+				>
+					Paste elements
+				</ContextMenuItem>
+				{canTrackHaveAudio(track) && (
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={VolumeHighIcon} />}
+						onClick={(event: React.MouseEvent) => {
+							event.stopPropagation();
+							timeline.toggleTrackMute({ trackId: track.id });
+						}}
+					>
+						{track.muted ? "Unmute track" : "Mute track"}
+					</ContextMenuItem>
+				)}
+				{canTrackBeHidden(track) && (
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={ViewIcon} />}
+						onClick={(event: React.MouseEvent) => {
+							event.stopPropagation();
+							timeline.toggleTrackVisibility({ trackId: track.id });
+						}}
+					>
+						{track.hidden ? "Show track" : "Hide track"}
+					</ContextMenuItem>
+				)}
+				{track.id !== mainTrackId && (
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={Delete02Icon} />}
+						onClick={(event: React.MouseEvent) => {
+							event.stopPropagation();
+							timeline.removeTrack({ trackId: track.id });
+						}}
+						variant="destructive"
+					>
+						Delete track
+					</ContextMenuItem>
+				)}
+			</ContextMenuContent>
+		</ContextMenu>
+	);
+}
+
+function areTimelineTrackRowPropsEqual({
+	previous,
+	next,
+}: {
+	previous: TimelineTrackRowProps;
+	next: TimelineTrackRowProps;
+}): boolean {
+	return (
+		previous.layout === next.layout &&
+		previous.mainTrackId === next.mainTrackId &&
+		previous.zoomLevel === next.zoomLevel &&
+		previous.scrollLeft === next.scrollLeft &&
+		previous.viewportWidth === next.viewportWidth &&
+		previous.dragView === next.dragView &&
+		previous.onResizeStart === next.onResizeStart &&
+		previous.onElementMouseDown === next.onElementMouseDown &&
+		previous.onElementClick === next.onElementClick &&
+		previous.onTrackMouseDown === next.onTrackMouseDown &&
+		previous.onTrackMouseUp === next.onTrackMouseUp &&
+		previous.shouldIgnoreClick === next.shouldIgnoreClick &&
+		previous.isSelected === next.isSelected &&
+		previous.isHovered === next.isHovered &&
+		previous.timeline === next.timeline &&
+		areStringSetsEqual({
+			a: previous.selectedElementIds,
+			b: next.selectedElementIds,
+		}) &&
+		previous.expandedElementIds === next.expandedElementIds &&
+		previous.targetElementId === next.targetElementId
+	);
+}
+
+const TimelineTrackRow = memo(TimelineTrackRowComponent, (previous, next) =>
+	areTimelineTrackRowPropsEqual({ previous, next }),
+);
+TimelineTrackRow.displayName = "TimelineTrackRow";
 
 function TimelineGutter({
 	onMouseDown,
@@ -1253,6 +1512,104 @@ function TimelineGutter({
 function TrackIcon({ track }: { track: TimelineTrack }) {
 	return <>{TRACK_ICONS[track.type]}</>;
 }
+
+const TrackLabelRow = memo(function TrackLabelRow({
+	layout,
+	expandedRows,
+	isSelected,
+	isLastTrack,
+	timeline,
+}: {
+	layout: TrackLayout;
+	expandedRows: ExpandedRow[];
+	isSelected: boolean;
+	isLastTrack: boolean;
+	timeline: TrackLabelTimelineActions;
+}) {
+	const { track, index } = layout;
+
+	return (
+		<div
+			className={cn(
+				"group absolute right-0 left-0 flex flex-col",
+				isSelected && SELECTED_TRACK_ROW_CLASS,
+			)}
+			style={{
+				top: `${layout.top}px`,
+				height: `${layout.height}px`,
+			}}
+		>
+			<div
+				className="flex shrink-0 items-center justify-end gap-2 px-3"
+				style={{ height: `${layout.baseHeight}px` }}
+			>
+				{canTrackHaveAudio(track) && (
+					<TrackToggleIcon
+						isOff={track.muted}
+						icons={{
+							on: VolumeHighIcon,
+							off: VolumeOffIcon,
+						}}
+						onClick={() =>
+							timeline.toggleTrackMute({
+								trackId: track.id,
+							})
+						}
+					/>
+				)}
+				{canTrackBeHidden(track) && (
+					<TrackToggleIcon
+						isOff={track.hidden}
+						icons={{
+							on: ViewIcon,
+							off: ViewOffSlashIcon,
+						}}
+						onClick={() =>
+							timeline.toggleTrackVisibility({
+								trackId: track.id,
+							})
+						}
+					/>
+				)}
+				<TrackToggleIcon
+					isOff={index === 0}
+					icons={{
+						on: ArrowUpIcon,
+						off: ArrowUpIcon,
+					}}
+					destructiveOff={false}
+					onClick={() => {
+						if (index > 0) {
+							timeline.reorderTrack({
+								trackId: track.id,
+								toIndex: index - 1,
+							});
+						}
+					}}
+				/>
+				<TrackToggleIcon
+					isOff={isLastTrack}
+					icons={{
+						on: ArrowDownIcon,
+						off: ArrowDownIcon,
+					}}
+					destructiveOff={false}
+					onClick={() => {
+						if (!isLastTrack) {
+							timeline.reorderTrack({
+								trackId: track.id,
+								toIndex: index + 1,
+							});
+						}
+					}}
+				/>
+				<TrackIcon track={track} />
+			</div>
+			{expandedRows.length > 0 && <PropertyTree rows={expandedRows} />}
+		</div>
+	);
+});
+TrackLabelRow.displayName = "TrackLabelRow";
 
 function TrackToggleIcon({
 	isOff,

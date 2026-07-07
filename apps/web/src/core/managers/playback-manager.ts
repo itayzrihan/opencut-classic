@@ -1,4 +1,4 @@
-import type { EditorCore } from "@/core";
+import type { FrameRate } from "opencut-wasm";
 import {
 	addMediaTime,
 	clampMediaTime,
@@ -7,6 +7,25 @@ import {
 	roundFrameTime,
 	ZERO_MEDIA_TIME,
 } from "@/wasm";
+
+type PlaybackProjectReader = {
+	getActive: () => { settings: { fps: FrameRate } } | null | undefined;
+};
+
+type PlaybackTimelineReader = {
+	getTotalDuration: () => MediaTime;
+	subscribe: (listener: () => void) => () => void;
+};
+
+type PlaybackScenesReader = {
+	subscribe: (listener: () => void) => () => void;
+};
+
+export type PlaybackManagerEditor = {
+	project: PlaybackProjectReader;
+	timeline: PlaybackTimelineReader;
+	scenes: PlaybackScenesReader;
+};
 
 export class PlaybackManager {
 	private isPlaying = false;
@@ -23,7 +42,7 @@ export class PlaybackManager {
 	private playbackStartTime: MediaTime = ZERO_MEDIA_TIME;
 	private timelineScopeBound = false;
 
-	constructor(private editor: EditorCore) {}
+	constructor(private editor: PlaybackManagerEditor) {}
 
 	bindTimelineScope(): void {
 		if (this.timelineScopeBound) {
@@ -227,9 +246,14 @@ export class PlaybackManager {
 			this.pause();
 			this.currentTime = maxTime;
 			this.notify();
-		this.notifySeek(maxTime);
-		this.dispatchSeekEvent(maxTime);
-		return;
+			this.notifySeek(maxTime);
+			this.dispatchSeekEvent(maxTime);
+			return;
+		}
+
+		if (newTime === this.currentTime) {
+			this.playbackTimer = requestAnimationFrame(this.updateTime);
+			return;
 		}
 
 		this.currentTime = newTime;
@@ -243,13 +267,13 @@ export class PlaybackManager {
 		return clampMediaTime({ time, min: ZERO_MEDIA_TIME, max: maxTime });
 	}
 
-	private dispatchSeekEvent(time: MediaTime): void {
+	private dispatchSeekEvent(_time: MediaTime): void {
 		if (typeof window === "undefined") {
 			return;
 		}
 	}
 
-	private dispatchUpdateEvent(time: MediaTime): void {
+	private dispatchUpdateEvent(_time: MediaTime): void {
 		if (typeof window === "undefined") {
 			return;
 		}

@@ -133,8 +133,8 @@ export function TextTransitionsTab({
 
 	if (isScopedWordTransition) {
 		const settings = getScopedSettings({ element, scope });
-		const revealMode = settings.revealMode ?? "emphasize-spoken";
-		const transitionIn = settings.transitionIn ?? "blur-zoom";
+		const revealMode = settings.revealMode ?? "determined-by-preset";
+		const transitionIn = settings.transitionIn ?? "none";
 		const updateScopedTransition = (patch: TextScopedSettings) => {
 			editor.timeline.updateElements({
 				updates: targets.flatMap((target) => {

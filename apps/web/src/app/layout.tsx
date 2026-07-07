@@ -8,6 +8,7 @@ import { baseMetaData } from "./metadata";
 import { BotIdClient } from "botid/client";
 import { webEnv } from "@/env/web";
 import { Inter } from "next/font/google";
+import { TYPEKIT_STYLESHEET_URL } from "@/fonts/typekit-fonts";
 
 const siteFont = Inter({ subsets: ["latin"] });
 
@@ -29,6 +30,7 @@ export default function RootLayout({
 		<html lang="en" suppressHydrationWarning>
 			<head>
 				<BotIdClient protect={protectedRoutes} />
+				<link rel="stylesheet" href={TYPEKIT_STYLESHEET_URL} />
 			</head>
 			<body className={`${siteFont.className} font-sans antialiased`}>
 				<ThemeProvider

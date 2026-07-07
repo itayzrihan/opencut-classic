@@ -73,6 +73,16 @@ describe("caption placement layout", () => {
 		).toBe(false);
 	});
 
+	test("defaults to no word animation", () => {
+		expect(normalizeCaptionLayoutSettings({ settings: undefined })).toMatchObject(
+			{
+				revealMode: "determined-by-preset",
+				transitionIn: "none",
+				wordAnimationId: "none",
+			},
+		);
+	});
+
 	test("strips punctuation without collapsing caption lines", () => {
 		expect(stripCaptionPunctuation({ text: "Hello, world." })).toBe(
 			"Hello world",

@@ -28,6 +28,7 @@ const FLUSH_EVERY = 60;
 const spans = new Map<string, SpanStats>();
 const counters = new Map<string, CounterStats>();
 const pendingCountersThisFrame = new Map<string, number>();
+const frameMarkers = new Map<string, number>();
 
 let framesSinceFlush = 0;
 
@@ -101,6 +102,16 @@ export function incrementCounter({
 		name,
 		(pendingCountersThisFrame.get(name) ?? 0) + by,
 	);
+}
+
+export function recordFrameInterval({ name }: { name: string }): void {
+	if (!isRenderPerfEnabled()) return;
+	const now = performance.now();
+	const previous = frameMarkers.get(name);
+	if (previous !== undefined) {
+		recordSpan({ name: `${name}.interval`, durationMs: now - previous });
+	}
+	frameMarkers.set(name, now);
 }
 
 /**
@@ -178,5 +189,6 @@ function flush(): void {
 
 	spans.clear();
 	counters.clear();
+	frameMarkers.clear();
 	framesSinceFlush = 0;
 }

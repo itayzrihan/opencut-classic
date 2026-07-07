@@ -14,16 +14,23 @@ type BackgroundParams = {
 	seed: number;
 };
 
+const BACKGROUND_STYLE_OPTIONS = BACKGROUND_PRESETS.reduce<
+	Array<{ value: string; label: string }>
+>((options, preset) => {
+	const value = String(preset.params.preset ?? preset.id);
+	if (!options.some((option) => option.value === value)) {
+		options.push({ value, label: preset.name });
+	}
+	return options;
+}, []);
+
 const BACKGROUND_PARAMS: ParamDefinition<keyof BackgroundParams & string>[] = [
 	{
 		key: "preset",
 		label: "Style",
 		type: "select",
 		default: "clean",
-		options: BACKGROUND_PRESETS.map((preset) => ({
-			value: String(preset.params.preset ?? preset.id),
-			label: preset.name,
-		})),
+		options: BACKGROUND_STYLE_OPTIONS,
 	},
 	{ key: "presetId", label: "Preset ID", type: "text", default: "clean" },
 	{ key: "colorA", label: "Base", type: "color", default: "#10131f" },
@@ -352,13 +359,16 @@ function fillGradient({
 	colorB: string;
 	intensity: number;
 }) {
+	const baseGradientAlpha = 0.35 + intensity * 0.65;
+
+	ctx.fillStyle = withAlpha(colorA, 1);
+	ctx.fillRect(0, 0, width, height);
+
 	const gradient = ctx.createLinearGradient(0, 0, width, height);
-	gradient.addColorStop(0, colorA);
-	gradient.addColorStop(1, colorB);
-	ctx.globalAlpha = 0.35 + intensity * 0.65;
+	gradient.addColorStop(0, withAlpha(colorA, 1));
+	gradient.addColorStop(1, withAlpha(colorB, baseGradientAlpha));
 	ctx.fillStyle = gradient;
 	ctx.fillRect(0, 0, width, height);
-	ctx.globalAlpha = 1;
 }
 
 function drawGrid({

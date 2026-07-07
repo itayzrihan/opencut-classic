@@ -17,7 +17,7 @@ import { DEFAULT_BACKGROUND_COLOR } from "@/background/color";
 import { patternCraftGradients } from "@/data/colors/pattern-craft";
 import { colors } from "@/data/colors/solid";
 import { syntaxUIGradients } from "@/data/colors/syntax-ui";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorProject } from "@/editor/use-editor";
 import { effectPreviewService } from "@/services/renderer/effect-preview";
 import { cn } from "@/utils/ui";
 
@@ -180,14 +180,30 @@ function CustomColorPreview({
 }
 
 const COLOR_SECTIONS = [
-	{ id: "colors", title: "Colors", backgrounds: colors, useBackgroundColor: true, showCustomPicker: true },
-	{ id: "pattern-craft", title: "Pattern craft", backgrounds: patternCraftGradients, showCustomPicker: false },
-	{ id: "syntax-ui", title: "Syntax UI", backgrounds: syntaxUIGradients, showCustomPicker: false },
+	{
+		id: "colors",
+		title: "Colors",
+		backgrounds: colors,
+		useBackgroundColor: true,
+		showCustomPicker: true,
+	},
+	{
+		id: "pattern-craft",
+		title: "Pattern craft",
+		backgrounds: patternCraftGradients,
+		showCustomPicker: false,
+	},
+	{
+		id: "syntax-ui",
+		title: "Syntax UI",
+		backgrounds: syntaxUIGradients,
+		showCustomPicker: false,
+	},
 ] as const;
 
 export function BackgroundContent() {
 	const editor = useEditor();
-	const activeProject = useEditor((e) => e.project.getActive());
+	const activeProject = useEditorProject((e) => e.project.getActive());
 
 	const handleBlurSelect = useCallback(
 		async (blurIntensity: number) => {

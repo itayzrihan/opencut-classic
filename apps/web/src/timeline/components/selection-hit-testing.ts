@@ -1,7 +1,11 @@
-import type { TimelineTrack } from "@/timeline";
-import { timelineTimeToPixels } from "@/timeline/pixel-utils";
-import { TIMELINE_CONTENT_TOP_PADDING_PX } from "./layout";
-import { getCumulativeHeightBefore, getTrackHeight } from "./track-layout";
+import { getTimelinePixelsPerSecond } from "@/timeline/pixel-utils";
+import type { TimelineTrack } from "@/timeline/types";
+import { TICKS_PER_SECOND } from "@/wasm/media-time";
+import {
+	TIMELINE_CONTENT_TOP_PADDING_PX,
+	TIMELINE_TRACK_GAP_PX,
+} from "./layout";
+import { getTrackHeight } from "./track-layout";
 
 type TimelineElementRef = { trackId: string; elementId: string };
 
@@ -67,21 +71,6 @@ function getSelectionRectangleInContent({
 	});
 }
 
-function isRectangleIntersecting({
-	elementRectangle,
-	selectionRectangle,
-}: {
-	elementRectangle: SelectionRectangle;
-	selectionRectangle: SelectionRectangle;
-}): boolean {
-	return !(
-		elementRectangle.right < selectionRectangle.left ||
-		elementRectangle.left > selectionRectangle.right ||
-		elementRectangle.bottom < selectionRectangle.top ||
-		elementRectangle.top > selectionRectangle.bottom
-	);
-}
-
 export function resolveTimelineElementIntersections({
 	container,
 	scrollContainer,
@@ -107,46 +96,44 @@ export function resolveTimelineElementIntersections({
 		startPos,
 		endPos: currentPos,
 	});
+	const pixelsPerSecond = getTimelinePixelsPerSecond({ zoomLevel });
+	const selectionStartTime =
+		(selectionRectangle.left / pixelsPerSecond) * TICKS_PER_SECOND;
+	const selectionEndTime =
+		(selectionRectangle.right / pixelsPerSecond) * TICKS_PER_SECOND;
 	const selectedElements: TimelineElementRef[] = [];
+	let trackTop = 0;
 
 	for (const [trackIndex, track] of tracks.entries()) {
-		const trackTop = getCumulativeHeightBefore({
-			tracks,
-			trackIndex,
-			getExtraHeight: getTrackExtraHeight,
-		});
 		const trackHeight = getTrackHeight({ type: track.type });
 		const elementTop = tracksTopInsetPx + trackTop;
 		const elementBottom = elementTop + trackHeight;
+		const extraHeight = getTrackExtraHeight?.(trackIndex) ?? 0;
+
+		if (
+			elementBottom < selectionRectangle.top ||
+			elementTop > selectionRectangle.bottom
+		) {
+			trackTop += trackHeight + extraHeight + TIMELINE_TRACK_GAP_PX;
+			continue;
+		}
 
 		for (const element of track.elements) {
-			const elementLeft = timelineTimeToPixels({
-				time: element.startTime,
-				zoomLevel,
-			});
-			const elementRight = timelineTimeToPixels({
-				time: element.startTime + element.duration,
-				zoomLevel,
-			});
-			const elementRectangle = {
-				left: elementLeft,
-				top: elementTop,
-				right: elementRight,
-				bottom: elementBottom,
-			};
-
+			const elementEndTime = element.startTime + element.duration;
 			if (
-				isRectangleIntersecting({
-					elementRectangle,
-					selectionRectangle,
-				})
+				elementEndTime < selectionStartTime ||
+				element.startTime > selectionEndTime
 			) {
-				selectedElements.push({
-					trackId: track.id,
-					elementId: element.id,
-				});
+				continue;
 			}
+
+			selectedElements.push({
+				trackId: track.id,
+				elementId: element.id,
+			});
 		}
+
+		trackTop += trackHeight + extraHeight + TIMELINE_TRACK_GAP_PX;
 	}
 
 	return selectedElements;

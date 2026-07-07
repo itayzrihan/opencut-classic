@@ -1,11 +1,23 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
-import { useEditor } from "@/editor/use-editor";
+import {
+	createContext,
+	memo,
+	useContext,
+	useEffect,
+	useMemo,
+	useState,
+	type ComponentProps,
+	type ReactNode,
+} from "react";
+import {
+	useEditor,
+	useEditorMediaAsset,
+	useEditorSelection,
+} from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
 import { AudioVolumeLine } from "./audio-volume-line";
-import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import {
 	useKeyframeDrag,
 	type KeyframeDragState,
@@ -40,14 +52,15 @@ import type {
 	ImageElement,
 	AudioElement,
 } from "@/timeline";
-import type { MediaAsset } from "@/media/types";
 import { mediaSupportsAudio } from "@/media/media-utils";
 import {
 	canToggleSourceAudio,
 	getSourceAudioActionLabel,
-	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
-import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
+import {
+	buildCompactWaveformGainSamplesFromState,
+	isElementMuted,
+} from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
 import {
@@ -63,7 +76,6 @@ import {
 	type TActionWithOptionalArgs,
 	invokeAction,
 } from "@/actions";
-import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import { resolveStickerId } from "@/stickers";
 import { buildGraphicPreviewUrl } from "@/graphics";
 import { sharedLibraryService } from "@/shared-library";
@@ -85,12 +97,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
-import { useMemo, type ComponentProps, type ReactNode } from "react";
 import type { SelectedKeyframeRef, ElementKeyframe } from "@/animation/types";
 import { cn } from "@/utils/ui";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
 import { getTrackTypeForElementType } from "@/timeline/placement/compatibility";
-import { useTimelineStore } from "@/timeline/timeline-store";
 import { KEYFRAME_LANE_HEIGHT_PX } from "./layout";
 import {
 	getExpandedRows,
@@ -98,10 +108,15 @@ import {
 	type ExpandedRow,
 } from "./expanded-layout";
 import { getTransitionPreset } from "@/transitions";
+import type { MediaAsset } from "@/media/types";
+import { UI_ELEMENT_GRAPHIC_ID } from "@/graphics/definitions/ui-element";
+import { UiElementTimelineMarkers } from "@/ui-elements/components/timeline-markers";
+import { useTimelineStore } from "@/timeline/timeline-store";
 
 const KEYFRAME_INDICATOR_MIN_WIDTH_PX = 40;
 const ELEMENT_RING_WIDTH_PX = 1.5;
 const MIN_TRANSITION_SEGMENT_SECONDS = 0.1;
+const EMPTY_EXPANDED_ROWS: ExpandedRow[] = [];
 
 const PixelsPerSecondContext = createContext<number | null>(null);
 const THUMBNAIL_ASPECT_RATIO = 16 / 9;
@@ -220,16 +235,19 @@ interface TimelineElementProps {
 	onElementMouseDown: (params: {
 		event: React.MouseEvent;
 		element: TimelineElementType;
+		track: TimelineTrack;
 	}) => void;
 	onElementClick: (params: {
 		event: React.MouseEvent;
 		element: TimelineElementType;
+		track: TimelineTrack;
 	}) => void;
 	dragView: ElementDragView;
 	isDropTarget?: boolean;
+	isExpanded: boolean;
 }
 
-export function TimelineElement({
+function TimelineElementComponent({
 	element,
 	track,
 	zoomLevel,
@@ -239,33 +257,11 @@ export function TimelineElement({
 	onElementClick,
 	dragView,
 	isDropTarget = false,
+	isExpanded,
 }: TimelineElementProps) {
-	const editor = useEditor();
-	const mediaAssets = useEditor((e) => e.media.getAssets());
-	const { selectedElements } = useElementSelection();
-	const selectedTimelineElements = editor.timeline.getElementsWithTracks({
-		elements: selectedElements,
+	const mediaAsset = useEditorMediaAsset({
+		mediaId: hasMediaId(element) ? element.mediaId : null,
 	});
-	const requestRevealMedia = useAssetsPanelStore((s) => s.requestRevealMedia);
-	const { renderElement } = useElementPreview({
-		trackId: track.id,
-		elementId: element.id,
-		fallback: element,
-	});
-
-	let mediaAsset: MediaAsset | null = null;
-
-	if (hasMediaId(element)) {
-		mediaAsset =
-			mediaAssets.find((asset) => asset.id === element.mediaId) ?? null;
-	}
-
-	const hasAudio = mediaSupportsAudio({ media: mediaAsset });
-
-	const isCurrentElementSelected = selectedElements.some(
-		(selected) =>
-			selected.elementId === element.id && selected.trackId === track.id,
-	);
 
 	const isDragging = dragView.kind === "dragging";
 	const dragTimeOffset = isDragging
@@ -279,9 +275,9 @@ export function TimelineElement({
 	const elementStartTime =
 		isDragging && isBeingDragged
 			? addMediaTime({ a: dragView.currentTime, b: dragTimeOffset })
-			: renderElement.startTime;
+			: element.startTime;
 	const displayedStartTime = elementStartTime;
-	const displayedDuration = renderElement.duration;
+	const displayedDuration = element.duration;
 	const elementWidth = timelineTimeToPixels({
 		time: displayedDuration,
 		zoomLevel,
@@ -291,106 +287,18 @@ export function TimelineElement({
 		time: displayedStartTime,
 		zoomLevel,
 	});
-	const keyframeIndicators = isSelected
-		? getKeyframeIndicators({
-				keyframes: getElementKeyframes({ animations: element.animations }),
-				trackId: track.id,
-				elementId: element.id,
-				displayedStartTime,
-				zoomLevel,
-				elementLeft,
-				elementWidth,
-			})
-		: [];
 
-	const {
-		keyframeDragState,
-		handleKeyframeMouseDown,
-		handleKeyframeClick,
-		getVisualOffsetPx,
-	} = useKeyframeDrag({ zoomLevel, element, displayedStartTime });
-
-	const elementKeyframes = getElementKeyframes({
-		animations: element.animations,
-	});
-
-	const isExpanded = useTimelineStore((s) =>
-		s.expandedElementIds.has(element.id),
-	);
-	const toggleElementExpanded = useTimelineStore(
-		(s) => s.toggleElementExpanded,
-	);
 	const expandedRows = useMemo(
 		() =>
-			isExpanded ? getExpandedRows({ animations: element.animations }) : [],
+			isExpanded
+				? getExpandedRows({ animations: element.animations })
+				: EMPTY_EXPANDED_ROWS,
 		[isExpanded, element.animations],
 	);
-
-	const {
-		containerRef: expandedLanesRef,
-		selectionBox: keyframeSelectionBox,
-		isBoxSelecting: isKeyframeBoxSelecting,
-		handleExpandedAreaMouseDown,
-		handleExpandedAreaClick,
-	} = useKeyframeBoxSelect({
-		trackId: track.id,
-		elementId: element.id,
-		rows: expandedRows,
-		keyframes: elementKeyframes,
-		displayedStartTime,
-		zoomLevel,
-		elementLeft,
-	});
-
-	const handleRevealInMedia = ({ event }: { event: React.MouseEvent }) => {
-		event.stopPropagation();
-		if (hasMediaId(element)) {
-			requestRevealMedia(element.mediaId);
-		}
-	};
-
-	const isMuted = canElementHaveAudio(element) && isElementMuted({ element });
-	const canToggleCurrentSourceAudio =
-		selectedElements.length === 1 &&
-		isCurrentElementSelected &&
-		canToggleSourceAudio(element, mediaAsset);
-	const sourceAudioLabel =
-		element.type === "video"
-			? getSourceAudioActionLabel({ element })
-			: "Extract audio";
-	const isElementSourceAudioSeparated =
-		element.type === "video" && isSourceAudioSeparated({ element });
-	const hasKeyframes = elementKeyframes.length > 0;
-	const canMergeSelectedTextElements =
-		selectedElements.length >= 2 &&
-		selectedTimelineElements.length === selectedElements.length &&
-		selectedTimelineElements.every(
-			(selectedElement) => selectedElement.element.type === "text",
-		);
+	const hasExpandedRows = expandedRows.length > 0;
 	const expansionHeight = getExpansionHeight({ rows: expandedRows });
 	const baseTrackHeight = getTrackHeight({ type: track.type });
-
-	const expandedContent =
-		isExpanded && expandedRows.length > 0 ? (
-			<ExpandedKeyframeLanes
-				rows={expandedRows}
-				keyframes={elementKeyframes}
-				trackId={track.id}
-				elementId={element.id}
-				displayedStartTime={displayedStartTime}
-				zoomLevel={zoomLevel}
-				elementLeft={elementLeft}
-				keyframeDragState={keyframeDragState}
-				onKeyframeMouseDown={handleKeyframeMouseDown}
-				onKeyframeClick={handleKeyframeClick}
-				getVisualOffsetPx={getVisualOffsetPx}
-				containerRef={expandedLanesRef}
-				onLaneMouseDown={handleExpandedAreaMouseDown}
-				onLaneClick={handleExpandedAreaClick}
-				selectionBox={keyframeSelectionBox}
-				isBoxSelecting={isKeyframeBoxSelecting}
-			/>
-		) : null;
+	const needsKeyframeSurface = isSelected || hasExpandedRows;
 
 	return (
 		<PixelsPerSecondContext.Provider value={timelinePixelsPerSecond}>
@@ -411,128 +319,49 @@ export function TimelineElement({
 									: undefined,
 						}}
 					>
-						<ElementInner
-							element={element}
-							displayElement={renderElement}
-							track={track}
-							isSelected={isSelected}
-							isExpanded={expandedRows.length > 0}
-							baseTrackHeight={baseTrackHeight}
-							expandedContent={expandedContent}
-							onElementClick={onElementClick}
-							onElementMouseDown={onElementMouseDown}
-							onResizeStart={onResizeStart}
-							isDropTarget={isDropTarget}
-							zoomLevel={zoomLevel}
-						/>
-						{isSelected && (
-							<div
-								className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
-								style={{ height: `${baseTrackHeight}px` }}
-							>
-								<KeyframeIndicators
-									indicators={keyframeIndicators}
-									dragState={keyframeDragState}
-									displayedStartTime={displayedStartTime}
-									elementLeft={elementLeft}
-									onKeyframeMouseDown={handleKeyframeMouseDown}
-									onKeyframeClick={handleKeyframeClick}
-									getVisualOffsetPx={getVisualOffsetPx}
-								/>
-							</div>
+						{needsKeyframeSurface ? (
+							<TimelineElementKeyframeSurface
+								element={element}
+								track={track}
+								zoomLevel={zoomLevel}
+								isSelected={isSelected}
+								isExpanded={hasExpandedRows}
+								expandedRows={expandedRows}
+								baseTrackHeight={baseTrackHeight}
+								displayedStartTime={displayedStartTime}
+								elementLeft={elementLeft}
+								elementWidth={elementWidth}
+								onElementClick={onElementClick}
+								onElementMouseDown={onElementMouseDown}
+								onResizeStart={onResizeStart}
+								isDropTarget={isDropTarget}
+								mediaAsset={mediaAsset}
+							/>
+						) : (
+							<ElementInner
+								element={element}
+								track={track}
+								isSelected={isSelected}
+								isExpanded={false}
+								baseTrackHeight={baseTrackHeight}
+								expandedContent={null}
+								onElementClick={onElementClick}
+								onElementMouseDown={onElementMouseDown}
+								onResizeStart={onResizeStart}
+								isDropTarget={isDropTarget}
+								zoomLevel={zoomLevel}
+								mediaAsset={mediaAsset}
+								elementWidth={elementWidth}
+							/>
 						)}
 					</div>
 				</ContextMenuTrigger>
 				<ContextMenuContent className="w-64">
-					<ActionMenuItem
-						action="split"
-						icon={<HugeiconsIcon icon={ScissorIcon} />}
-					>
-						Split
-					</ActionMenuItem>
-					<CopyMenuItem />
-					{selectedElements.length === 1 && (
-						<ActionMenuItem
-							action="duplicate-selected"
-							icon={<HugeiconsIcon icon={Copy01Icon} />}
-						>
-							Duplicate
-						</ActionMenuItem>
-					)}
-					{canMergeSelectedTextElements && (
-						<ActionMenuItem
-							action="merge-text-selected"
-							icon={<HugeiconsIcon icon={TextIcon} />}
-						>
-							Connect text layers
-						</ActionMenuItem>
-					)}
-					{canElementHaveAudio(element) && hasAudio && (
-						<MuteMenuItem
-							isMultipleSelected={selectedElements.length > 1}
-							isCurrentElementSelected={isCurrentElementSelected}
-							isMuted={isMuted}
-						/>
-					)}
-					{canToggleCurrentSourceAudio && (
-						<ContextMenuItem
-							icon={
-								<HugeiconsIcon
-									icon={
-										isElementSourceAudioSeparated ? ScissorIcon : ScissorIcon
-									}
-								/>
-							}
-							onClick={(event: React.MouseEvent) => {
-								event.stopPropagation();
-								invokeAction("toggle-source-audio");
-							}}
-						>
-							{sourceAudioLabel}
-						</ContextMenuItem>
-					)}
-					{canElementBeHidden(element) && (
-						<VisibilityMenuItem
-							element={element}
-							isMultipleSelected={selectedElements.length > 1}
-							isCurrentElementSelected={isCurrentElementSelected}
-						/>
-					)}
-					{hasKeyframes && (
-						<ContextMenuItem
-							icon={<HugeiconsIcon icon={KeyframeIcon} />}
-							onClick={(event: React.MouseEvent) => {
-								event.stopPropagation();
-								toggleElementExpanded(element.id);
-							}}
-						>
-							{isExpanded ? "Collapse keyframes" : "Expand keyframes"}
-						</ContextMenuItem>
-					)}
-					{selectedElements.length === 1 && hasMediaId(element) && (
-						<>
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Search01Icon} />}
-								onClick={(event: React.MouseEvent) =>
-									handleRevealInMedia({ event })
-								}
-							>
-								Reveal media
-							</ContextMenuItem>
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Exchange01Icon} />}
-								disabled
-							>
-								Replace media
-							</ContextMenuItem>
-						</>
-					)}
-					<ContextMenuSeparator />
-					<DeleteMenuItem
-						isMultipleSelected={selectedElements.length > 1}
-						isCurrentElementSelected={isCurrentElementSelected}
-						elementType={element.type}
-						selectedCount={selectedElements.length}
+					<TimelineElementMenuContent
+						element={element}
+						trackId={track.id}
+						mediaAsset={mediaAsset}
+						isExpanded={isExpanded}
 					/>
 				</ContextMenuContent>
 			</ContextMenu>
@@ -540,9 +369,367 @@ export function TimelineElement({
 	);
 }
 
+export const TimelineElement = memo(TimelineElementComponent);
+TimelineElement.displayName = "TimelineElement";
+
+function TimelineElementKeyframeSurface({
+	element,
+	track,
+	zoomLevel,
+	isSelected,
+	isExpanded,
+	expandedRows,
+	baseTrackHeight,
+	displayedStartTime,
+	elementLeft,
+	elementWidth,
+	onElementClick,
+	onElementMouseDown,
+	onResizeStart,
+	isDropTarget = false,
+	mediaAsset,
+}: {
+	element: TimelineElementType;
+	track: TimelineTrack;
+	zoomLevel: number;
+	isSelected: boolean;
+	isExpanded: boolean;
+	expandedRows: ExpandedRow[];
+	baseTrackHeight: number;
+	displayedStartTime: MediaTime;
+	elementLeft: number;
+	elementWidth: number;
+	onElementClick: (params: {
+		event: React.MouseEvent;
+		element: TimelineElementType;
+		track: TimelineTrack;
+	}) => void;
+	onElementMouseDown: (params: {
+		event: React.MouseEvent;
+		element: TimelineElementType;
+		track: TimelineTrack;
+	}) => void;
+	onResizeStart: (params: {
+		event: React.MouseEvent;
+		element: TimelineElementType;
+		track: TimelineTrack;
+		side: "left" | "right";
+	}) => void;
+	isDropTarget?: boolean;
+	mediaAsset: MediaAsset | null;
+}) {
+	const {
+		keyframeDragState,
+		handleKeyframeMouseDown,
+		handleKeyframeClick,
+		getVisualOffsetPx,
+	} = useKeyframeDrag({ zoomLevel, element, displayedStartTime });
+	const elementKeyframes = useMemo(
+		() => getElementKeyframes({ animations: element.animations }),
+		[element.animations],
+	);
+	const keyframeIndicators = useMemo(
+		() =>
+			isSelected
+				? getKeyframeIndicators({
+						keyframes: elementKeyframes,
+						trackId: track.id,
+						elementId: element.id,
+						displayedStartTime,
+						zoomLevel,
+						elementLeft,
+						elementWidth,
+					})
+				: [],
+		[
+			displayedStartTime,
+			element.id,
+			elementKeyframes,
+			elementLeft,
+			elementWidth,
+			isSelected,
+			track.id,
+			zoomLevel,
+		],
+	);
+	const expandedContent =
+		isExpanded && expandedRows.length > 0 ? (
+			<ExpandedKeyframeLaneSurface
+				rows={expandedRows}
+				keyframes={elementKeyframes}
+				trackId={track.id}
+				elementId={element.id}
+				displayedStartTime={displayedStartTime}
+				zoomLevel={zoomLevel}
+				elementLeft={elementLeft}
+				keyframeDragState={keyframeDragState}
+				onKeyframeMouseDown={handleKeyframeMouseDown}
+				onKeyframeClick={handleKeyframeClick}
+				getVisualOffsetPx={getVisualOffsetPx}
+			/>
+		) : null;
+
+	return (
+		<>
+			<ElementInner
+				element={element}
+				track={track}
+				isSelected={isSelected}
+				isExpanded={isExpanded}
+				baseTrackHeight={baseTrackHeight}
+				expandedContent={expandedContent}
+				onElementClick={onElementClick}
+				onElementMouseDown={onElementMouseDown}
+				onResizeStart={onResizeStart}
+				isDropTarget={isDropTarget}
+				zoomLevel={zoomLevel}
+				mediaAsset={mediaAsset}
+				elementWidth={elementWidth}
+			/>
+			{isSelected && (
+				<div
+					className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
+					style={{ height: `${baseTrackHeight}px` }}
+				>
+					<KeyframeIndicators
+						indicators={keyframeIndicators}
+						dragState={keyframeDragState}
+						displayedStartTime={displayedStartTime}
+						elementLeft={elementLeft}
+						onKeyframeMouseDown={handleKeyframeMouseDown}
+						onKeyframeClick={handleKeyframeClick}
+						getVisualOffsetPx={getVisualOffsetPx}
+					/>
+				</div>
+			)}
+		</>
+	);
+}
+
+function ExpandedKeyframeLaneSurface({
+	rows,
+	keyframes,
+	trackId,
+	elementId,
+	displayedStartTime,
+	zoomLevel,
+	elementLeft,
+	keyframeDragState,
+	onKeyframeMouseDown,
+	onKeyframeClick,
+	getVisualOffsetPx,
+}: {
+	rows: ExpandedRow[];
+	keyframes: ElementKeyframe[];
+	trackId: string;
+	elementId: string;
+	displayedStartTime: MediaTime;
+	zoomLevel: number;
+	elementLeft: number;
+	keyframeDragState: KeyframeDragState;
+	onKeyframeMouseDown: (params: {
+		event: React.MouseEvent;
+		keyframes: SelectedKeyframeRef[];
+	}) => void;
+	onKeyframeClick: (params: {
+		event: React.MouseEvent;
+		keyframes: SelectedKeyframeRef[];
+		orderedKeyframes: SelectedKeyframeRef[];
+		indicatorTime: MediaTime;
+	}) => void;
+	getVisualOffsetPx: (params: {
+		indicatorTime: MediaTime;
+		indicatorOffsetPx: number;
+		isBeingDragged: boolean;
+		displayedStartTime: MediaTime;
+		elementLeft: number;
+	}) => number;
+}) {
+	const {
+		containerRef,
+		selectionBox,
+		isBoxSelecting,
+		handleExpandedAreaMouseDown,
+		handleExpandedAreaClick,
+	} = useKeyframeBoxSelect({
+		trackId,
+		elementId,
+		rows,
+		keyframes,
+		displayedStartTime,
+		zoomLevel,
+		elementLeft,
+	});
+
+	return (
+		<ExpandedKeyframeLanes
+			rows={rows}
+			keyframes={keyframes}
+			trackId={trackId}
+			elementId={elementId}
+			displayedStartTime={displayedStartTime}
+			zoomLevel={zoomLevel}
+			elementLeft={elementLeft}
+			keyframeDragState={keyframeDragState}
+			onKeyframeMouseDown={onKeyframeMouseDown}
+			onKeyframeClick={onKeyframeClick}
+			getVisualOffsetPx={getVisualOffsetPx}
+			containerRef={containerRef}
+			onLaneMouseDown={handleExpandedAreaMouseDown}
+			onLaneClick={handleExpandedAreaClick}
+			selectionBox={selectionBox}
+			isBoxSelecting={isBoxSelecting}
+		/>
+	);
+}
+
+function TimelineElementMenuContent({
+	element,
+	trackId,
+	mediaAsset,
+	isExpanded,
+}: {
+	element: TimelineElementType;
+	trackId: string;
+	mediaAsset: MediaAsset | null;
+	isExpanded: boolean;
+}) {
+	const editor = useEditor();
+	const selectedElements = useEditorSelection((e) =>
+		e.selection.getSelectedElements(),
+	);
+	const requestRevealMedia = useAssetsPanelStore((s) => s.requestRevealMedia);
+	const toggleElementExpanded = useTimelineStore(
+		(s) => s.toggleElementExpanded,
+	);
+	const selectedElementCount = selectedElements.length;
+	const isCurrentElementSelected = selectedElements.some(
+		(selectedElement) =>
+			selectedElement.trackId === trackId &&
+			selectedElement.elementId === element.id,
+	);
+	const canMergeSelectedTextElements = useMemo(() => {
+		if (selectedElements.length < 2) {
+			return false;
+		}
+		const selectedTimelineElements = editor.timeline.getElementsWithTracks({
+			elements: selectedElements,
+		});
+		return (
+			selectedTimelineElements.length === selectedElements.length &&
+			selectedTimelineElements.every(
+				(selectedElement) => selectedElement.element.type === "text",
+			)
+		);
+	}, [editor, selectedElements]);
+	const hasAudio = mediaSupportsAudio({ media: mediaAsset });
+	const isMuted = canElementHaveAudio(element) && isElementMuted({ element });
+	const canToggleCurrentSourceAudio =
+		selectedElementCount === 1 &&
+		isCurrentElementSelected &&
+		canToggleSourceAudio(element, mediaAsset);
+	const sourceAudioLabel =
+		element.type === "video"
+			? getSourceAudioActionLabel({ element })
+			: "Extract audio";
+	const hasKeyframes = useMemo(
+		() => getElementKeyframes({ animations: element.animations }).length > 0,
+		[element.animations],
+	);
+
+	return (
+		<>
+			<ActionMenuItem
+				action="split"
+				icon={<HugeiconsIcon icon={ScissorIcon} />}
+			>
+				Split
+			</ActionMenuItem>
+			<CopyMenuItem />
+			{selectedElementCount === 1 && (
+				<ActionMenuItem
+					action="duplicate-selected"
+					icon={<HugeiconsIcon icon={Copy01Icon} />}
+				>
+					Duplicate
+				</ActionMenuItem>
+			)}
+			{canMergeSelectedTextElements && (
+				<ActionMenuItem
+					action="merge-text-selected"
+					icon={<HugeiconsIcon icon={TextIcon} />}
+				>
+					Connect text layers
+				</ActionMenuItem>
+			)}
+			{canElementHaveAudio(element) && hasAudio && (
+				<MuteMenuItem
+					isMultipleSelected={selectedElementCount > 1}
+					isCurrentElementSelected={isCurrentElementSelected}
+					isMuted={isMuted}
+				/>
+			)}
+			{canToggleCurrentSourceAudio && (
+				<ContextMenuItem
+					icon={<HugeiconsIcon icon={ScissorIcon} />}
+					onClick={(event: React.MouseEvent) => {
+						event.stopPropagation();
+						invokeAction("toggle-source-audio");
+					}}
+				>
+					{sourceAudioLabel}
+				</ContextMenuItem>
+			)}
+			{canElementBeHidden(element) && (
+				<VisibilityMenuItem
+					element={element}
+					isMultipleSelected={selectedElementCount > 1}
+					isCurrentElementSelected={isCurrentElementSelected}
+				/>
+			)}
+			{hasKeyframes && (
+				<ContextMenuItem
+					icon={<HugeiconsIcon icon={KeyframeIcon} />}
+					onClick={(event: React.MouseEvent) => {
+						event.stopPropagation();
+						toggleElementExpanded(element.id);
+					}}
+				>
+					{isExpanded ? "Collapse keyframes" : "Expand keyframes"}
+				</ContextMenuItem>
+			)}
+			{selectedElementCount === 1 && hasMediaId(element) && (
+				<>
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={Search01Icon} />}
+						onClick={(event: React.MouseEvent) => {
+							event.stopPropagation();
+							requestRevealMedia(element.mediaId);
+						}}
+					>
+						Reveal media
+					</ContextMenuItem>
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={Exchange01Icon} />}
+						disabled
+					>
+						Replace media
+					</ContextMenuItem>
+				</>
+			)}
+			<ContextMenuSeparator />
+			<DeleteMenuItem
+				isMultipleSelected={selectedElementCount > 1}
+				isCurrentElementSelected={isCurrentElementSelected}
+				elementType={element.type}
+				selectedCount={selectedElementCount}
+			/>
+		</>
+	);
+}
+
 function ElementInner({
 	element,
-	displayElement,
 	track,
 	isSelected,
 	isExpanded,
@@ -553,9 +740,10 @@ function ElementInner({
 	onResizeStart,
 	isDropTarget = false,
 	zoomLevel,
+	mediaAsset,
+	elementWidth,
 }: {
 	element: TimelineElementType;
-	displayElement?: TimelineElementType;
 	track: TimelineTrack;
 	isSelected: boolean;
 	isExpanded: boolean;
@@ -564,10 +752,12 @@ function ElementInner({
 	onElementClick: (params: {
 		event: React.MouseEvent;
 		element: TimelineElementType;
+		track: TimelineTrack;
 	}) => void;
 	onElementMouseDown: (params: {
 		event: React.MouseEvent;
 		element: TimelineElementType;
+		track: TimelineTrack;
 	}) => void;
 	onResizeStart: (params: {
 		event: React.MouseEvent;
@@ -577,11 +767,11 @@ function ElementInner({
 	}) => void;
 	isDropTarget?: boolean;
 	zoomLevel: number;
+	mediaAsset: MediaAsset | null;
+	elementWidth: number;
 }) {
-	const visibleElement = displayElement ?? element;
 	const isReducedOpacity =
-		(canElementBeHidden(visibleElement) && visibleElement.hidden) ||
-		isDropTarget;
+		(canElementBeHidden(element) && element.hidden) || isDropTarget;
 	return (
 		<div
 			className="absolute top-0 bottom-0"
@@ -611,12 +801,14 @@ function ElementInner({
 						role="button"
 						tabIndex={-1}
 						className="absolute inset-0 size-full flex flex-col"
-						onClick={(event) => onElementClick({ event, element })}
-						onMouseDown={(event) => onElementMouseDown({ event, element })}
+						onClick={(event) => onElementClick({ event, element, track })}
+						onMouseDown={(event) =>
+							onElementMouseDown({ event, element, track })
+						}
 					>
 						<div
 							className={cn(
-								"flex shrink-0 items-center overflow-hidden",
+								"relative flex shrink-0 items-center overflow-hidden",
 								getTimelineElementClassName({
 									type: getTrackTypeForElementType({
 										elementType: element.type,
@@ -627,7 +819,11 @@ function ElementInner({
 							style={{ height: `${baseTrackHeight}px` }}
 						>
 							<div className="flex flex-1 min-h-0 h-full items-center overflow-hidden">
-								<ElementContent element={visibleElement} track={track} />
+								<ElementContent
+									element={element}
+									track={track}
+									mediaAsset={mediaAsset}
+								/>
 							</div>
 							<TransitionSegments
 								element={element}
@@ -635,6 +831,16 @@ function ElementInner({
 								zoomLevel={zoomLevel}
 								baseTrackHeight={baseTrackHeight}
 							/>
+							{element.type === "graphic" &&
+								element.definitionId === UI_ELEMENT_GRAPHIC_ID && (
+									<UiElementTimelineMarkers
+										element={element}
+										trackId={track.id}
+										elementWidth={elementWidth}
+										baseTrackHeight={baseTrackHeight}
+										isSelected={isSelected}
+									/>
+								)}
 						</div>
 						{expandedContent}
 					</div>
@@ -687,14 +893,38 @@ function TransitionSegments({
 	}) => {
 		const currentTransition = transitions[side];
 		if (!currentTransition) return;
-		const nextDuration = mediaTime({
-			ticks: Math.round(
-				Math.max(
-					mediaTimeFromSeconds({ seconds: MIN_TRANSITION_SEGMENT_SECONDS }),
-					Math.min(element.duration, duration),
-				),
+		const currentStart =
+			currentTransition.startTime ??
+			(side === "out"
+				? element.duration - currentTransition.duration
+				: mediaTime({ ticks: 0 }));
+		const currentEnd = mediaTime({
+			ticks: Math.max(
+				0,
+				Math.min(element.duration, currentStart + currentTransition.duration),
 			),
 		});
+		const minimumDuration = mediaTime({
+			ticks: Math.min(
+				element.duration,
+				mediaTimeFromSeconds({ seconds: MIN_TRANSITION_SEGMENT_SECONDS }),
+			),
+		});
+		const maxDuration =
+			side === "out"
+				? Math.max(minimumDuration, currentEnd)
+				: Math.max(minimumDuration, element.duration - currentStart);
+		const nextDuration = mediaTime({
+			ticks: Math.round(
+				Math.max(minimumDuration, Math.min(maxDuration, duration)),
+			),
+		});
+		const nextStartTime =
+			side === "out"
+				? mediaTime({
+						ticks: Math.max(0, currentEnd - nextDuration),
+					})
+				: currentStart;
 		editor.timeline.updateElements({
 			updates: [
 				{
@@ -706,8 +936,7 @@ function TransitionSegments({
 							[side]: {
 								...currentTransition,
 								duration: nextDuration,
-								startTime:
-									side === "out" ? element.duration - nextDuration : 0,
+								startTime: nextStartTime,
 							},
 						},
 					},
@@ -742,6 +971,7 @@ function TransitionSegments({
 					side="in"
 					elementDuration={element.duration}
 					duration={transitions.in.duration}
+					startTime={transitions.in.startTime ?? mediaTime({ ticks: 0 })}
 					presetId={transitions.in.presetId}
 					zoomLevel={zoomLevel}
 					baseTrackHeight={baseTrackHeight}
@@ -756,6 +986,12 @@ function TransitionSegments({
 					side="out"
 					elementDuration={element.duration}
 					duration={transitions.out.duration}
+					startTime={
+						transitions.out.startTime ??
+						mediaTime({
+							ticks: Math.max(0, element.duration - transitions.out.duration),
+						})
+					}
 					presetId={transitions.out.presetId}
 					zoomLevel={zoomLevel}
 					baseTrackHeight={baseTrackHeight}
@@ -773,6 +1009,7 @@ function TransitionSegment({
 	side,
 	elementDuration,
 	duration,
+	startTime,
 	presetId,
 	zoomLevel,
 	baseTrackHeight,
@@ -782,6 +1019,7 @@ function TransitionSegment({
 	side: "in" | "out";
 	elementDuration: MediaTime;
 	duration: MediaTime;
+	startTime: MediaTime;
 	presetId: string;
 	zoomLevel: number;
 	baseTrackHeight: number;
@@ -789,17 +1027,23 @@ function TransitionSegment({
 	onRemove: () => void;
 }) {
 	const preset = getTransitionPreset({ id: presetId });
+	const clampedStartTime = mediaTime({
+		ticks: Math.max(0, Math.min(elementDuration, startTime)),
+	});
+	const visibleDuration = mediaTime({
+		ticks: Math.max(0, Math.min(duration, elementDuration - clampedStartTime)),
+	});
 	const widthPx = Math.max(
 		8,
-		timelineTimeToPixels({ time: Math.min(duration, elementDuration), zoomLevel }),
+		timelineTimeToPixels({
+			time: visibleDuration,
+			zoomLevel,
+		}),
 	);
-	const leftPx =
-		side === "out"
-			? timelineTimeToPixels({
-					time: Math.max(0, elementDuration - duration),
-					zoomLevel,
-				})
-			: 0;
+	const leftPx = timelineTimeToPixels({
+		time: clampedStartTime,
+		zoomLevel,
+	});
 	const height = Math.max(14, Math.floor(baseTrackHeight / 2));
 
 	const handlePointerDown = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -1149,6 +1393,7 @@ function ExpandedKeyframeLanes({
 interface ElementContentProps {
 	element: TimelineElementType;
 	track: TimelineTrack;
+	mediaAsset: MediaAsset | null;
 }
 
 function TextElementContent({
@@ -1159,7 +1404,9 @@ function TextElementContent({
 	return (
 		<div className="flex size-full items-center justify-start pl-2">
 			<span className="truncate text-xs text-white">
-				{typeof element.params.content === "string" ? element.params.content : ""}
+				{typeof element.params.content === "string"
+					? element.params.content
+					: ""}
 			</span>
 		</div>
 	);
@@ -1231,9 +1478,11 @@ function GraphicElementContent({
 function AudioElementContent({
 	element,
 	trackId,
+	mediaAsset,
 }: {
 	element: AudioElement;
 	trackId: string;
+	mediaAsset: MediaAsset | null;
 }) {
 	const pixelsPerSecond = useContext(PixelsPerSecondContext);
 	if (pixelsPerSecond === null) {
@@ -1241,11 +1490,6 @@ function AudioElementContent({
 			"AudioElementContent must be rendered inside PixelsPerSecondContext.Provider",
 		);
 	}
-	const mediaAssets = useEditor((e) => e.media.getAssets());
-	const mediaAsset =
-		element.sourceType === "upload"
-			? (mediaAssets.find((asset) => asset.id === element.mediaId) ?? null)
-			: null;
 	const [sharedAudioSource, setSharedAudioSource] = useState<{
 		assetId: string;
 		file?: File;
@@ -1321,11 +1565,19 @@ function AudioElementContent({
 	const mediaLabel = mediaAsset?.name ?? element.name;
 	const gainSamples = useMemo(
 		() =>
-			buildWaveformGainSamples({
-				element,
+			buildCompactWaveformGainSamplesFromState({
+				animations: element.animations,
 				count: WAVEFORM_GAIN_SAMPLE_COUNT,
+				duration: element.duration,
+				muted: element.params.muted === true,
+				volume: element.params.volume,
 			}),
-		[element],
+		[
+			element.animations,
+			element.duration,
+			element.params.muted,
+			element.params.volume,
+		],
 	);
 	if (audioBuffer || audioUrl || sourceFile) {
 		return (
@@ -1395,13 +1647,12 @@ function EffectsButton({
 function TiledMediaContent({
 	element,
 	track,
+	mediaAsset,
 }: {
 	element: VideoElement | ImageElement;
 	track: TimelineTrack;
+	mediaAsset: MediaAsset | null;
 }) {
-	const mediaAssets = useEditor((e) => e.media.getAssets());
-
-	const mediaAsset = mediaAssets.find((asset) => asset.id === element.mediaId);
 	const imageUrl =
 		element.type === "video"
 			? mediaAsset?.thumbnailUrl
@@ -1474,7 +1725,7 @@ function MediaElementHeader({
 	);
 }
 
-function ElementContent({ element, track }: ElementContentProps) {
+function ElementContent({ element, track, mediaAsset }: ElementContentProps) {
 	switch (element.type) {
 		case "text":
 			return <TextElementContent element={element} />;
@@ -1485,10 +1736,22 @@ function ElementContent({ element, track }: ElementContentProps) {
 		case "graphic":
 			return <GraphicElementContent element={element} />;
 		case "audio":
-			return <AudioElementContent element={element} trackId={track.id} />;
+			return (
+				<AudioElementContent
+					element={element}
+					trackId={track.id}
+					mediaAsset={mediaAsset}
+				/>
+			);
 		case "video":
 		case "image":
-			return <TiledMediaContent element={element} track={track} />;
+			return (
+				<TiledMediaContent
+					element={element}
+					track={track}
+					mediaAsset={mediaAsset}
+				/>
+			);
 	}
 }
 

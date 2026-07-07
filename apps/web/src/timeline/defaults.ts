@@ -28,6 +28,20 @@ const defaultTextBackground = {
 	offsetY: 0,
 };
 
+const defaultTextStroke = {
+	enabled: false,
+	color: "#000000",
+	width: 3,
+};
+
+const defaultTextShadow = {
+	enabled: false,
+	color: "#000000",
+	blur: 10,
+	offsetX: 0,
+	offsetY: 4,
+};
+
 const defaultTextElement: Omit<TextElement, "id"> = {
 	type: "text",
 	name: "Text",
@@ -46,6 +60,14 @@ const defaultTextElement: Omit<TextElement, "id"> = {
 		textDecoration: "none",
 		letterSpacing: defaultTextLetterSpacing,
 		lineHeight: defaultTextLineHeight,
+		"stroke.enabled": defaultTextStroke.enabled,
+		"stroke.color": defaultTextStroke.color,
+		"stroke.width": defaultTextStroke.width,
+		"shadow.enabled": defaultTextShadow.enabled,
+		"shadow.color": defaultTextShadow.color,
+		"shadow.blur": defaultTextShadow.blur,
+		"shadow.offsetX": defaultTextShadow.offsetX,
+		"shadow.offsetY": defaultTextShadow.offsetY,
 		"background.enabled": defaultTextBackground.enabled,
 		"background.color": defaultTextBackground.color,
 		"background.cornerRadius": defaultTextBackground.cornerRadius,
@@ -80,6 +102,8 @@ export const DEFAULTS = {
 		letterSpacing: defaultTextLetterSpacing,
 		lineHeight: defaultTextLineHeight,
 		background: defaultTextBackground,
+		stroke: defaultTextStroke,
+		shadow: defaultTextShadow,
 		element: defaultTextElement,
 	},
 	timeline: {

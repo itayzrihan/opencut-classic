@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorTimelineScenes } from "@/editor/use-editor";
 import { registerCanceller } from "@/editor/cancel-interaction";
 import type { NormalizedCubicBezier } from "@/animation/types";
 import { useKeyframeSelection } from "@/timeline/hooks/element/use-keyframe-selection";
@@ -14,7 +14,7 @@ import {
 
 export function useGraphEditorController() {
 	const editor = useEditor();
-	const renderTracks = useEditor(
+	const renderTracks = useEditorTimelineScenes(
 		(currentEditor) =>
 			currentEditor.timeline.getPreviewTracks() ??
 			currentEditor.scenes.getActiveScene().tracks,

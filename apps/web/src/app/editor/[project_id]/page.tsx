@@ -18,7 +18,11 @@ import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
 import { MobileGate } from "@/components/editor/mobile-gate";
 import { useMemo, useState } from "react";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditorPlayback,
+	useEditorRenderer,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@/components/ui/button";
@@ -62,7 +66,7 @@ export default function Editor() {
 }
 
 function DegradedRendererBanner() {
-	const isDegraded = useEditor((e) => e.renderer.isDegraded);
+	const isDegraded = useEditorRenderer((e) => e.renderer.isDegraded);
 	const [dismissed, setDismissed] = useState(false);
 	if (!isDegraded || dismissed) return null;
 
@@ -85,10 +89,12 @@ function DegradedRendererBanner() {
 function EditorLayout() {
 	usePasteMedia();
 	const { panels, setPanel } = usePanelStore();
-	const activeScene = useEditor((editor) =>
+	const activeScene = useEditorTimelineScenes((editor) =>
 		editor.scenes.getActiveSceneOrNull(),
 	);
-	const currentTime = useEditor((editor) => editor.playback.getCurrentTime());
+	const currentTime = useEditorPlayback((editor) =>
+		editor.playback.getCurrentTime(),
+	);
 	const activeGuide = usePreviewStore((state) => state.activeGuide);
 	const overlays = usePreviewStore((state) => state.overlays);
 	const setOverlayVisibility = usePreviewStore(

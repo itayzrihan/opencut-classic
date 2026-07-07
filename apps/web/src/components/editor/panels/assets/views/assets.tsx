@@ -1,7 +1,20 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+} from "react";
+import {
+	List,
+	type ListImperativeAPI,
+	type RowComponentProps,
+} from "react-window";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { MediaDragOverlay } from "@/components/editor/panels/assets/drag-overlay";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
@@ -27,7 +40,12 @@ import {
 } from "@/components/ui/tooltip";
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { mediaTimeFromSeconds, type MediaTime } from "@/wasm";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorMedia,
+	useEditorProject,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { useFileUpload } from "@/media/use-file-upload";
 import { invokeAction } from "@/actions";
 import { processMediaAssets } from "@/media/processing";
@@ -51,6 +69,16 @@ import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import type { TScene } from "@/timeline";
 import { cn } from "@/utils/ui";
+import { useContainerSize } from "@/hooks/use-container-size";
+import {
+	MEDIA_COMPACT_ROW_HEIGHT_PX,
+	MEDIA_GRID_ROW_HEIGHT_PX,
+	MEDIA_LIST_FALLBACK_HEIGHT_PX,
+	MEDIA_LIST_OVERSCAN_ROWS,
+	getMediaGridColumnCount,
+	getMediaVirtualRowCount,
+	getMediaVirtualRowEntries,
+} from "./assets-virtualization";
 import {
 	CloudUploadIcon,
 	GridViewIcon,
@@ -63,12 +91,18 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { Layers2, SplitSquareHorizontal } from "lucide-react";
 
+type MediaListEntry =
+	| { type: "media"; item: MediaAsset }
+	| { type: "sequence"; scene: TScene };
+
 export function MediaView() {
 	const editor = useEditor();
-	const mediaFiles = useEditor((e) => e.media.getAssets());
-	const activeProject = useEditor((e) => e.project.getActive());
-	const scenes = useEditor((e) => e.scenes.getScenes());
-	const activeScene = useEditor((e) => e.scenes.getActiveSceneOrNull());
+	const mediaFiles = useEditorMedia((e) => e.media.getAssets());
+	const activeProject = useEditorProject((e) => e.project.getActive());
+	const [scenes, activeScene] = useEditorTimelineScenes((e) => [
+		e.scenes.getScenes(),
+		e.scenes.getActiveSceneOrNull(),
+	]);
 
 	const {
 		mediaViewMode,
@@ -86,6 +120,9 @@ export function MediaView() {
 		MediaAsset[] | null
 	>(null);
 	const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
+	const mediaListViewportRef = useRef<HTMLDivElement>(null);
+	const { width: mediaListViewportWidth, height: mediaListViewportHeight } =
+		useContainerSize({ containerRef: mediaListViewportRef });
 
 	const processFiles = async ({ files }: { files: File[] }) => {
 		if (!files || files.length === 0) return;
@@ -132,31 +169,32 @@ export function MediaView() {
 			onFilesSelected: (files) => processFiles({ files }),
 		});
 
-	const handleRemove = ({
-		event,
-		ids,
-	}: {
-		event: React.MouseEvent;
-		ids: string[];
-	}) => {
-		event.stopPropagation();
+	const handleRemove = useCallback(
+		({ event, ids }: { event: React.MouseEvent; ids: string[] }) => {
+			event.stopPropagation();
+			if (!activeProject) return;
 
-		invokeAction("remove-media-assets", {
-			projectId: activeProject.metadata.id,
-			assetIds: ids,
-		});
-	};
-
-	const handleSort = ({ key }: { key: MediaSortKey }) => {
-		if (mediaSortBy === key) {
-			setMediaSort({
-				key,
-				order: mediaSortOrder === "asc" ? "desc" : "asc",
+			invokeAction("remove-media-assets", {
+				projectId: activeProject.metadata.id,
+				assetIds: ids,
 			});
-		} else {
-			setMediaSort({ key, order: "asc" });
-		}
-	};
+		},
+		[activeProject],
+	);
+
+	const handleSort = useCallback(
+		({ key }: { key: MediaSortKey }) => {
+			if (mediaSortBy === key) {
+				setMediaSort({
+					key,
+					order: mediaSortOrder === "asc" ? "desc" : "asc",
+				});
+			} else {
+				setMediaSort({ key, order: "asc" });
+			}
+		},
+		[mediaSortBy, mediaSortOrder, setMediaSort],
+	);
 
 	const filteredMediaItems = useMemo(() => {
 		const filtered = mediaFiles.filter((item) => !item.ephemeral);
@@ -201,38 +239,59 @@ export function MediaView() {
 		[scenes],
 	);
 
-	const handleCreatePodcastSync = ({ ids }: { ids: string[] }) => {
-		const selectedAssets = mediaFiles.filter((asset) => ids.includes(asset.id));
-		if (selectedAssets.length === 0) {
-			toast.error("Select media files first");
-			return;
-		}
-		setPodcastSyncAssets(selectedAssets);
-	};
+	const handleCreatePodcastSync = useCallback(
+		({ ids }: { ids: string[] }) => {
+			const selectedIdSet = new Set(ids);
+			const selectedAssets = mediaFiles.filter((asset) =>
+				selectedIdSet.has(asset.id),
+			);
+			if (selectedAssets.length === 0) {
+				toast.error("Select media files first");
+				return;
+			}
+			setPodcastSyncAssets(selectedAssets);
+		},
+		[mediaFiles],
+	);
 
-	const handleOpenSequence = async ({ sceneId }: { sceneId: string }) => {
-		try {
-			await editor.scenes.switchToScene({ sceneId });
-		} catch (error) {
-			console.error("Failed to open sequence:", error);
-			toast.error("Failed to open sequence");
-		}
-	};
+	const handleOpenSequence = useCallback(
+		async ({ sceneId }: { sceneId: string }) => {
+			try {
+				await editor.scenes.switchToScene({ sceneId });
+			} catch (error) {
+				console.error("Failed to open sequence:", error);
+				toast.error("Failed to open sequence");
+			}
+		},
+		[editor],
+	);
 
-	const handleUnnestSequence = ({ scene }: { scene: TScene }) => {
-		if (!activeScene) return;
-		if (activeScene.id === scene.id) {
-			toast.error("Open another scene before unnesting this sequence");
-			return;
-		}
-		const tracks = unnestSceneTracks({
-			targetTracks: activeScene.tracks,
-			sourceScene: scene,
-			startTime: editor.playback.getCurrentTime(),
-		});
-		editor.timeline.updateTracks(tracks);
-		toast.success("Sequence unnested into timeline");
-	};
+	const handleUnnestSequence = useCallback(
+		({ scene }: { scene: TScene }) => {
+			if (!activeScene) return;
+			if (activeScene.id === scene.id) {
+				toast.error("Open another scene before unnesting this sequence");
+				return;
+			}
+			const tracks = unnestSceneTracks({
+				targetTracks: activeScene.tracks,
+				sourceScene: scene,
+				startTime: editor.playback.getCurrentTime(),
+			});
+			editor.timeline.updateTracks(tracks);
+			toast.success("Sequence unnested into timeline");
+		},
+		[activeScene, editor],
+	);
+	const handleSelectionChange = useCallback(
+		(selection: { selectedIds: string[] }) => {
+			setSelectedMediaIds(selection.selectedIds);
+		},
+		[],
+	);
+	const handlePodcastSyncSelected = useCallback(() => {
+		handleCreatePodcastSync({ ids: selectedMediaIds });
+	}, [handleCreatePodcastSync, selectedMediaIds]);
 
 	return (
 		<>
@@ -258,13 +317,13 @@ export function MediaView() {
 						onSort={handleSort}
 						onImport={openFilePicker}
 						selectedCount={selectedMediaIds.length}
-						onPodcastSync={() =>
-							handleCreatePodcastSync({ ids: selectedMediaIds })
-						}
+						onPodcastSync={handlePodcastSyncSelected}
 					/>
 				}
 				className={cn(isDragOver && "bg-accent/30")}
-				contentClassName="h-full"
+				contentClassName="h-full min-h-0"
+				scrollClassName="overflow-hidden"
+				scrollRef={mediaListViewportRef}
 				{...dragProps}
 			>
 				{isDragOver ||
@@ -281,15 +340,16 @@ export function MediaView() {
 						orderedIds={orderedMediaIds}
 						revealId={highlightMediaId}
 						onRevealComplete={clearHighlight}
-						onSelectionChange={(selection) =>
-							setSelectedMediaIds(selection.selectedIds)
-						}
+						onSelectionChange={handleSelectionChange}
 					>
 						<MediaScopeRegistrar />
 						<MediaItemList
 							items={filteredMediaItems}
 							sequences={sequenceScenes}
 							mode={mediaViewMode}
+							viewportWidth={mediaListViewportWidth}
+							viewportHeight={mediaListViewportHeight}
+							revealId={highlightMediaId}
 							onRemove={handleRemove}
 							onCreatePodcastSync={handleCreatePodcastSync}
 							onOpenSequence={handleOpenSequence}
@@ -416,6 +476,9 @@ function MediaItemList({
 	items,
 	sequences,
 	mode,
+	viewportWidth,
+	viewportHeight,
+	revealId,
 	onRemove,
 	onCreatePodcastSync,
 	onOpenSequence,
@@ -424,6 +487,9 @@ function MediaItemList({
 	items: MediaAsset[];
 	sequences: TScene[];
 	mode: MediaViewMode;
+	viewportWidth: number;
+	viewportHeight: number;
+	revealId: string | null;
 	onRemove: ({
 		event,
 		ids,
@@ -436,41 +502,130 @@ function MediaItemList({
 	onUnnestSequence: ({ scene }: { scene: TScene }) => void;
 }) {
 	const isGrid = mode === "grid";
+	const listRef = useRef<ListImperativeAPI | null>(null);
+	const listWidth = Math.max(1, viewportWidth - 16);
+	const listHeight = Math.max(
+		1,
+		(viewportHeight || MEDIA_LIST_FALLBACK_HEIGHT_PX) - 8,
+	);
+	const columnCount = isGrid
+		? getMediaGridColumnCount({ width: listWidth })
+		: 1;
+	const rowHeight = isGrid
+		? MEDIA_GRID_ROW_HEIGHT_PX
+		: MEDIA_COMPACT_ROW_HEIGHT_PX;
+	const entries = useMemo<MediaListEntry[]>(
+		() => [
+			...items.map((item) => ({ type: "media" as const, item })),
+			...sequences.map((scene) => ({ type: "sequence" as const, scene })),
+		],
+		[items, sequences],
+	);
+	const rowCount = getMediaVirtualRowCount({
+		entryCount: entries.length,
+		mode,
+		columnCount,
+	});
+	const mediaEntryIndexById = useMemo(() => {
+		const indexById = new Map<string, number>();
+		entries.forEach((entry, index) => {
+			if (entry.type === "media") {
+				indexById.set(entry.item.id, index);
+			}
+		});
+		return indexById;
+	}, [entries]);
+
+	useEffect(() => {
+		if (!revealId) {
+			return;
+		}
+
+		const entryIndex = mediaEntryIndexById.get(revealId);
+		if (entryIndex === undefined) {
+			return;
+		}
+
+		listRef.current?.scrollToRow({
+			align: "center",
+			behavior: "auto",
+			index: isGrid ? Math.floor(entryIndex / columnCount) : entryIndex,
+		});
+	}, [columnCount, isGrid, listRef, mediaEntryIndexById, revealId]);
+
+	if (entries.length === 0) {
+		return null;
+	}
+
+	return (
+		<List
+			className="scrollbar-hidden"
+			listRef={listRef}
+			rowCount={rowCount}
+			rowHeight={rowHeight}
+			overscanCount={MEDIA_LIST_OVERSCAN_ROWS}
+			rowComponent={MediaListRow}
+			rowProps={{
+				columnCount,
+				entries,
+				mode,
+				onCreatePodcastSync,
+				onOpenSequence,
+				onRemove,
+				onUnnestSequence,
+			}}
+			style={{ height: listHeight, width: "100%" }}
+		/>
+	);
+}
+
+type MediaListRowProps = {
+	columnCount: number;
+	entries: MediaListEntry[];
+	mode: MediaViewMode;
+	onRemove: ({
+		event,
+		ids,
+	}: {
+		event: React.MouseEvent;
+		ids: string[];
+	}) => void;
+	onCreatePodcastSync: ({ ids }: { ids: string[] }) => void;
+	onOpenSequence: ({ sceneId }: { sceneId: string }) => void;
+	onUnnestSequence: ({ scene }: { scene: TScene }) => void;
+};
+
+function MediaListRow({
+	index,
+	style,
+	columnCount,
+	entries,
+	mode,
+	onRemove,
+	onCreatePodcastSync,
+	onOpenSequence,
+	onUnnestSequence,
+}: RowComponentProps<MediaListRowProps>) {
+	const isGrid = mode === "grid";
+	const rowEntries = getMediaVirtualRowEntries({
+		entries,
+		mode,
+		columnCount,
+		rowIndex: index,
+	});
 
 	return (
 		<div
-			className={cn(isGrid ? "grid gap-4" : "flex flex-col gap-1.5")}
-			style={
-				isGrid ? { gridTemplateColumns: "repeat(auto-fill, 7rem)" } : undefined
-			}
+			className={cn(isGrid ? "flex gap-4" : "w-full")}
+			style={style as CSSProperties}
 		>
-			{items.map((item) => (
-				<MediaItemWithContextMenu
-					item={item}
+			{rowEntries.map((entry) => (
+				<MediaListEntryItem
+					key={entry.type === "media" ? entry.item.id : entry.scene.id}
+					entry={entry}
+					variant={isGrid ? "grid" : "compact"}
 					onRemove={onRemove}
 					onCreatePodcastSync={onCreatePodcastSync}
-					key={item.id}
-				>
-					<SelectableItem className={cn(!isGrid && "w-full")} id={item.id}>
-						<MediaAssetDraggable
-							item={item}
-							preview={
-								<MediaPreview
-									item={item}
-									variant={isGrid ? "grid" : "compact"}
-								/>
-							}
-							variant={isGrid ? "card" : "compact"}
-							isRounded={isGrid ? false : undefined}
-						/>
-					</SelectableItem>
-				</MediaItemWithContextMenu>
-			))}
-			{sequences.map((scene) => (
-				<SequenceItem
-					key={scene.id}
-					scene={scene}
-					variant={isGrid ? "grid" : "compact"}
 					onOpenSequence={onOpenSequence}
 					onUnnestSequence={onUnnestSequence}
 				/>
@@ -478,6 +633,64 @@ function MediaItemList({
 		</div>
 	);
 }
+
+const MediaListEntryItem = memo(function MediaListEntryItem({
+	entry,
+	variant,
+	onRemove,
+	onCreatePodcastSync,
+	onOpenSequence,
+	onUnnestSequence,
+}: {
+	entry: MediaListEntry;
+	variant: "grid" | "compact";
+	onRemove: ({
+		event,
+		ids,
+	}: {
+		event: React.MouseEvent;
+		ids: string[];
+	}) => void;
+	onCreatePodcastSync: ({ ids }: { ids: string[] }) => void;
+	onOpenSequence: ({ sceneId }: { sceneId: string }) => void;
+	onUnnestSequence: ({ scene }: { scene: TScene }) => void;
+}) {
+	const isGrid = variant === "grid";
+
+	if (entry.type === "sequence") {
+		return (
+			<SequenceItem
+				scene={entry.scene}
+				variant={variant}
+				onOpenSequence={onOpenSequence}
+				onUnnestSequence={onUnnestSequence}
+			/>
+		);
+	}
+
+	return (
+		<MediaItemWithContextMenu
+			item={entry.item}
+			onRemove={onRemove}
+			onCreatePodcastSync={onCreatePodcastSync}
+		>
+			<SelectableItem className={cn(!isGrid && "w-full")} id={entry.item.id}>
+				<MediaAssetDraggable
+					item={entry.item}
+					preview={
+						<MediaPreview
+							item={entry.item}
+							variant={isGrid ? "grid" : "compact"}
+						/>
+					}
+					variant={isGrid ? "card" : "compact"}
+					isRounded={isGrid ? false : undefined}
+				/>
+			</SelectableItem>
+		</MediaItemWithContextMenu>
+	);
+});
+MediaListEntryItem.displayName = "MediaListEntryItem";
 
 function SequenceItem({
 	scene,

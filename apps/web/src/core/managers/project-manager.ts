@@ -41,6 +41,11 @@ import { getElementFontFamilies } from "@/timeline/element-utils";
 import { getRaisedProjectFpsForImportedMedia } from "@/fps/utils";
 import type { MediaAsset } from "@/media/types";
 import type { ProjectFont, ProjectFontAsset } from "@/fonts/types";
+import {
+	createProjectArchive,
+	importProjectArchive as importProjectArchiveFile,
+	type ImportProjectArchiveResult,
+} from "@/project/archive/project-archive";
 
 type RuntimeProjectFont = ProjectFont | ProjectFontAsset;
 
@@ -49,6 +54,50 @@ export interface MigrationState {
 	fromVersion: number | null;
 	toVersion: number | null;
 	projectName: string | null;
+}
+
+const PROJECT_SORT_OPTIONS: Record<
+	TProjectSortOption,
+	{ key: TProjectSortKey; order: "asc" | "desc" }
+> = {
+	"createdAt-asc": { key: "createdAt", order: "asc" },
+	"createdAt-desc": { key: "createdAt", order: "desc" },
+	"updatedAt-asc": { key: "updatedAt", order: "asc" },
+	"updatedAt-desc": { key: "updatedAt", order: "desc" },
+	"name-asc": { key: "name", order: "asc" },
+	"name-desc": { key: "name", order: "desc" },
+	"duration-asc": { key: "duration", order: "asc" },
+	"duration-desc": { key: "duration", order: "desc" },
+};
+
+export function filterAndSortProjectMetadata({
+	projects,
+	searchQuery,
+	sortOption,
+}: {
+	projects: TProjectMetadata[];
+	searchQuery: string;
+	sortOption: TProjectSortOption;
+}): TProjectMetadata[] {
+	const filteredProjects = projects.filter((project) =>
+		project.name.toLowerCase().includes(searchQuery.toLowerCase()),
+	);
+
+	const { key, order } = PROJECT_SORT_OPTIONS[sortOption];
+
+	return [...filteredProjects].sort((a, b) => {
+		const aValue = a[key];
+		const bValue = b[key];
+
+		if (order === "asc") {
+			if (aValue < bValue) return -1;
+			if (aValue > bValue) return 1;
+			return 0;
+		}
+		if (aValue > bValue) return -1;
+		if (aValue < bValue) return 1;
+		return 0;
+	});
 }
 
 export class ProjectManager {
@@ -259,6 +308,42 @@ export class ProjectManager {
 		};
 		this.notify();
 
+		return result;
+	}
+
+	async exportProjectArchive(): Promise<Blob> {
+		if (!this.active) {
+			throw new Error("No active project");
+		}
+
+		await this.editor.save.flush();
+		await this.editor.command.flushHistory();
+
+		const project = this.getActive();
+		const projectId = project.metadata.id;
+		const [projectFonts, commandHistory] = await Promise.all([
+			storageService.loadAllProjectFonts({ projectId }),
+			storageService.loadCommandHistory({ projectId }),
+		]);
+
+		return createProjectArchive({
+			project,
+			mediaAssets: this.editor.media.getAssets(),
+			projectFonts,
+			commandHistory,
+		});
+	}
+
+	async importProjectArchive({
+		file,
+	}: {
+		file: File;
+	}): Promise<ImportProjectArchiveResult> {
+		const result = await importProjectArchiveFile({ file });
+		const loaded = await storageService.loadProject({ id: result.projectId });
+		if (loaded?.project) {
+			this.updateMetadata(loaded.project);
+		}
 		return result;
 	}
 
@@ -691,30 +776,11 @@ export class ProjectManager {
 		searchQuery: string;
 		sortOption: TProjectSortOption;
 	}): TProjectMetadata[] {
-		const filteredProjects = this.savedProjects.filter((project) =>
-			project.name.toLowerCase().includes(searchQuery.toLowerCase()),
-		);
-
-		const [key, order] = sortOption.split("-") as [
-			TProjectSortKey,
-			"asc" | "desc",
-		];
-
-		const sortedProjects = [...filteredProjects].sort((a, b) => {
-			const aValue = a[key];
-			const bValue = b[key];
-
-			if (order === "asc") {
-				if (aValue < bValue) return -1;
-				if (aValue > bValue) return 1;
-				return 0;
-			}
-			if (aValue > bValue) return -1;
-			if (aValue < bValue) return 1;
-			return 0;
+		return filterAndSortProjectMetadata({
+			projects: this.savedProjects,
+			searchQuery,
+			sortOption,
 		});
-
-		return sortedProjects;
 	}
 
 	isInvalidProjectId({ id }: { id: string }): boolean {

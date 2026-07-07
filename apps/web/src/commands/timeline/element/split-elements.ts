@@ -11,6 +11,10 @@ import { splitAnimationsAtTime } from "@/animation";
 import { getSourceSpanAtClipTime } from "@/retime";
 import { splitTextElementAtTime } from "@/text/text-layer-utils";
 import {
+	removeTextLayerWordsFromCaptionSource,
+	syncTextLayerWordsIntoCaptionSource,
+} from "@/subtitles/caption-source-sync";
+import {
 	addMediaTime,
 	type MediaTime,
 	roundMediaTime,
@@ -20,6 +24,8 @@ import {
 export class SplitElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
 	private rightSideElements: { trackId: string; elementId: string }[] = [];
+	private retainedSplitElements: { trackId: string; elementId: string }[] = [];
+	private removedSplitElements: { trackId: string; elementId: string }[] = [];
 	private readonly elements: { trackId: string; elementId: string }[];
 	private readonly splitTime: MediaTime;
 	private readonly retainSide: "both" | "left" | "right";
@@ -47,6 +53,8 @@ export class SplitElementsCommand extends Command {
 		const editor = EditorCore.getInstance();
 		this.savedState = editor.scenes.getActiveScene().tracks;
 		this.rightSideElements = [];
+		this.retainedSplitElements = [];
+		this.removedSplitElements = [];
 
 		const splitTrack = <
 			TTrack extends { id: string; elements: TimelineElement[] },
@@ -89,6 +97,10 @@ export class SplitElementsCommand extends Command {
 					a: element.duration,
 					b: relativeTime,
 				});
+				const originalRef = {
+					trackId: track.id,
+					elementId: element.id,
+				};
 				const retimeRef = isRetimableElement(element)
 					? element.retime
 					: undefined;
@@ -150,6 +162,7 @@ export class SplitElementsCommand extends Command {
 						};
 
 						if (this.retainSide === "left") {
+							this.retainedSplitElements.push(originalRef);
 							return [leftElement];
 						}
 						this.rightSideElements.push({
@@ -157,13 +170,16 @@ export class SplitElementsCommand extends Command {
 							elementId: rightElementId,
 						});
 						if (this.retainSide === "right") {
+							this.removedSplitElements.push(originalRef);
 							return [rightElement];
 						}
+						this.retainedSplitElements.push(originalRef);
 						return [leftElement, rightElement];
 					}
 				}
 
 				if (this.retainSide === "left") {
+					this.retainedSplitElements.push(originalRef);
 					splitResult = [
 						{
 							...element,
@@ -175,6 +191,7 @@ export class SplitElementsCommand extends Command {
 						},
 					];
 				} else if (this.retainSide === "right") {
+					this.removedSplitElements.push(originalRef);
 					const newId = generateUUID();
 					this.rightSideElements.push({
 						trackId: track.id,
@@ -193,6 +210,7 @@ export class SplitElementsCommand extends Command {
 						},
 					];
 				} else {
+					this.retainedSplitElements.push(originalRef);
 					const secondElementId = generateUUID();
 					this.rightSideElements.push({
 						trackId: track.id,
@@ -226,12 +244,22 @@ export class SplitElementsCommand extends Command {
 			return { ...track, elements } as TTrack;
 		};
 
-		const updatedTracks: SceneTracks = {
+		let updatedTracks: SceneTracks = {
 			...this.savedState,
 			overlay: this.savedState.overlay.map((track) => splitTrack(track)),
 			main: splitTrack(this.savedState.main),
 			audio: this.savedState.audio.map((track) => splitTrack(track)),
 		};
+		if (this.removedSplitElements.length > 0) {
+			updatedTracks = removeTextLayerWordsFromCaptionSource({
+				tracks: updatedTracks,
+				elements: this.removedSplitElements,
+			});
+		}
+		updatedTracks = syncTextLayerWordsIntoCaptionSource({
+			tracks: updatedTracks,
+			elements: [...this.retainedSplitElements, ...this.rightSideElements],
+		});
 
 		editor.timeline.updateTracks(updatedTracks);
 

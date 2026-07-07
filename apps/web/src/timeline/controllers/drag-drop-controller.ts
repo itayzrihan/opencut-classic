@@ -133,6 +133,9 @@ function getDurationForDrag({
 	dragData: TimelineDragData;
 	mediaAssets: MediaAsset[];
 }): MediaTime {
+	if ("duration" in dragData && dragData.duration !== undefined) {
+		return dragData.duration;
+	}
 	if (dragData.type !== "media") return DEFAULT_NEW_ELEMENT_DURATION;
 	const media = mediaAssets.find((asset) => asset.id === dragData.id);
 	return toElementDurationTicks({ seconds: media?.duration });
@@ -556,7 +559,7 @@ export class DragDropController {
 		target: DropTarget;
 		dragData: Extract<TimelineDragData, { type: "effect" }>;
 	}): void {
-		if (target.targetElement) {
+		if (target.targetElement && dragData.placement !== "layer") {
 			this.config.addClipEffect({
 				trackId: target.targetElement.trackId,
 				elementId: target.targetElement.elementId,
@@ -568,6 +571,7 @@ export class DragDropController {
 		const element = buildEffectElement({
 			effectType: dragData.effectType,
 			startTime: target.xPosition,
+			duration: dragData.duration,
 			name: dragData.name,
 			params: dragData.params,
 		});

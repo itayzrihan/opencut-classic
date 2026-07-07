@@ -6,6 +6,7 @@ import type {
 	TextTrack,
 	TrackType,
 } from "@/timeline";
+import { TRANSITION_PRESETS } from "@/transitions";
 import { TICKS_PER_SECOND } from "@/wasm";
 import type { AiTimelineRange, AiToolCall, AiToolDefinition } from "./types";
 import { listAiSkills, loadAiSkill } from "./skills";
@@ -264,27 +265,26 @@ function getSourceEditsArg({
 		);
 	}
 	return raw.map((entry, index) => {
-		if (typeof entry !== "object" || entry === null) {
+		if (!isRecord(entry)) {
 			throw new Error(
 				`edits[${index}] must be an object with oldText and newText.`,
 			);
 		}
-		const record = entry as Record<string, unknown>;
 		const oldText =
-			typeof record.oldText === "string"
-				? record.oldText
-				: typeof record.old_str === "string"
-					? record.old_str
-					: typeof record.old_string === "string"
-						? record.old_string
+			typeof entry.oldText === "string"
+				? entry.oldText
+				: typeof entry.old_str === "string"
+					? entry.old_str
+					: typeof entry.old_string === "string"
+						? entry.old_string
 						: null;
 		const newText =
-			typeof record.newText === "string"
-				? record.newText
-				: typeof record.new_str === "string"
-					? record.new_str
-					: typeof record.new_string === "string"
-						? record.new_string
+			typeof entry.newText === "string"
+				? entry.newText
+				: typeof entry.new_str === "string"
+					? entry.new_str
+					: typeof entry.new_string === "string"
+						? entry.new_string
 						: null;
 		if (oldText === null || newText === null) {
 			throw new Error(
@@ -293,6 +293,10 @@ function getSourceEditsArg({
 		}
 		return { oldText, newText };
 	});
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function createTimelineToolDefinitions(): AiToolDefinition[] {
@@ -443,6 +447,10 @@ export function createTimelineToolDefinitions(): AiToolDefinition[] {
 }
 
 export function buildAiSystemPrompt(): string {
+	const transitionPresetList = TRANSITION_PRESETS.map(
+		(preset) => preset.id,
+	).join(", ");
+
 	return [
 		"You are an in-app video editing agent for OpenCut. You can perform any edit the app supports: cut, trim, split, move, rearrange, duplicate, delete, insert text/media/graphics/HTML motion graphics, manage tracks (layers), apply effects, transitions, keyframe animations, retiming, and mute/hide state.",
 		"",
@@ -455,7 +463,7 @@ export function buildAiSystemPrompt(): string {
 		"",
 		"SOURCE FIELDS - el: track, at (start s), dur (s), name, text (text content), html, w/h (html render size), media (asset id), graphic (definition id), params (element params object), hidden, muted, rate (speed 0.1-10), tin/tout (transition preset in/out), tinDur/toutDur (s). kf: el (element id), path (animation path), at (s, element-local), v (value), interp (linear|hold).",
 		'Insertable element types: text (needs "text"), html (needs "html"), graphic (needs "graphic": rectangle, ellipse, polygon, star, preset-background), media (needs "media" asset id from the media summary or timeline.list_media).',
-		"Transition presets: fade, slide-left/right/up/down, push-left/right/up/down, zoom-in, zoom-out, pop, shrink, grow, flip-x, flip-y, spin-left/right, tilt-left/right, rise-soft, drop-soft, drift-left/right, corner-tl/tr/bl/br, none (removes).",
+		`Transition presets: ${transitionPresetList}. Use premium cinematic presets such as cinematic-glide, whip-pan, dolly-zoom, shutter, carousel, orbit, luxe-fade, and text reveal variants when the user asks for professional motion. none removes a transition.`,
 		"Keyframable paths: opacity, transform.positionX, transform.positionY, transform.scaleX, transform.scaleY, transform.rotate, color, background.color (text only).",
 		"",
 		'html elements render a self-contained HTML+CSS fragment (a hyperframe) as video - use them for designed motion graphics, kinetic typography, lower-thirds, stat hits, animated cards, charts, and any visual the built-in elements cannot express. BEFORE writing html, call skills.load with name "hyperframe-authoring" and follow its contract exactly (CSS keyframes only, --hf-delay for stagger, self-contained, no scripts or external URLs). Transparent backgrounds composite over the video below. Other skills: motion-graphics, text-effects, video-workflows (call skills.list).',

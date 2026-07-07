@@ -8,10 +8,16 @@ import {
 	getMaskDefinition,
 	getMaskDefinitionsForMenu,
 } from "@/masks";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorMediaAsset,
+	useEditorPlayback,
+	useEditorProject,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { useMenuPreview } from "@/editor/use-menu-preview";
-import { getVisibleElementsWithBounds } from "@/preview/element-bounds";
+import { getElementWithBounds } from "@/preview/element-bounds";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	ArrowExpandIcon,
@@ -135,12 +141,16 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 			fallback: element,
 		});
 	const maskDefs = getMaskDefinitionsForMenu();
-	const tracks = useEditor(
+	const tracks = useEditorTimelineScenes(
 		(e) => e.timeline.getPreviewTracks() ?? e.scenes.getActiveScene().tracks,
 	);
-	const currentTime = useEditor((e) => e.playback.getCurrentTime());
-	const mediaAssets = useEditor((e) => e.media.getAssets());
-	const canvasSize = useEditor(
+	const mediaAsset = useEditorMediaAsset({
+		mediaId:
+			element.type === "video" || element.type === "image"
+				? element.mediaId
+				: null,
+	});
+	const canvasSize = useEditorProject(
 		(e) => e.project.getActive().settings.canvasSize,
 	);
 	const masks = element.masks ?? [];
@@ -148,6 +158,12 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 	const hasMask = masks.length > 0;
 	const { onPointerLeave, onOpenChange, markCommitted } = useMenuPreview();
 	const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+	const shouldTrackPlaybackForMaskPreview = !hasMask && isDropdownOpen;
+	const currentTime = useEditorPlayback((e) =>
+		shouldTrackPlaybackForMaskPreview
+			? e.playback.getCurrentTime()
+			: element.startTime,
+	);
 	const elementBounds = useMemo(() => {
 		const clampedTime = Math.min(
 			Math.max(currentTime, element.startTime),
@@ -155,14 +171,13 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 		);
 
 		return (
-			getVisibleElementsWithBounds({
+			getElementWithBounds({
 				tracks,
+				elementRef: { trackId, elementId: element.id },
 				currentTime: clampedTime,
 				canvasSize,
-				mediaAssets,
-			}).find(
-				(item) => item.trackId === trackId && item.elementId === element.id,
-			)?.bounds ?? null
+				mediaAsset,
+			})?.bounds ?? null
 		);
 	}, [
 		canvasSize,
@@ -170,7 +185,7 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 		element.duration,
 		element.id,
 		element.startTime,
-		mediaAssets,
+		mediaAsset,
 		trackId,
 		tracks,
 	]);

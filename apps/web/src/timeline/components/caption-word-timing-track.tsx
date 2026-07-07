@@ -2,16 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorSelection,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import {
 	findCaptionSourceTrack,
 	findCaptionSourceTracks,
 	updateCaptionSourceWords,
 } from "@/subtitles/caption-tracks";
-import { buildCaptionReviewWordPatch } from "@/subtitles/caption-review";
 import { stripCaptionPunctuation } from "@/subtitles/caption-layout";
 import type { SelectedTextWordRef } from "@/selection/editor-selection";
-import type { SceneTracks, TextElement, TextTrack, TextWordRun } from "@/timeline";
+import type { TextElement, TextTrack } from "@/timeline";
 import { getTimelinePixelsPerSecond, timelineTimeToPixels } from "@/timeline";
 import type { TranscriptionWord } from "@/transcription/types";
 import { cn } from "@/utils/ui";
@@ -20,13 +23,21 @@ import {
 	mediaTimeToSeconds,
 	type MediaTime,
 } from "@/wasm";
+import {
+	getCaptionWordVisibilityIndex,
+	getVisibleCaptionWordIndexes,
+	getVisibleWordTiming,
+	WORD_TIMING_MIN_WORD_WIDTH_PX,
+	type WordDragPreview,
+} from "./caption-word-visibility";
+import { buildTextElementWordUpdates } from "./caption-word-updates";
 
 export const CAPTION_WORD_TIMING_TRACK_HEIGHT_PX = 42;
 const CAPTION_WORD_TIMING_LANE_HEIGHT_PX = 24;
 const CAPTION_WORD_TIMING_VERTICAL_PADDING_PX = 8;
+const WORD_TIMING_HORIZONTAL_OVERSCAN_PX = 800;
 
 type WordDragMode = "move" | "left" | "right";
-type WordDragPreview = { wordIndex: number; start: number; end: number };
 
 const WORD_DRAG_THRESHOLD_PX = 2;
 
@@ -64,6 +75,8 @@ interface WordCoverageIssue {
 interface CaptionWordTimingTrackProps {
 	zoomLevel: number;
 	dynamicTimelineWidth: number;
+	scrollLeft: number;
+	viewportWidth: number;
 	onMouseDown?: (event: React.MouseEvent) => void;
 	onMouseUp?: (event: React.MouseEvent) => void;
 	onHeightChange?: ({ height }: { height: number }) => void;
@@ -72,13 +85,15 @@ interface CaptionWordTimingTrackProps {
 export function CaptionWordTimingTrack({
 	zoomLevel,
 	dynamicTimelineWidth,
+	scrollLeft,
+	viewportWidth,
 	onMouseDown,
 	onMouseUp,
 	onHeightChange,
 }: CaptionWordTimingTrackProps) {
 	const editor = useEditor();
-	const scene = useEditor((e) => e.scenes.getActiveSceneOrNull());
-	const selectedTextWords = useEditor((e) =>
+	const scene = useEditorTimelineScenes((e) => e.scenes.getActiveSceneOrNull());
+	const selectedTextWords = useEditorSelection((e) =>
 		e.selection.getSelectedTextWords(),
 	);
 	const setActivePropertiesTab = usePropertiesStore(
@@ -131,6 +146,26 @@ export function CaptionWordTimingTrack({
 		() => buildWordLayouts({ words, dragPreview }),
 		[words, dragPreview],
 	);
+	const wordVisibilityIndex = useMemo(
+		() => getCaptionWordVisibilityIndex({ words }),
+		[words],
+	);
+	const visibleWordIndexes = useMemo(() => {
+		if (viewportWidth <= 0) {
+			return words.map((_, index) => index);
+		}
+
+		return getVisibleCaptionWordIndexes({
+			words,
+			dragPreview,
+			visibleWindow: {
+				start: Math.max(0, scrollLeft - WORD_TIMING_HORIZONTAL_OVERSCAN_PX),
+				end: scrollLeft + viewportWidth + WORD_TIMING_HORIZONTAL_OVERSCAN_PX,
+			},
+			zoomLevel,
+			visibilityIndex: wordVisibilityIndex,
+		});
+	}, [dragPreview, scrollLeft, viewportWidth, wordVisibilityIndex, words, zoomLevel]);
 	const wordTimingLaneCount = useMemo(
 		() => getCaptionWordTimingLaneCount({ words, dragPreview }),
 		[words, dragPreview],
@@ -155,56 +190,29 @@ export function CaptionWordTimingTrack({
 		[editor, source],
 	);
 
-	const updateManualTextLayerWord = useCallback(
+	const updateVisibleTextLayerWord = useCallback(
 		({
+			wordIndex,
 			currentWord,
 			nextWord,
 		}: {
+			wordIndex: number;
 			currentWord: TranscriptionWord;
 			nextWord: TranscriptionWord;
 		}) => {
-			if (currentWord.source?.type !== "text-layer" || !scene) return false;
-			const entry = findManualTextLayerWordEntry({
+			if (!scene) return false;
+			const updates = buildTextElementWordUpdates({
 				tracks: scene.tracks,
-				word: currentWord,
+				refs: wordElementRefs.get(wordIndex) ?? [],
+				currentWord,
+				nextWord,
 			});
-			if (!entry) return false;
+			if (updates.length === 0) return false;
 
-			const textPatch =
-				nextWord.text !== currentWord.text
-					? buildCaptionReviewWordPatch({
-							element: entry.element,
-							wordIndex: currentWord.source.wordIndex,
-							text: nextWord.text,
-						})
-					: null;
-			const timingPatch =
-				nextWord.start !== currentWord.start || nextWord.end !== currentWord.end
-					? buildManualTextLayerWordTimingPatch({
-							element: entry.element,
-							wordIndex: currentWord.source.wordIndex,
-							start: nextWord.start,
-							end: nextWord.end,
-						})
-					: null;
-			const patch = mergeTextElementPatches({
-				left: textPatch,
-				right: timingPatch,
-			});
-			if (!patch) return false;
-
-			editor.timeline.updateElements({
-				updates: [
-					{
-						trackId: entry.track.id,
-						elementId: entry.element.id,
-						patch,
-					},
-				],
-			});
+			editor.timeline.updateElements({ updates });
 			return true;
 		},
-		[editor, scene],
+		[editor, scene, wordElementRefs],
 	);
 
 	const updateWord = useCallback(
@@ -221,8 +229,11 @@ export function CaptionWordTimingTrack({
 			if (areTranscriptionWordsEqual({ left: current, right: nextWord }))
 				return;
 			if (
-				current.source?.type === "text-layer" &&
-				updateManualTextLayerWord({ currentWord: current, nextWord })
+				updateVisibleTextLayerWord({
+					wordIndex,
+					currentWord: current,
+					nextWord,
+				})
 			) {
 				return;
 			}
@@ -230,7 +241,7 @@ export function CaptionWordTimingTrack({
 				words.map((word, index) => (index === wordIndex ? nextWord : word)),
 			);
 		},
-		[commitWords, updateManualTextLayerWord, words],
+		[commitWords, updateVisibleTextLayerWord, words],
 	);
 
 	const beginWordDrag = useCallback(
@@ -422,11 +433,9 @@ export function CaptionWordTimingTrack({
 			<div className="absolute inset-y-0 left-0 flex items-center px-2 text-[10px] font-medium uppercase text-red-200/70 pointer-events-none">
 				Words
 			</div>
-			{words.map((word, index) => {
-				const preview =
-					dragPreview?.wordIndex === index
-						? dragPreview
-						: { start: word.start, end: word.end };
+			{visibleWordIndexes.map((index) => {
+				const word = words[index];
+				const preview = getVisibleWordTiming({ word, index, dragPreview });
 				const layout = wordLayouts.get(index) ?? {
 					lane: 0,
 					laneCount: 1,
@@ -436,18 +445,11 @@ export function CaptionWordTimingTrack({
 				const isSelected = refs.some((ref) =>
 					selectedTextWordKeys.has(getSelectedTextWordKey(ref)),
 				);
-				const left = timelineTimeToPixels({
-					time: secondsToMediaTime(preview.start),
-					zoomLevel,
-				});
+				const pixelsPerSecond = getTimelinePixelsPerSecond({ zoomLevel });
+				const left = preview.start * pixelsPerSecond;
 				const width = Math.max(
-					8,
-					timelineTimeToPixels({
-						time: secondsToMediaTime(
-							Math.max(0.01, preview.end - preview.start),
-						),
-						zoomLevel,
-					}),
+					WORD_TIMING_MIN_WORD_WIDTH_PX,
+					(preview.end - preview.start) * pixelsPerSecond,
 				);
 
 				return (
@@ -632,125 +634,6 @@ function getWordElementRefs({
 	}
 
 	return refsByWordIndex;
-}
-
-function findManualTextLayerWordEntry({
-	tracks,
-	word,
-}: {
-	tracks: SceneTracks;
-	word: TranscriptionWord;
-}) {
-	const source = word.source;
-	if (source?.type !== "text-layer") return null;
-	const track = tracks.overlay.find(
-		(candidate): candidate is TextTrack =>
-			candidate.type === "text" && candidate.id === source.trackId,
-	);
-	const element = track?.elements.find(
-		(candidate) => candidate.id === source.elementId,
-	);
-	return track && element ? { track, element } : null;
-}
-
-function mergeTextElementPatches({
-	left,
-	right,
-}: {
-	left: Partial<TextElement> | null;
-	right: Partial<TextElement> | null;
-}): Partial<TextElement> | null {
-	if (!left) return right;
-	if (!right) return left;
-	return {
-		...left,
-		...right,
-		params: {
-			...(left.params ?? {}),
-			...(right.params ?? {}),
-		},
-		wordRuns: right.wordRuns ?? left.wordRuns,
-	};
-}
-
-function buildManualTextLayerWordTimingPatch({
-	element,
-	wordIndex,
-	start,
-	end,
-}: {
-	element: TextElement;
-	wordIndex: number;
-	start: number;
-	end: number;
-}): Partial<TextElement> | null {
-	const wordRuns = getTextLayerWordRuns({ element });
-	if (!wordRuns[wordIndex]) return null;
-	const safeEnd = Math.max(start + 0.01, end);
-	const elementStart = mediaTimeToSeconds({ time: element.startTime });
-	const elementEnd = elementStart + mediaTimeToSeconds({ time: element.duration });
-	const absoluteRuns = wordRuns.map((run, index) => {
-		const runStart =
-			index === wordIndex
-				? start
-				: run.startTime == null
-					? elementStart
-					: elementStart + mediaTimeToSeconds({ time: run.startTime });
-		const runEnd =
-			index === wordIndex
-				? safeEnd
-				: run.endTime == null
-					? elementEnd
-					: elementStart + mediaTimeToSeconds({ time: run.endTime });
-		return {
-			run,
-			start: roundSeconds(runStart),
-			end: roundSeconds(Math.max(runStart + 0.01, runEnd)),
-		};
-	});
-	const nextStart = Math.min(...absoluteRuns.map((run) => run.start));
-	const nextEnd = Math.max(...absoluteRuns.map((run) => run.end));
-
-	return {
-		startTime: mediaTimeFromSeconds({ seconds: nextStart }),
-		duration: mediaTimeFromSeconds({
-			seconds: Math.max(0.01, nextEnd - nextStart),
-		}),
-		wordRuns: absoluteRuns.map(({ run, start, end }) => ({
-			...run,
-			startTime: mediaTimeFromSeconds({ seconds: start - nextStart }),
-			endTime: mediaTimeFromSeconds({ seconds: end - nextStart }),
-		})),
-	};
-}
-
-function getTextLayerWordRuns({
-	element,
-}: {
-	element: TextElement;
-}): TextWordRun[] {
-	if (element.wordRuns?.length) return element.wordRuns;
-	const content =
-		typeof element.params.content === "string" ? element.params.content : "";
-	const entries = content.split("\n").flatMap((line, lineIndex) =>
-		line
-			.trim()
-			.split(/\s+/)
-			.filter(Boolean)
-			.map((text) => ({ text, lineIndex })),
-	);
-	const durationSeconds = mediaTimeToSeconds({ time: element.duration });
-	const wordDuration =
-		entries.length > 0 ? durationSeconds / entries.length : 0;
-	return entries.map((entry, index) => ({
-		id: `word-${index}`,
-		text: entry.text,
-		lineIndex: entry.lineIndex,
-		startTime: mediaTimeFromSeconds({ seconds: index * wordDuration }),
-		endTime: mediaTimeFromSeconds({
-			seconds: (index + 1) * wordDuration,
-		}),
-	}));
 }
 
 function buildWordLayouts({

@@ -110,7 +110,7 @@ function ParamInput({
 	if (param.type === "select") {
 		return (
 			<Select
-				value={isMixed ? undefined : String(value)}
+				value={isMixed ? undefined : getSelectFieldValue({ param, value })}
 				onValueChange={(selected) => {
 					onPreview(selected);
 					onCommit();
@@ -120,8 +120,11 @@ function ParamInput({
 					<SelectValue placeholder="Mixed values" />
 				</SelectTrigger>
 				<SelectContent>
-					{param.options.map((option) => (
-						<SelectItem key={option.value} value={option.value}>
+					{param.options.map((option, optionIndex) => (
+						<SelectItem
+							key={`${option.value}:${optionIndex}`}
+							value={option.value}
+						>
 							{option.label}
 						</SelectItem>
 					))}
@@ -167,6 +170,36 @@ function ParamInput({
 	}
 
 	return null;
+}
+
+function getSelectFieldValue({
+	param,
+	value,
+}: {
+	param: Extract<ParamDefinition, { type: "select" }>;
+	value: ParamValue;
+}): string | undefined {
+	const rawValue = String(value);
+	if (param.options.some((option) => option.value === rawValue)) {
+		return rawValue;
+	}
+
+	if (param.key === "fontWeight") {
+		if (
+			rawValue === "normal" &&
+			param.options.some((option) => option.value === "400")
+		) {
+			return "400";
+		}
+		if (
+			rawValue === "bold" &&
+			param.options.some((option) => option.value === "700")
+		) {
+			return "700";
+		}
+	}
+
+	return undefined;
 }
 
 function NumberParamField({

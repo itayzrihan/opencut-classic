@@ -16,9 +16,31 @@ import {
 import { FONT_SIZE_SCALE_REFERENCE } from "./typography";
 
 export type TextAlign = "left" | "center" | "right";
-export type TextFontWeight = "normal" | "bold";
+export type NumericTextFontWeight =
+	| "100"
+	| "200"
+	| "300"
+	| "400"
+	| "500"
+	| "600"
+	| "700"
+	| "800"
+	| "900";
+export type TextFontWeight = "normal" | "bold" | NumericTextFontWeight;
 export type TextFontStyle = "normal" | "italic";
 export type TextDecoration = "none" | "underline" | "line-through";
+
+const NUMERIC_TEXT_FONT_WEIGHTS = new Set<string>([
+	"100",
+	"200",
+	"300",
+	"400",
+	"500",
+	"600",
+	"700",
+	"800",
+	"900",
+]);
 
 export interface TextLayoutParams {
 	content: string;
@@ -30,6 +52,24 @@ export interface TextLayoutParams {
 	textDecoration?: TextDecoration;
 	letterSpacing?: number;
 	lineHeight?: number;
+	strokeWidth?: number;
+	strokeColor?: string;
+	shadowBlur?: number;
+	shadowColor?: string;
+	shadowOffsetX?: number;
+	shadowOffsetY?: number;
+}
+
+export interface ResolvedTextStroke {
+	color: string;
+	width: number;
+}
+
+export interface ResolvedTextShadow {
+	color: string;
+	blur: number;
+	offsetX: number;
+	offsetY: number;
 }
 
 export interface ResolvedTextLayout {
@@ -47,6 +87,8 @@ export interface MeasuredTextLayout extends ResolvedTextLayout {
 	lineMetrics: TextMetrics[];
 	block: TextBlockMeasurement;
 	wordLines?: MeasuredWordLine[];
+	stroke?: ResolvedTextStroke | null;
+	shadow?: ResolvedTextShadow | null;
 }
 
 export interface MeasuredWordGlyph {
@@ -70,6 +112,10 @@ export interface MeasuredWordGlyph {
 	blur: number;
 	shadowBlur: number;
 	shadowColor: string;
+	shadowOffsetX: number;
+	shadowOffsetY: number;
+	strokeWidth: number;
+	strokeColor: string;
 	offsetX: number;
 	offsetY: number;
 	blendMode: BlendMode;
@@ -124,6 +170,23 @@ export function buildTextFontString({
 	return `${fontStyle} ${fontWeight} ${scaledFontSize}px ${quoteFontFamily({ fontFamily })}, sans-serif`;
 }
 
+export function normalizeTextFontWeight({
+	value,
+	fallback,
+}: {
+	value: unknown;
+	fallback: TextFontWeight;
+}): TextFontWeight {
+	if (typeof value !== "string") return fallback;
+
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "normal" || normalized === "bold") return normalized;
+	if (NUMERIC_TEXT_FONT_WEIGHTS.has(normalized)) {
+		return normalized as NumericTextFontWeight;
+	}
+	return fallback;
+}
+
 export function resolveTextLayout({
 	text,
 	canvasHeight,
@@ -133,7 +196,10 @@ export function resolveTextLayout({
 }): ResolvedTextLayout {
 	const scaledFontSize =
 		text.fontSize * (canvasHeight / FONT_SIZE_SCALE_REFERENCE);
-	const fontWeight = text.fontWeight === "bold" ? "bold" : "normal";
+	const fontWeight = normalizeTextFontWeight({
+		value: text.fontWeight,
+		fallback: "normal",
+	});
 	const fontStyle = text.fontStyle === "italic" ? "italic" : "normal";
 	const letterSpacing = text.letterSpacing ?? DEFAULTS.text.letterSpacing;
 	const lineHeightPx =
@@ -270,10 +336,6 @@ export function drawMeasuredTextLayout({
 				if (word.blur > 0) {
 					ctx.filter = `blur(${word.blur}px)`;
 				}
-				if (word.shadowBlur > 0) {
-					ctx.shadowBlur = word.shadowBlur;
-					ctx.shadowColor = word.shadowColor;
-				}
 				setCanvasLetterSpacing({ ctx, letterSpacingPx: word.letterSpacing });
 				const x = word.x + word.offsetX + word.layoutWidth / 2;
 				const y = word.y + word.offsetY;
@@ -286,6 +348,22 @@ export function drawMeasuredTextLayout({
 				drawWordBackground({ ctx, word });
 				ctx.save();
 				ctx.translate(drawTextX, 0);
+				applyTextShadow({
+					ctx,
+					shadow: {
+						color: word.shadowColor,
+						blur: word.shadowBlur,
+						offsetX: word.shadowOffsetX,
+						offsetY: word.shadowOffsetY,
+					},
+				});
+				if (word.strokeWidth > 0) {
+					ctx.strokeStyle = word.strokeColor;
+					ctx.lineWidth = word.strokeWidth;
+					ctx.lineJoin = "round";
+					ctx.lineCap = "round";
+					ctx.strokeText(word.drawText, 0, 0);
+				}
 				ctx.fillText(word.drawText, 0, 0);
 				drawTextDecoration({
 					ctx,
@@ -303,6 +381,19 @@ export function drawMeasuredTextLayout({
 		return;
 	}
 
+	applyTextShadow({ ctx, shadow: layout.shadow });
+	if (layout.stroke && layout.stroke.width > 0) {
+		ctx.strokeStyle = layout.stroke.color;
+		ctx.lineWidth = layout.stroke.width;
+		ctx.lineJoin = "round";
+		ctx.lineCap = "round";
+		for (let index = 0; index < layout.lines.length; index++) {
+			const lineY =
+				index * layout.lineHeightPx - layout.block.visualCenterOffset;
+			ctx.strokeText(layout.lines[index], 0, lineY);
+		}
+	}
+
 	for (let index = 0; index < layout.lines.length; index++) {
 		const lineY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		ctx.fillText(layout.lines[index], 0, lineY);
@@ -316,6 +407,26 @@ export function drawMeasuredTextLayout({
 			textAlign: layout.textAlign,
 		});
 	}
+}
+
+function applyTextShadow({
+	ctx,
+	shadow,
+}: {
+	ctx: TextCanvasContext;
+	shadow?: ResolvedTextShadow | null;
+}): void {
+	if (
+		!shadow ||
+		(shadow.blur <= 0 && shadow.offsetX === 0 && shadow.offsetY === 0)
+	) {
+		return;
+	}
+
+	ctx.shadowBlur = Math.max(0, shadow.blur);
+	ctx.shadowColor = shadow.color;
+	ctx.shadowOffsetX = shadow.offsetX;
+	ctx.shadowOffsetY = shadow.offsetY;
 }
 
 function drawWordBackground({

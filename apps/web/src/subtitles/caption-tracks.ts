@@ -11,6 +11,7 @@ import { buildCaptionTextTracks } from "@/subtitles/insert";
 import type { SceneTracks, TextElement, TextTrack } from "@/timeline";
 import { buildEmptyTrack } from "@/timeline/placement";
 import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
+import { normalizeTextFontWeight } from "@/text/primitives";
 import type { TranscriptionWord } from "@/transcription/types";
 import { generateUUID } from "@/utils/id";
 import { mediaTimeToSeconds } from "@/wasm";
@@ -23,7 +24,11 @@ export interface CaptionElementRef {
 	elementId: string;
 }
 
-export function isTextLayerTranscriptionWord({ word }: { word: TranscriptionWord }) {
+export function isTextLayerTranscriptionWord({
+	word,
+}: {
+	word: TranscriptionWord;
+}) {
 	return word.source?.type === "text-layer";
 }
 
@@ -44,6 +49,10 @@ export function hasSameCaptionSource({
 }) {
 	const candidate = track.captionSource;
 	if (!candidate) return false;
+	if (candidate.sourceId || source.sourceId) {
+		return candidate.sourceId === source.sourceId;
+	}
+
 	const candidateWords = getGeneratedCaptionWords({ words: candidate.words });
 	const sourceWords = getGeneratedCaptionWords({ words: source.words });
 	if (candidateWords.length !== sourceWords.length) return false;
@@ -52,8 +61,10 @@ export function hasSameCaptionSource({
 	const candidateSpan = captionSourceTimeSpan({ words: candidateWords });
 	const sourceSpan = captionSourceTimeSpan({ words: sourceWords });
 	if (!candidateSpan || !sourceSpan) return true;
-	return getSpanOverlapRatio({ left: candidateSpan, right: sourceSpan }) >=
-		SOURCE_SPAN_OVERLAP_RATIO;
+	return (
+		getSpanOverlapRatio({ left: candidateSpan, right: sourceSpan }) >=
+		SOURCE_SPAN_OVERLAP_RATIO
+	);
 }
 
 export function findCaptionSourceTrack({
@@ -220,11 +231,7 @@ function getOverlapSeconds({
 	);
 }
 
-function captionSourceTimeSpan({
-	words,
-}: {
-	words: TranscriptionWord[];
-}) {
+function captionSourceTimeSpan({ words }: { words: TranscriptionWord[] }) {
 	if (words.length === 0) return null;
 	return words.reduce(
 		(span, word) => ({
@@ -336,7 +343,9 @@ function fontWeightParam({
 	params: TextElement["params"];
 }): SubtitleStyleOverrides["fontWeight"] | undefined {
 	const value = stringParam({ params, key: "fontWeight" });
-	return value === "bold" || value === "normal" ? value : undefined;
+	return value === undefined
+		? undefined
+		: normalizeTextFontWeight({ value, fallback: "normal" });
 }
 
 function fontStyleParam({
@@ -457,8 +466,11 @@ function mergeCaptionElementPresentation({
 	source: TextElement;
 }): TextElement {
 	return {
-		...source,
 		...generated,
+		hidden: source.hidden ?? generated.hidden,
+		effects: source.effects ?? generated.effects,
+		animations: source.animations ?? generated.animations,
+		transitions: source.transitions ?? generated.transitions,
 		params: {
 			...generated.params,
 			...source.params,
@@ -466,15 +478,20 @@ function mergeCaptionElementPresentation({
 			"transform.positionX": generated.params["transform.positionX"],
 			"transform.positionY": generated.params["transform.positionY"],
 		},
+		textRowOverrides: source.textRowOverrides ?? generated.textRowOverrides,
 		wordRuns: mergeWordRunPresentation({
 			generated: generated.wordRuns,
 			source: source.wordRuns,
 		}),
-		captionRevealMode: generated.captionRevealMode,
-		captionTransitionIn: generated.captionTransitionIn,
-		captionWordAnimationId: generated.captionWordAnimationId,
-		captionAccentColor: generated.captionAccentColor,
-		captionWordDirection: generated.captionWordDirection,
+		captionRevealMode: source.captionRevealMode ?? generated.captionRevealMode,
+		captionTransitionIn:
+			source.captionTransitionIn ?? generated.captionTransitionIn,
+		captionWordAnimationId:
+			source.captionWordAnimationId ?? generated.captionWordAnimationId,
+		captionAccentColor:
+			source.captionAccentColor ?? generated.captionAccentColor,
+		captionWordDirection:
+			source.captionWordDirection ?? generated.captionWordDirection,
 	};
 }
 

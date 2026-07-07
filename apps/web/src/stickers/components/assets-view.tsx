@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import type { CSSProperties } from "react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,11 @@ import {
 	buildStickerElement,
 } from "@/timeline/element-utils";
 import { STICKER_CATEGORIES } from "@/stickers/categories";
-import { getRegionLabel, resolveQueryToRegions, resolveStickerId } from "@/stickers";
+import {
+	getRegionLabel,
+	resolveQueryToRegions,
+	resolveStickerId,
+} from "@/stickers";
 import { parseShapeStickerId } from "@/stickers/providers/shapes";
 import { parseStickerId } from "@/stickers/sticker-id";
 import {
@@ -48,6 +52,13 @@ import {
 	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+
+const STICKER_LAZY_MOUNT_THRESHOLD = 48;
+const STICKER_LAZY_MOUNT_ROOT_MARGIN = "720px";
+
+function isStickerCategory(value: string): value is StickerCategory {
+	return value in STICKER_CATEGORIES;
+}
 
 export function StickersView() {
 	const {
@@ -77,7 +88,9 @@ export function StickersView() {
 		(category) => category.scope === "stickers",
 	);
 	const selectedCustomCategory = selectedCustomCategoryId
-		? stickerCategories.find((category) => category.id === selectedCustomCategoryId)
+		? stickerCategories.find(
+				(category) => category.id === selectedCustomCategoryId,
+			)
 		: null;
 	const { openFilePicker, fileInputProps } = useFileUpload({
 		accept: "image/*",
@@ -246,26 +259,29 @@ export function StickersView() {
 					/>
 				</div>
 			) : (
-			<Tabs
-				value={selectedCategory}
-				onValueChange={(value) => {
-					setSelectedCustomCategoryId(null);
-					setSelectedCategory({ category: value as StickerCategory });
-				}}
-				variant="underline"
-				className="mt-2 flex min-h-0 flex-1 flex-col"
-			>
-				<TabsList aria-label="Sticker categories">
-					{Object.entries(STICKER_CATEGORIES).map(([key, label]) => (
-						<TabsTrigger key={key} value={key}>
-							{label}
-						</TabsTrigger>
-					))}
-				</TabsList>
-				<div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4">
-					<StickersContentView />
-				</div>
-			</Tabs>
+				<Tabs
+					value={selectedCategory}
+					onValueChange={(value) => {
+						if (!isStickerCategory(value)) {
+							return;
+						}
+						setSelectedCustomCategoryId(null);
+						setSelectedCategory({ category: value });
+					}}
+					variant="underline"
+					className="mt-2 flex min-h-0 flex-1 flex-col"
+				>
+					<TabsList aria-label="Sticker categories">
+						{Object.entries(STICKER_CATEGORIES).map(([key, label]) => (
+							<TabsTrigger key={key} value={key}>
+								{label}
+							</TabsTrigger>
+						))}
+					</TabsList>
+					<div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4">
+						<StickersContentView />
+					</div>
+				</Tabs>
 			)}
 		</div>
 	);
@@ -276,7 +292,9 @@ function CustomStickerCategoryView({
 	stickerAssets,
 }: {
 	category: SharedAssetCategory;
-	stickerAssets: ReturnType<typeof useSharedLibraryStore.getState>["stickerAssets"];
+	stickerAssets: ReturnType<
+		typeof useSharedLibraryStore.getState
+	>["stickerAssets"];
 }) {
 	const importedById = new Map(stickerAssets.map((asset) => [asset.id, asset]));
 	const items = category.assetIds
@@ -319,7 +337,9 @@ function CustomStickerCategoryView({
 		.filter((item): item is StickerData => item !== null);
 
 	if (items.length === 0) {
-		return <EmptyView message="Drop stickers into this category to show them here." />;
+		return (
+			<EmptyView message="Drop stickers into this category to show them here." />
+		);
 	}
 
 	return (
@@ -341,6 +361,7 @@ function StickerGrid({
 	items: StickerData[];
 	shouldCapSize?: boolean;
 }) {
+	const shouldLazyMount = items.length > STICKER_LAZY_MOUNT_THRESHOLD;
 	const gridStyle: CSSProperties & {
 		"--sticker-min": string;
 		"--sticker-max"?: string;
@@ -355,23 +376,91 @@ function StickerGrid({
 	return (
 		<div className="grid gap-2" style={gridStyle}>
 			{items.map((item) => (
-				<StickerItem key={item.id} item={item} shouldCapSize={shouldCapSize} />
+				<LazyStickerItem
+					key={item.id}
+					item={item}
+					shouldCapSize={shouldCapSize}
+					shouldLazyMount={shouldLazyMount}
+				/>
 			))}
 		</div>
 	);
 }
 
 function StickerRow({ items }: { items: StickerData[] }) {
+	const shouldLazyMount = items.length > STICKER_LAZY_MOUNT_THRESHOLD;
+
 	return (
 		<div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hidden">
 			{items.map((item) => (
 				<div key={item.id} className="w-20 shrink-0">
-					<StickerItem item={item} shouldCapSize containerClassName="w-full" />
+					<LazyStickerItem
+						item={item}
+						shouldCapSize
+						containerClassName="w-full"
+						shouldLazyMount={shouldLazyMount}
+					/>
 				</div>
 			))}
 		</div>
 	);
 }
+
+const LazyStickerItem = memo(function LazyStickerItem({
+	item,
+	shouldCapSize = false,
+	containerClassName,
+	shouldLazyMount,
+}: StickerItemProps & { shouldLazyMount: boolean }) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [shouldMount, setShouldMount] = useState(!shouldLazyMount);
+
+	useEffect(() => {
+		if (shouldMount) {
+			return;
+		}
+
+		const container = containerRef.current;
+		if (!container || typeof IntersectionObserver === "undefined") {
+			setShouldMount(true);
+			return;
+		}
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((entry) => entry.isIntersecting)) {
+					return;
+				}
+				setShouldMount(true);
+				observer.disconnect();
+			},
+			{ rootMargin: STICKER_LAZY_MOUNT_ROOT_MARGIN },
+		);
+		observer.observe(container);
+
+		return () => observer.disconnect();
+	}, [shouldMount]);
+
+	if (shouldMount) {
+		return (
+			<StickerItem
+				item={item}
+				shouldCapSize={shouldCapSize}
+				containerClassName={containerClassName}
+			/>
+		);
+	}
+
+	return (
+		<div
+			ref={containerRef}
+			className={cn("relative", containerClassName ?? "w-full")}
+		>
+			<div className="aspect-square w-full rounded-sm border bg-accent/45" />
+		</div>
+	);
+});
+LazyStickerItem.displayName = "LazyStickerItem";
 
 function EmptyView({ message }: { message: string }) {
 	return (
@@ -538,7 +627,9 @@ function StickerSection({
 								size="sm"
 								className="h-auto gap-1 p-0 text-xs text-primary"
 								onClick={() => {
-									onSeeAll(section.action?.category as StickerCategory);
+									if (section.action?.category) {
+										onSeeAll(section.action.category);
+									}
 								}}
 							>
 								See all
@@ -563,7 +654,7 @@ interface StickerItemProps {
 	containerClassName?: string;
 }
 
-function StickerItem({
+const StickerItem = memo(function StickerItem({
 	item,
 	shouldCapSize = false,
 	containerClassName,
@@ -571,19 +662,14 @@ function StickerItem({
 	const editor = useEditor();
 	const { addToRecentStickers } = useStickersStore();
 	const [isAdding, setIsAdding] = useState(false);
-	const [hasImageError, setHasImageError] = useState(false);
-
-	useEffect(() => {
-		if (!item.id) {
-			return;
-		}
-
-		setHasImageError(false);
-	}, [item.id]);
+	const [imageErrorId, setImageErrorId] = useState<string | null>(null);
+	const hasImageError = imageErrorId === item.id;
 
 	const displayName = item.name;
 	const shapePreset =
-		item.provider === "shapes" ? parseShapeStickerId({ stickerId: item.id }) : null;
+		item.provider === "shapes"
+			? parseShapeStickerId({ stickerId: item.id })
+			: null;
 
 	const handleAdd = async () => {
 		setIsAdding(true);
@@ -647,7 +733,7 @@ function StickerItem({
 								}
 							: undefined
 					}
-					onError={() => setHasImageError(true)}
+					onError={() => setImageErrorId(item.id)}
 					loading="lazy"
 					unoptimized
 				/>
@@ -696,4 +782,5 @@ function StickerItem({
 			)}
 		</div>
 	);
-}
+});
+StickerItem.displayName = "StickerItem";

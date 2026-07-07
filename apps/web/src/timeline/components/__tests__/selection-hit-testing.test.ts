@@ -65,13 +65,21 @@ function makeScrollContainer({
 	};
 }
 
-function makeTextElement({ id }: { id: string }): TextElement {
+function makeTextElement({
+	id,
+	startSeconds = 0,
+	durationSeconds = 5,
+}: {
+	id: string;
+	startSeconds?: number;
+	durationSeconds?: number;
+}): TextElement {
 	return {
 		id,
 		name: id,
 		type: "text",
-		startTime: ZERO_MEDIA_TIME,
-		duration: mediaTimeFromSeconds({ seconds: 5 }),
+		startTime: mediaTimeFromSeconds({ seconds: startSeconds }),
+		duration: mediaTimeFromSeconds({ seconds: durationSeconds }),
 		trimStart: ZERO_MEDIA_TIME,
 		trimEnd: ZERO_MEDIA_TIME,
 		params: {},
@@ -165,5 +173,45 @@ describe("timeline element hit testing", () => {
 		expect(hits).toEqual([
 			{ trackId: "target-text-track", elementId: "target-text-1" },
 		]);
+	});
+
+	test("filters horizontally using the scroll-adjusted selection time range", () => {
+		const tracks: TimelineTrack[] = [
+			{
+				id: "text-track",
+				name: "Text",
+				type: "text",
+				hidden: false,
+				elements: [
+					makeTextElement({
+						id: "before",
+						startSeconds: 0,
+						durationSeconds: 1,
+					}),
+					makeTextElement({
+						id: "target",
+						startSeconds: 4,
+						durationSeconds: 1,
+					}),
+					makeTextElement({
+						id: "after",
+						startSeconds: 8,
+						durationSeconds: 1,
+					}),
+				],
+			},
+		];
+
+		const hits = resolveTimelineElementIntersections({
+			container: makeContainer({}),
+			scrollContainer: makeScrollContainer({ scrollLeft: 150 }),
+			tracks,
+			zoomLevel: 1,
+			tracksTopInsetPx: 10,
+			startPos: { x: 40, y: 12 },
+			currentPos: { x: 110, y: 30 },
+		});
+
+		expect(hits).toEqual([{ trackId: "text-track", elementId: "target" }]);
 	});
 });

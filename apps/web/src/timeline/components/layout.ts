@@ -4,7 +4,7 @@ export const TIMELINE_TRACK_HEIGHTS_PX: Record<TrackType, number> = {
 	video: 65,
 	text: 25,
 	audio: 50,
-	graphic: 25,
+	graphic: 50,
 	effect: 25,
 } as const;
 

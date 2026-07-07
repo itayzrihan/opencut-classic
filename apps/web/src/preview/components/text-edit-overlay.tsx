@@ -5,9 +5,7 @@ import { usePreviewViewport } from "@/preview/components/preview-viewport";
 import { useEditor } from "@/editor/use-editor";
 import type { TextElement } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
-import {
-	getElementLocalTime,
-} from "@/animation";
+import { getElementLocalTime } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
 import { buildTransitionAnimationsFromElement } from "@/transitions";
@@ -128,7 +126,7 @@ export function TextEditOverlay({
 				style={{
 					fontSize: resolvedTextLayout.scaledFontSize,
 					fontFamily: textParams.fontFamily,
-					fontWeight: textParams.fontWeight === "bold" ? "bold" : "normal",
+					fontWeight: textParams.fontWeight,
 					fontStyle: textParams.fontStyle === "italic" ? "italic" : "normal",
 					textAlign: textParams.textAlign,
 					letterSpacing: `${canvasLetterSpacing}px`,

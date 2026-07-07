@@ -330,6 +330,17 @@ const variants = [
 	{ id: "8", name: "Dream Blur", idle: { blur: 8, scale: 0.08 }, active: { blur: 0, scale: 0.1, shadowBlur: 14 }, spoken: { blur: 0 } },
 ] as const;
 
+const NONE_CAPTION_WORD_ANIMATION: CaptionWordAnimation = {
+	id: "none",
+	name: "None",
+	revealMode: "row",
+	idleStyle: { opacity: 1, scale: 1 },
+	activeStyle: { opacity: 1, scale: 1 },
+	spokenStyle: { opacity: 1, scale: 1 },
+	useAccentOnActive: false,
+	useAccentOnSpoken: false,
+};
+
 function mergeStyle(
 	{
 		base,
@@ -352,8 +363,9 @@ function mergeStyle(
 	};
 }
 
-export const CAPTION_WORD_ANIMATIONS: CaptionWordAnimation[] = families.flatMap(
-	(family) =>
+export const CAPTION_WORD_ANIMATIONS: CaptionWordAnimation[] = [
+	NONE_CAPTION_WORD_ANIMATION,
+	...families.flatMap((family) =>
 		variants.map((variant) => ({
 			id: `${family.id}-${variant.id}`,
 			name: `${family.name} ${variant.name}`,
@@ -367,7 +379,8 @@ export const CAPTION_WORD_ANIMATIONS: CaptionWordAnimation[] = families.flatMap(
 			useAccentOnActive: "accent" in family ? family.accent : false,
 			useAccentOnSpoken: "keepAccent" in family ? family.keepAccent : false,
 		})),
-);
+	),
+];
 
 export function getCaptionWordAnimation({
 	wordAnimationId,

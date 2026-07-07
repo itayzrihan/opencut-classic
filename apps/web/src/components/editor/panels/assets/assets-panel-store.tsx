@@ -25,6 +25,7 @@ export const TAB_KEYS = [
 	"backgrounds",
 	"effects",
 	"overlays",
+	"overlay-movement",
 	"transitions",
 	"captions",
 	"see-captions",
@@ -78,6 +79,10 @@ export const tabs = {
 	overlays: {
 		icon: createHugeiconsIcon({ icon: MagicWand05Icon }),
 		label: "Overlay FX",
+	},
+	"overlay-movement": {
+		icon: createHugeiconsIcon({ icon: SlidersHorizontalIcon }),
+		label: "Overlay Movement",
 	},
 	transitions: {
 		icon: createHugeiconsIcon({ icon: ArrowRightDoubleIcon }),

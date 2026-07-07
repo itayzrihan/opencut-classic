@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorProject } from "@/editor/use-editor";
 import type { MediaAsset } from "@/media/types";
 import {
 	runPodcastSync,
@@ -125,7 +125,7 @@ export function PodcastSyncDialog({
 	assets: MediaAsset[];
 }) {
 	const editor = useEditor();
-	const activeProject = useEditor((e) => e.project.getActive());
+	const activeProject = useEditorProject((e) => e.project.getActive());
 	const videoAssets = useMemo(
 		() => assets.filter((asset) => asset.type === "video"),
 		[assets],

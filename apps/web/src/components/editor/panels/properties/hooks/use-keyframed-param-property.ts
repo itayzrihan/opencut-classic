@@ -38,6 +38,7 @@ export function useKeyframedParamProperty({
 	isPlayheadWithinElementRange,
 	resolvedValue,
 	buildBaseUpdates,
+	enabled = true,
 }: {
 	param: ParamDefinition;
 	trackId: string;
@@ -52,15 +53,18 @@ export function useKeyframedParamProperty({
 	}: {
 		value: number | string | boolean;
 	}) => Partial<TimelineElement>;
+	enabled?: boolean;
 }): KeyframedParamPropertyResult {
 	const editor = useEditor();
 	const resolvedPropertyPath =
 		propertyPath ?? buildGraphicParamPath({ paramKey: param.key });
-	const hasAnimatedKeyframes = hasKeyframesForPath({
-		animations,
-		propertyPath: resolvedPropertyPath,
-	});
-	const keyframeAtTime = isPlayheadWithinElementRange
+	const hasAnimatedKeyframes = enabled
+		? hasKeyframesForPath({
+				animations,
+				propertyPath: resolvedPropertyPath,
+			})
+		: false;
+	const keyframeAtTime = enabled && isPlayheadWithinElementRange
 		? getKeyframeAtTime({
 				animations,
 				propertyPath: resolvedPropertyPath,
@@ -70,7 +74,7 @@ export function useKeyframedParamProperty({
 	const keyframeIdAtTime = keyframeAtTime?.id ?? null;
 	const isKeyframedAtTime = keyframeAtTime !== null;
 	const shouldUseAnimatedChannel =
-		hasAnimatedKeyframes && isPlayheadWithinElementRange;
+		enabled && hasAnimatedKeyframes && isPlayheadWithinElementRange;
 
 	const previewValue: KeyframedParamPropertyResult["onPreview"] = (value) => {
 		if (shouldUseAnimatedChannel) {
@@ -111,7 +115,7 @@ export function useKeyframedParamProperty({
 	};
 
 	const toggleKeyframe = () => {
-		if (!isPlayheadWithinElementRange) {
+		if (!enabled || !isPlayheadWithinElementRange) {
 			return;
 		}
 

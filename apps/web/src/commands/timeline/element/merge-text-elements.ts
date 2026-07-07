@@ -7,6 +7,10 @@ import { EditorCore } from "@/core";
 import { mergeTextElements } from "@/text/text-layer-utils";
 import type { SceneTracks, TimelineTrack } from "@/timeline";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
+import {
+	removeTextLayerWordsFromCaptionSource,
+	syncTextLayerWordsIntoCaptionSource,
+} from "@/subtitles/caption-source-sync";
 
 export class MergeTextElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -52,7 +56,9 @@ export class MergeTextElementsCommand extends Command {
 			),
 		);
 		const targetKey = `${mergeResult.targetTrackId}:${mergeResult.targetElementId}`;
-		const updateTrack = <TTrack extends TimelineTrack>(track: TTrack): TTrack => {
+		const updateTrack = <TTrack extends TimelineTrack>(
+			track: TTrack,
+		): TTrack => {
 			const elements = track.elements.flatMap((element) => {
 				const key = `${track.id}:${element.id}`;
 				if (key === targetKey) {
@@ -69,12 +75,25 @@ export class MergeTextElementsCommand extends Command {
 				elements,
 			} as TTrack;
 		};
-		const updatedTracks: SceneTracks = {
+		let updatedTracks: SceneTracks = {
 			...this.savedState,
 			overlay: this.savedState.overlay.map((track) => updateTrack(track)),
 			main: updateTrack(this.savedState.main),
 			audio: this.savedState.audio.map((track) => updateTrack(track)),
 		};
+		updatedTracks = removeTextLayerWordsFromCaptionSource({
+			tracks: updatedTracks,
+			elements: mergeResult.removeElements,
+		});
+		updatedTracks = syncTextLayerWordsIntoCaptionSource({
+			tracks: updatedTracks,
+			elements: [
+				{
+					trackId: mergeResult.targetTrackId,
+					elementId: mergeResult.targetElementId,
+				},
+			],
+		});
 
 		editor.timeline.updateTracks(updatedTracks);
 		return createElementSelectionResult([

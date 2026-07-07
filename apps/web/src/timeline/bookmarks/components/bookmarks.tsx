@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { EditorCore } from "@/core";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorTimelineScenes } from "@/editor/use-editor";
 import type { BookmarkDragState } from "../hooks/use-bookmark-drag";
 import { DEFAULT_TIMELINE_BOOKMARK_COLOR } from "@/timeline/components/theme";
 import { TIMELINE_BOOKMARK_ROW_HEIGHT_PX } from "@/timeline/components/layout";
@@ -24,16 +24,26 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { uppercase } from "@/utils/string";
 import { clamp, formatNumberForDisplay } from "@/utils/math";
-import { timelineTimeToPixels, timelineTimeToSnappedPixels } from "@/timeline";
+import {
+	getTimelinePixelsPerSecond,
+	timelineTimeToPixels,
+	timelineTimeToSnappedPixels,
+} from "@/timeline";
+import {
+	getBookmarkVisibilityIndex,
+	getVisibleBookmarks,
+} from "@/timeline/bookmarks/visibility";
 import {
 	type MediaTime,
 	mediaTimeFromSeconds,
 	mediaTimeToSeconds,
 	snapSeekMediaTime,
 	subMediaTime,
+	TICKS_PER_SECOND,
 	ZERO_MEDIA_TIME,
 } from "@/wasm";
 
+const BOOKMARK_HORIZONTAL_OVERSCAN_PX = 800;
 const MIN_BOOKMARK_WIDTH_PX = 2;
 const BOOKMARK_MARKER_WIDTH_PX = 12;
 const BOOKMARK_MARKER_HEIGHT_PX = 15;
@@ -55,9 +65,27 @@ function seekToBookmarkTime({
 	editor.playback.seek({ time: snappedTime });
 }
 
+function isContainedEventTarget({
+	currentTarget,
+	target,
+}: {
+	currentTarget: Node;
+	target: EventTarget | null;
+}) {
+	return target instanceof Node && currentTarget.contains(target);
+}
+
+function getBookmarkColorHex({ bookmark }: { bookmark: Bookmark }) {
+	return (bookmark.color ?? DEFAULT_TIMELINE_BOOKMARK_COLOR)
+		.replace("#", "")
+		.toUpperCase();
+}
+
 interface TimelineBookmarksRowProps {
 	zoomLevel: number;
 	dynamicTimelineWidth: number;
+	scrollLeft: number;
+	viewportWidth: number;
 	dragState: BookmarkDragState;
 	onBookmarkMouseDown: (params: {
 		event: React.MouseEvent;
@@ -72,6 +100,8 @@ interface TimelineBookmarksRowProps {
 export function TimelineBookmarksRow({
 	zoomLevel,
 	dynamicTimelineWidth,
+	scrollLeft,
+	viewportWidth,
 	dragState,
 	onBookmarkMouseDown,
 	handleWheel,
@@ -79,7 +109,47 @@ export function TimelineBookmarksRow({
 	handleRulerTrackingMouseDown,
 	handleRulerMouseDown,
 }: TimelineBookmarksRowProps) {
-	const bookmarks = useEditor((e) => e.scenes.getActiveScene().bookmarks);
+	const bookmarks = useEditorTimelineScenes(
+		(e) => e.scenes.getActiveScene().bookmarks,
+	);
+	const bookmarkVisibilityIndex = useMemo(
+		() => getBookmarkVisibilityIndex({ bookmarks }),
+		[bookmarks],
+	);
+	const visibleBookmarks = useMemo(() => {
+		if (viewportWidth <= 0) {
+			return bookmarks;
+		}
+
+		const pixelsPerSecond = getTimelinePixelsPerSecond({ zoomLevel });
+		const visibleStartTime =
+			(Math.max(0, scrollLeft - BOOKMARK_HORIZONTAL_OVERSCAN_PX) /
+				pixelsPerSecond) *
+			TICKS_PER_SECOND;
+		const visibleEndTime =
+			((scrollLeft + viewportWidth + BOOKMARK_HORIZONTAL_OVERSCAN_PX) /
+				pixelsPerSecond) *
+			TICKS_PER_SECOND;
+
+		return getVisibleBookmarks({
+			bookmarks,
+			visibilityIndex: bookmarkVisibilityIndex,
+			visibleStartTime,
+			visibleEndTime,
+			draggedBookmarkTime:
+				dragState.isDragging && dragState.bookmarkTime !== null
+					? dragState.bookmarkTime
+					: null,
+		});
+	}, [
+		bookmarkVisibilityIndex,
+		bookmarks,
+		dragState.bookmarkTime,
+		dragState.isDragging,
+		scrollLeft,
+		viewportWidth,
+		zoomLevel,
+	]);
 
 	return (
 		<div
@@ -96,16 +166,16 @@ export function TimelineBookmarksRow({
 				type="button"
 				onWheel={handleWheel}
 				onClick={(event) => {
-					if (!event.currentTarget.contains(event.target as Node)) return;
+					if (!isContainedEventTarget(event)) return;
 					handleTimelineContentClick(event);
 				}}
 				onMouseDown={(event) => {
-					if (!event.currentTarget.contains(event.target as Node)) return;
+					if (!isContainedEventTarget(event)) return;
 					handleRulerMouseDown(event);
 					handleRulerTrackingMouseDown(event);
 				}}
 			>
-				{bookmarks.map((bookmark) => (
+				{visibleBookmarks.map((bookmark) => (
 					<TimelineBookmark
 						key={`bookmark-${bookmark.time}`}
 						bookmark={bookmark}
@@ -276,6 +346,7 @@ function TimelineBookmark({
 				onOpenAutoFocus={(event) => event.preventDefault()}
 			>
 				<BookmarkPopoverContent
+					key={`${time}:${bookmark.color ?? ""}`}
 					bookmark={bookmark}
 					time={time}
 					timelineDuration={duration}
@@ -298,19 +369,9 @@ function BookmarkPopoverContent({
 	onPopoverClose: () => void;
 }) {
 	const editor = useEditor();
-	const [draftColorHex, setDraftColorHex] = useState(
-		(bookmark.color ?? DEFAULT_TIMELINE_BOOKMARK_COLOR)
-			.replace("#", "")
-			.toUpperCase(),
+	const [draftColorHex, setDraftColorHex] = useState(() =>
+		getBookmarkColorHex({ bookmark }),
 	);
-
-	useEffect(() => {
-		setDraftColorHex(
-			(bookmark.color ?? DEFAULT_TIMELINE_BOOKMARK_COLOR)
-				.replace("#", "")
-				.toUpperCase(),
-		);
-	}, [bookmark.color]);
 
 	const handleRemove = () => {
 		editor.scenes.removeBookmark({ time });

@@ -1,5 +1,6 @@
 import type { MaskableElement, VisualElement } from "./types";
 import type { ParamValues } from "@/params";
+import type { MediaTime } from "@/wasm";
 
 interface BaseDragData {
 	id: string;
@@ -33,6 +34,8 @@ export interface EffectDragData extends BaseDragData {
 	effectType: string;
 	params?: Partial<ParamValues>;
 	targetElementTypes: VisualElement["type"][];
+	placement?: "clip" | "layer";
+	duration?: MediaTime;
 }
 
 export interface TransitionDragData extends BaseDragData {

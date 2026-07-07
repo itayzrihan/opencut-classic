@@ -2,7 +2,7 @@
 
 import { Section, SectionContent, SectionField } from "@/components/section";
 import { Input } from "@/components/ui/input";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorProject } from "@/editor/use-editor";
 import { getCaptionPlacementGrid } from "@/subtitles/caption-layout";
 import {
 	getTextMeasurementContext,
@@ -28,6 +28,12 @@ interface ScopedPlacement {
 	transform: Transform;
 }
 
+interface PlacementTarget {
+	trackId: string;
+	element: TextElement;
+	placement: ScopedPlacement;
+}
+
 export function TextPlacementTab({
 	element,
 	trackId,
@@ -40,51 +46,72 @@ export function TextPlacementTab({
 	textScope?: TextOverrideScope;
 }) {
 	const editor = useEditor();
-	const canvasSize = useEditor(
+	const canvasSize = useEditorProject(
 		(e) => e.project.getActive().settings.canvasSize,
 	);
 	const isBulk = (elementsWithTracks?.length ?? 0) > 1;
 	const scope = textScope ?? { type: "layer" as const };
 	const grid = getCaptionPlacementGrid({ canvasSize });
-	const placement = isBulk
-		? null
-		: resolveScopedPlacement({
+	const isBulkScopedPlacement = isBulk && scope.type !== "layer";
+	const placementTargets = isBulkScopedPlacement
+		? []
+		: buildPlacementTargets({
 				element,
-				scope,
+				trackId,
+				elementsWithTracks,
+				scope: isBulk ? ({ type: "layer" } as const) : scope,
 				canvasSize,
 			});
-	const selectedCell = placement
+	const placement = placementTargets[0]?.placement ?? null;
+	const hasMixedPlacement =
+		placementTargets.length > 1 &&
+		placementTargets.some(
+			(target) =>
+				!arePointsEqual({
+					left: target.placement.center,
+					right: placementTargets[0].placement.center,
+				}),
+		);
+	const selectedCell = placement && !hasMixedPlacement
 		? getNearestGridCell({ center: placement.center, canvasSize, grid })
 		: null;
 
 	const applyCenter = (targetCenter: Point) => {
-		if (!placement) return;
+		if (placementTargets.length === 0) return;
 		editor.timeline.updateElements({
-			updates: [
-				{
-					trackId,
-					elementId: element.id,
-					patch: buildPlacementPatch({
-						element,
-						placement,
-						targetCenter,
-					}),
-				},
-			],
+			updates: placementTargets.map((target) => ({
+				trackId: target.trackId,
+				elementId: target.element.id,
+				patch: buildPlacementPatch({
+					element: target.element,
+					placement: target.placement,
+					targetCenter,
+				}),
+			})),
 		});
 	};
 
 	const applyAxis = ({ axis, value }: { axis: "x" | "y"; value: string }) => {
-		if (!placement) return;
+		if (placementTargets.length === 0) return;
 		const parsed = Number(value);
 		if (!Number.isFinite(parsed)) return;
-		applyCenter({
-			x: axis === "x" ? parsed : placement.center.x,
-			y: axis === "y" ? parsed : placement.center.y,
+		editor.timeline.updateElements({
+			updates: placementTargets.map((target) => ({
+				trackId: target.trackId,
+				elementId: target.element.id,
+				patch: buildPlacementPatch({
+					element: target.element,
+					placement: target.placement,
+					targetCenter: {
+						x: axis === "x" ? parsed : target.placement.center.x,
+						y: axis === "y" ? parsed : target.placement.center.y,
+					},
+				}),
+			})),
 		});
 	};
 
-	if (isBulk) {
+	if (isBulkScopedPlacement) {
 		return (
 			<Section sectionKey={`${element.id}:placement`}>
 				<SectionContent className="pt-4">
@@ -100,6 +127,12 @@ export function TextPlacementTab({
 		<Section sectionKey={`${element.id}:placement`}>
 			<SectionContent className="pt-4">
 				<div className="flex flex-col gap-3.5">
+					{hasMixedPlacement && (
+						<p className="border-caution/20 bg-caution/10 text-caution rounded-sm border px-2.5 py-2 text-xs">
+							Mixed placement values. The next placement change applies to all
+							selected text layers.
+						</p>
+					)}
 					<SectionField label={`Grid position (${grid.columns}x${grid.rows})`}>
 						<div
 							className="grid gap-1"
@@ -150,8 +183,11 @@ export function TextPlacementTab({
 								step={1}
 								size="sm"
 								value={
-									placement ? formatPlacementValue(placement.center.x) : ""
+									placement && !hasMixedPlacement
+										? formatPlacementValue(placement.center.x)
+										: ""
 								}
+								placeholder={hasMixedPlacement ? "Mixed" : undefined}
 								aria-label={`${scope.type} center X position`}
 								onChange={(event) =>
 									applyAxis({ axis: "x", value: event.target.value })
@@ -162,8 +198,11 @@ export function TextPlacementTab({
 								step={1}
 								size="sm"
 								value={
-									placement ? formatPlacementValue(placement.center.y) : ""
+									placement && !hasMixedPlacement
+										? formatPlacementValue(placement.center.y)
+										: ""
 								}
+								placeholder={hasMixedPlacement ? "Mixed" : undefined}
 								aria-label={`${scope.type} center Y position`}
 								onChange={(event) =>
 									applyAxis({ axis: "y", value: event.target.value })
@@ -175,6 +214,39 @@ export function TextPlacementTab({
 			</SectionContent>
 		</Section>
 	);
+}
+
+function buildPlacementTargets({
+	element,
+	trackId,
+	elementsWithTracks,
+	scope,
+	canvasSize,
+}: {
+	element: TextElement;
+	trackId: string;
+	elementsWithTracks?: ElementWithTrackForParams[];
+	scope: TextOverrideScope;
+	canvasSize: { width: number; height: number };
+}): PlacementTarget[] {
+	const entries = elementsWithTracks?.length
+		? elementsWithTracks
+		: [{ track: { id: trackId }, element }];
+
+	return entries.flatMap((entry): PlacementTarget[] => {
+		if (entry.element.type !== "text") return [];
+		return [
+			{
+				trackId: entry.track.id,
+				element: entry.element,
+				placement: resolveScopedPlacement({
+					element: entry.element,
+					scope,
+					canvasSize,
+				}),
+			},
+		];
+	});
 }
 
 function resolveScopedPlacement({
@@ -318,6 +390,19 @@ function getWordsCenter({ words }: { words: MeasuredWordGlyph[] }): Point {
 		x: left + (right - left) / 2,
 		y: top + (bottom - top) / 2,
 	};
+}
+
+function arePointsEqual({
+	left,
+	right,
+}: {
+	left: Point;
+	right: Point;
+}): boolean {
+	return (
+		Math.abs(left.x - right.x) < 0.01 &&
+		Math.abs(left.y - right.y) < 0.01
+	);
 }
 
 function getGridCellCenter({

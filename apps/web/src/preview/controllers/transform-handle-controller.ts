@@ -1,7 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { MediaAsset } from "@/media/types";
 import {
-	getVisibleElementsWithBounds,
+	getElementWithBounds,
 	type Corner,
 	type Edge,
 	type ElementBounds,
@@ -124,7 +124,7 @@ export interface SceneReader {
 	getSelectedElements: () => readonly ElementRef[];
 	getTracks: () => SceneTracks;
 	getCurrentTime: () => number;
-	getMediaAssets: () => MediaAsset[];
+	getSelectedMediaAsset: () => MediaAsset | null;
 	getCanvasSize: () => CanvasSize;
 }
 
@@ -192,24 +192,6 @@ function getCornerDistance({
 	const rotatedX = localX * cos - localY * sin;
 	const rotatedY = localX * sin + localY * cos;
 	return Math.sqrt(rotatedX * rotatedX + rotatedY * rotatedY) || 1;
-}
-
-function buildSelectedWithBounds({
-	selectedElements,
-	elementsWithBounds,
-}: {
-	selectedElements: readonly ElementRef[];
-	elementsWithBounds: readonly ElementWithBounds[];
-}): ElementWithBounds | null {
-	if (selectedElements.length !== 1) return null;
-
-	return (
-		elementsWithBounds.find(
-			(entry) =>
-				entry.trackId === selectedElements[0].trackId &&
-				entry.elementId === selectedElements[0].elementId,
-		) ?? null
-	);
 }
 
 function buildCornerScaleAnimationReset({
@@ -299,9 +281,17 @@ export class TransformHandleController {
 	}
 
 	get selectedWithBounds(): ElementWithBounds | null {
-		return buildSelectedWithBounds({
-			selectedElements: this.deps.scene.getSelectedElements(),
-			elementsWithBounds: this.getVisibleElementsWithBounds(),
+		const selectedElements = this.deps.scene.getSelectedElements();
+		if (selectedElements.length !== 1) return null;
+		const selectedElement = selectedElements[0];
+		if (!selectedElement) return null;
+
+		return getElementWithBounds({
+			tracks: this.deps.scene.getTracks(),
+			elementRef: selectedElement,
+			currentTime: this.deps.scene.getCurrentTime(),
+			canvasSize: this.deps.scene.getCanvasSize(),
+			mediaAsset: this.deps.scene.getSelectedMediaAsset(),
 		});
 	}
 
@@ -540,15 +530,6 @@ export class TransformHandleController {
 		}
 
 		pointerState.captureTarget.releasePointerCapture(pointerState.pointerId);
-	}
-
-	private getVisibleElementsWithBounds(): ElementWithBounds[] {
-		return getVisibleElementsWithBounds({
-			tracks: this.deps.scene.getTracks(),
-			currentTime: this.deps.scene.getCurrentTime(),
-			canvasSize: this.deps.scene.getCanvasSize(),
-			mediaAssets: this.deps.scene.getMediaAssets(),
-		});
 	}
 
 	private getSelectedVisualContext(): VisualSelectionContext | null {

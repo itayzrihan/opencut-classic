@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorSelection,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import {
 	buildCaptionReviewWordPatch,
 	collectCaptionReviewItems,
@@ -75,8 +79,12 @@ function usePlaybackTime() {
 
 export function CaptionReviewView() {
 	const editor = useEditor();
-	const activeScene = useEditor((e) => e.scenes.getActiveSceneOrNull());
-	const selectedElements = useEditor((e) => e.selection.getSelectedElements());
+	const activeScene = useEditorTimelineScenes((e) =>
+		e.scenes.getActiveSceneOrNull(),
+	);
+	const selectedElements = useEditorSelection((e) =>
+		e.selection.getSelectedElements(),
+	);
 	const currentTime = usePlaybackTime();
 	const inputRef = useRef<HTMLInputElement | null>(null);
 	const endingEditKeyRef = useRef<string | null>(null);

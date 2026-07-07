@@ -11,7 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { extractTimelineAudio } from "@/media/mediabunny";
-import { useEditor } from "@/editor/use-editor";
+import {
+	useEditor,
+	useEditorDiagnostics,
+	useEditorProject,
+	useEditorTimelineScenes,
+} from "@/editor/use-editor";
 import { sharedLibraryService } from "@/shared-library/service";
 import type { SharedCaptionPreset } from "@/shared-library/types";
 import { TRANSCRIPTION_DIAGNOSTICS_SCOPE } from "@/transcription/diagnostics";
@@ -171,7 +176,11 @@ async function postWhisperTranscription({
 }): Promise<Response> {
 	let lastError: unknown = null;
 
-	for (let attempt = 0; attempt <= TRANSCRIPTION_FETCH_RETRY_COUNT; attempt += 1) {
+	for (
+		let attempt = 0;
+		attempt <= TRANSCRIPTION_FETCH_RETRY_COUNT;
+		attempt += 1
+	) {
 		try {
 			return await fetch("/api/transcription/whisper-cpp", {
 				method: "POST",
@@ -265,8 +274,10 @@ function loadLegacySavedCaptionPresets(): SavedCaptionPreset[] {
 				id: item.id,
 				name: item.name,
 				settings: normalizeCaptionLayoutSettings({ settings: item.settings }),
-				createdAt: typeof item.createdAt === "string" ? item.createdAt : timestamp,
-				updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : timestamp,
+				createdAt:
+					typeof item.createdAt === "string" ? item.createdAt : timestamp,
+				updatedAt:
+					typeof item.updatedAt === "string" ? item.updatedAt : timestamp,
 			}));
 	} catch {
 		return [];
@@ -313,7 +324,7 @@ export function Captions() {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const editor = useEditor();
-	const canvasSize = useEditor(
+	const canvasSize = useEditorProject(
 		(e) => e.project.getActive().settings.canvasSize,
 	);
 
@@ -324,10 +335,10 @@ export function Captions() {
 		canvasSize,
 	});
 
-	const activeDiagnostics = useEditor((e) =>
+	const activeDiagnostics = useEditorDiagnostics((e) =>
 		e.diagnostics.getActive({ scope: TRANSCRIPTION_DIAGNOSTICS_SCOPE }),
 	);
-	const hasGeneratedCaptions = useEditor(
+	const hasGeneratedCaptions = useEditorTimelineScenes(
 		(e) =>
 			e.scenes
 				.getActiveSceneOrNull()
@@ -1030,10 +1041,18 @@ export function Captions() {
 							<Select
 								value={captionSettings.wordAnimationId}
 								onValueChange={(value) =>
-									updateCaptionSetting({
-										key: "wordAnimationId",
-										value,
-									})
+									value === "none"
+										? updateCaptionSettings({
+												patch: {
+													wordAnimationId: value,
+													revealMode: "determined-by-preset",
+													transitionIn: "none",
+												},
+											})
+										: updateCaptionSetting({
+												key: "wordAnimationId",
+												value,
+											})
 								}
 							>
 								<SelectTrigger>

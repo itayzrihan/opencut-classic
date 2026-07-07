@@ -1,4 +1,7 @@
-import type { ElementAnimations, ScalarAnimationChannel } from "@/animation/types";
+import type {
+	ElementAnimations,
+	ScalarAnimationChannel,
+} from "@/animation/types";
 import type { TimelineElement } from "@/timeline";
 
 export type TransitionProperty =
@@ -35,6 +38,8 @@ export interface BuildTransitionAnimationsParams {
 	outTransitionId: string;
 	inDuration?: import("@/wasm").MediaTime;
 	outDuration?: import("@/wasm").MediaTime;
+	inStartTime?: import("@/wasm").MediaTime;
+	outStartTime?: import("@/wasm").MediaTime;
 	inPercent?: number;
 	outPercent?: number;
 }
@@ -44,4 +49,6 @@ export interface TransitionAnimationPatch {
 	transitions?: TimelineElement["transitions"];
 }
 
-export type TransitionChannelBuilder = (keys: Array<{ time: number; value: number }>) => ScalarAnimationChannel;
+export type TransitionChannelBuilder = (
+	keys: Array<{ time: number; value: number }>,
+) => ScalarAnimationChannel;

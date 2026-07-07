@@ -25,6 +25,7 @@ interface UpdatedElementRef {
 }
 
 interface TranscriptWordSnapshot {
+	wordId?: string;
 	text: string;
 	start: number;
 	end: number;
@@ -80,6 +81,13 @@ export function syncCaptionSourceWordsFromElements({
 			track,
 			element,
 			elementIndex,
+			previousElement: previousTracks
+				? findTextElementInTracks({
+						tracks: previousTracks,
+						trackId: update.trackId,
+						elementId: update.elementId,
+					})
+				: null,
 		});
 		if (updatedWords !== nextWords) {
 			nextWords = updatedWords;
@@ -124,9 +132,11 @@ export function syncCaptionSourceWordsFromElements({
 
 export function syncTextLayerWordsIntoCaptionSource({
 	tracks,
+	previousTracks,
 	elements,
 }: {
 	tracks: SceneTracks;
+	previousTracks?: SceneTracks;
 	elements: UpdatedElementRef[];
 }): SceneTracks {
 	const sourceTrack = findCaptionSourceTrack({ tracks });
@@ -148,10 +158,26 @@ export function syncTextLayerWordsIntoCaptionSource({
 	const replacedKeys = new Set(
 		elements.map(({ trackId, elementId }) => `${trackId}:${elementId}`),
 	);
+	const replacedElementIds = new Set(
+		elements.map(({ elementId }) => elementId),
+	);
+	const generatedWordIndexesToReplace = previousTracks
+		? getGeneratedWordIndexesForPreviousCaptionElements({
+				source,
+				sourceWords: source.words,
+				previousTracks,
+				currentSourceTrackIds: sourceTrackIds,
+				elements,
+			})
+		: new Set<number>();
 	const nextWords = sortTranscriptionWords([
-		...source.words.filter((word) => {
+		...source.words.filter((word, index) => {
+			if (generatedWordIndexesToReplace.has(index)) return false;
 			if (word.source?.type !== "text-layer") return true;
-			return !replacedKeys.has(`${word.source.trackId}:${word.source.elementId}`);
+			return (
+				!replacedKeys.has(`${word.source.trackId}:${word.source.elementId}`) &&
+				!replacedElementIds.has(word.source.elementId)
+			);
 		}),
 		...nextManualWords,
 	]);
@@ -164,6 +190,50 @@ export function syncTextLayerWordsIntoCaptionSource({
 		source,
 		words: nextWords,
 	});
+}
+
+function getGeneratedWordIndexesForPreviousCaptionElements({
+	source,
+	sourceWords,
+	previousTracks,
+	currentSourceTrackIds,
+	elements,
+}: {
+	source: NonNullable<TextTrack["captionSource"]>;
+	sourceWords: TranscriptionWord[];
+	previousTracks: SceneTracks;
+	currentSourceTrackIds: Set<string>;
+	elements: UpdatedElementRef[];
+}): Set<number> {
+	const previousSourceTracks = findCaptionSourceTracks({
+		tracks: previousTracks,
+		source,
+	});
+	const usedIndexes = new Set<number>();
+	const indexes = new Set<number>();
+
+	for (const ref of elements) {
+		if (currentSourceTrackIds.has(ref.trackId)) continue;
+		const previousElement = previousSourceTracks
+			.flatMap((track) => track.elements)
+			.find((element) => element.id === ref.elementId);
+		if (!previousElement) continue;
+
+		for (const entry of getElementTranscriptWordSnapshots({
+			element: previousElement,
+		})) {
+			const sourceIndex = findSourceWordIndexForTranscriptEntry({
+				sourceWords,
+				entry,
+				usedIndexes,
+			});
+			if (sourceIndex < 0) continue;
+			usedIndexes.add(sourceIndex);
+			indexes.add(sourceIndex);
+		}
+	}
+
+	return indexes;
 }
 
 export function removeTextLayerWordsFromCaptionSource({
@@ -200,14 +270,28 @@ function syncElementWords({
 	track,
 	element,
 	elementIndex,
+	previousElement,
 }: {
 	sourceWords: TranscriptionWord[];
 	track: TextTrack;
 	element: TextElement;
 	elementIndex: number;
+	previousElement: TextElement | null;
 }): TranscriptionWord[] {
 	const source = track.captionSource;
 	if (!source) return sourceWords;
+	if (previousElement) {
+		const updatedWords = syncElementWordsByPreviousWordRuns({
+			sourceWords,
+			source,
+			previousElement,
+			nextElement: element,
+		});
+		if (updatedWords !== sourceWords) {
+			return updatedWords;
+		}
+	}
+
 	const generatedSourceWords = getGeneratedCaptionWords({ words: sourceWords });
 	const captions = buildSubtitleCuesFromWords({
 		words: generatedSourceWords,
@@ -263,6 +347,135 @@ function syncElementWords({
 	});
 
 	return didChange ? nextWords : sourceWords;
+}
+
+function syncElementWordsByPreviousWordRuns({
+	sourceWords,
+	source,
+	previousElement,
+	nextElement,
+}: {
+	sourceWords: TranscriptionWord[];
+	source: NonNullable<TextTrack["captionSource"]>;
+	previousElement: TextElement;
+	nextElement: TextElement;
+}): TranscriptionWord[] {
+	const previousEntries = getElementTranscriptWordSnapshots({
+		element: previousElement,
+	});
+	const nextEntries = getElementTranscriptWordSnapshots({ element: nextElement });
+	if (previousEntries.length === 0 || nextEntries.length === 0) {
+		return sourceWords;
+	}
+
+	const previousEntryIndexes = new Set<number>();
+	const usedSourceIndexes = new Set<number>();
+	const nextWords = [...sourceWords];
+	let didChange = false;
+
+	nextEntries.forEach((nextEntry, entryIndex) => {
+		const previousEntry = findPreviousTranscriptEntry({
+			entries: previousEntries,
+			nextEntry,
+			entryIndex,
+			usedIndexes: previousEntryIndexes,
+		});
+		if (!previousEntry) return;
+		const sourceIndex = findSourceWordIndexForTranscriptEntry({
+			sourceWords,
+			entry: previousEntry,
+			usedIndexes: usedSourceIndexes,
+		});
+		if (sourceIndex < 0) return;
+		usedSourceIndexes.add(sourceIndex);
+
+		const current = nextWords[sourceIndex];
+		const nextText =
+			source.settings.hidePunctuation &&
+			stripCaptionPunctuation({ text: current.text }) ===
+				stripCaptionPunctuation({ text: nextEntry.text })
+				? current.text
+				: nextEntry.text;
+		const nextWord = {
+			...current,
+			text: nextText,
+			start: roundSeconds(nextEntry.start),
+			end: roundSeconds(Math.max(nextEntry.start + 0.01, nextEntry.end)),
+		};
+		if (
+			nextWord.text !== current.text ||
+			nextWord.start !== current.start ||
+			nextWord.end !== current.end
+		) {
+			nextWords[sourceIndex] = nextWord;
+			didChange = true;
+		}
+	});
+
+	return didChange ? nextWords : sourceWords;
+}
+
+function findPreviousTranscriptEntry({
+	entries,
+	nextEntry,
+	entryIndex,
+	usedIndexes,
+}: {
+	entries: TranscriptWordSnapshot[];
+	nextEntry: TranscriptWordSnapshot;
+	entryIndex: number;
+	usedIndexes: Set<number>;
+}): TranscriptWordSnapshot | null {
+	if (nextEntry.wordId) {
+		const wordIdIndex = entries.findIndex(
+			(entry, index) =>
+				!usedIndexes.has(index) && entry.wordId === nextEntry.wordId,
+		);
+		if (wordIdIndex >= 0) {
+			usedIndexes.add(wordIdIndex);
+			return entries[wordIdIndex];
+		}
+	}
+
+	if (entries[entryIndex] && !usedIndexes.has(entryIndex)) {
+		usedIndexes.add(entryIndex);
+		return entries[entryIndex];
+	}
+
+	return null;
+}
+
+function findSourceWordIndexForTranscriptEntry({
+	sourceWords,
+	entry,
+	usedIndexes,
+}: {
+	sourceWords: TranscriptionWord[];
+	entry: TranscriptWordSnapshot;
+	usedIndexes: Set<number>;
+}): number {
+	const normalizedEntry = normalizeTranscriptText({ text: entry.text });
+	let bestIndex = -1;
+	let bestScore = Number.POSITIVE_INFINITY;
+
+	for (const [index, word] of sourceWords.entries()) {
+		if (usedIndexes.has(index)) continue;
+		if (word.source?.type === "text-layer") continue;
+		if (normalizeTranscriptText({ text: word.text }) !== normalizedEntry) {
+			continue;
+		}
+		const score = Math.abs(word.start - entry.start) + Math.abs(word.end - entry.end);
+		if (score < bestScore) {
+			bestIndex = index;
+			bestScore = score;
+		}
+	}
+
+	return bestIndex;
+}
+
+function normalizeTranscriptText({ text }: { text: string }) {
+	return stripCaptionPunctuation({ text }).toLocaleLowerCase();
 }
 
 function getContentWords({ element }: { element: TextElement }) {
@@ -460,6 +673,7 @@ function getElementTranscriptWordSnapshots({
 					? elementEnd
 					: elementStart + mediaTimeToSeconds({ time: run.endTime });
 			return {
+				wordId: run.id,
 				text: run.text,
 				start: roundSeconds(start),
 				end: roundSeconds(Math.max(start + 0.01, end)),
@@ -475,6 +689,7 @@ function getElementTranscriptWordSnapshots({
 		const start = elementStart + index * wordDuration;
 		const end = elementStart + (index + 1) * wordDuration;
 		return {
+			wordId: `word-${index}`,
 			text,
 			start: roundSeconds(start),
 			end: roundSeconds(Math.max(start + 0.01, end)),

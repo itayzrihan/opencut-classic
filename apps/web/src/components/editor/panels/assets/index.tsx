@@ -17,6 +17,7 @@ import { TextView } from "@/text/components/assets-view";
 import { EffectsView } from "@/effects/components/assets-view";
 import { BackgroundsView } from "@/backgrounds/components/assets-view";
 import { OverlayEffectsView } from "@/effects/components/overlay-assets-view";
+import { OverlayMovementView } from "@/effects/components/overlay-movement-assets-view";
 import { TransitionsView } from "@/transitions/components/assets-view";
 import { AiChatView } from "@/ai/components/ai-chat-view";
 
@@ -33,6 +34,7 @@ export function AssetsPanel() {
 		backgrounds: <BackgroundsView />,
 		effects: <EffectsView />,
 		overlays: <OverlayEffectsView />,
+		"overlay-movement": <OverlayMovementView />,
 		transitions: <TransitionsView />,
 		captions: <Captions />,
 		"see-captions": <CaptionReviewView />,

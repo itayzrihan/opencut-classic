@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { KeyboardEvent, MouseEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { EditorCore } from "@/core";
 import { MigrationDialog } from "@/project/components/migration-dialog";
@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useEditor } from "@/editor/use-editor";
+import { useEditor, useEditorProject } from "@/editor/use-editor";
 import { useProjectsStore } from "./store";
 import type {
 	TProjectMetadata,
@@ -67,6 +67,7 @@ import { ProjectInfoDialog } from "@/project/components/project-info-dialog";
 import { RenameProjectDialog } from "@/project/components/rename-project-dialog";
 import { cn } from "@/utils/ui";
 import { ChangelogNotification } from "@/changelog/components/changelog-notification";
+import { filterAndSortProjectMetadata } from "@/core/managers/project-manager";
 const formatProjectDuration = ({
 	duration,
 }: {
@@ -91,10 +92,20 @@ export default function ProjectsPage() {
 	const editor = useEditor();
 	const sortOption: TProjectSortOption = `${sortKey}-${sortOrder}`;
 
-	const isLoading = useEditor((e) => e.project.getIsLoading());
-	const isInitialized = useEditor((e) => e.project.getIsInitialized());
-	const projectsToDisplay = useEditor((e) =>
-		e.project.getFilteredAndSortedProjects({ searchQuery, sortOption }),
+	const [isLoading, isInitialized, savedProjects] = useEditorProject((e) => [
+		e.project.getIsLoading(),
+		e.project.getIsInitialized(),
+		e.project.getSavedProjects(),
+	]);
+
+	const projectsToDisplay = useMemo(
+		() =>
+			filterAndSortProjectMetadata({
+				projects: savedProjects,
+				searchQuery,
+				sortOption,
+			}),
+		[savedProjects, searchQuery, sortOption],
 	);
 
 	useEffect(() => {
