@@ -25,6 +25,8 @@ interface TextPart {
 	textRowOverrides?: TextRowOverride[];
 }
 
+export type TextLineBreakAction = "start-line" | "join-previous";
+
 function textContent({ element }: { element: TextElement }) {
 	return typeof element.params.content === "string" ? element.params.content : "";
 }
@@ -49,6 +51,13 @@ function wordsFromContent({ element }: { element: TextElement }): TextWordRun[] 
 		startTime: mediaTime({ ticks: Math.round(index * wordDuration) }),
 		endTime: mediaTime({ ticks: Math.round((index + 1) * wordDuration) }),
 	}));
+}
+
+function stripWordTiming({ run }: { run: TextWordRun }): TextWordRun {
+	const next = { ...run };
+	delete next.startTime;
+	delete next.endTime;
+	return next;
 }
 
 function timedWordRuns({ element }: { element: TextElement }): TimedWordRun[] {
@@ -101,6 +110,69 @@ function contentFromRuns({ runs }: { runs: TextWordRun[] }) {
 		.sort(([left], [right]) => left - right)
 		.map(([, words]) => words.join(" "))
 		.join("\n");
+}
+
+function getLineStartIndexes({ runs }: { runs: TextWordRun[] }): number[] {
+	return runs.reduce((starts, run, index) => {
+		if (index === 0 || run.lineIndex !== runs[index - 1]?.lineIndex) {
+			return [...starts, index];
+		}
+		return starts;
+	}, [] as number[]);
+}
+
+function applyLineStartIndexes({
+	runs,
+	lineStartIndexes,
+}: {
+	runs: TextWordRun[];
+	lineStartIndexes: number[];
+}): TextWordRun[] {
+	const starts = [...new Set([0, ...lineStartIndexes])]
+		.filter((index) => index >= 0 && index < runs.length)
+		.sort((left, right) => left - right);
+
+	return runs.map((run, index) => ({
+		...run,
+		lineIndex: starts.filter((start) => start <= index).length - 1,
+	}));
+}
+
+export function buildTextLineBreakPatch({
+	element,
+	wordId,
+	action,
+}: {
+	element: TextElement;
+	wordId: string;
+	action: TextLineBreakAction;
+}): Pick<TextElement, "params" | "wordRuns"> | null {
+	const hasExplicitWordRuns = (element.wordRuns?.length ?? 0) > 0;
+	const runs = hasExplicitWordRuns
+		? element.wordRuns ?? []
+		: wordsFromContent({ element }).map((run) => stripWordTiming({ run }));
+	const wordIndex = runs.findIndex((run) => run.id === wordId);
+	if (wordIndex <= 0) return null;
+
+	const starts = new Set(getLineStartIndexes({ runs }));
+	if (action === "start-line") {
+		starts.add(wordIndex);
+	} else {
+		starts.delete(wordIndex);
+	}
+
+	const wordRuns = applyLineStartIndexes({
+		runs,
+		lineStartIndexes: [...starts],
+	});
+
+	return {
+		params: {
+			...element.params,
+			content: contentFromRuns({ runs: wordRuns }),
+		},
+		wordRuns,
+	};
 }
 
 function remapRowOverrides({
@@ -194,6 +266,44 @@ function applyPartToElement({
 	};
 }
 
+function normalizeMergedTransitions({
+	element,
+	duration,
+}: {
+	element: TextElement;
+	duration: MediaTime;
+}): TextElement["transitions"] {
+	if (!element.transitions) return undefined;
+
+	const transitions: TextElement["transitions"] = { ...element.transitions };
+	if (transitions.in) {
+		const inDuration = minMediaTime({
+			a: transitions.in.duration,
+			b: duration,
+		});
+		transitions.in = {
+			...transitions.in,
+			duration: inDuration,
+			startTime: ZERO_MEDIA_TIME,
+		};
+	}
+	if (transitions.out) {
+		const outDuration = minMediaTime({
+			a: transitions.out.duration,
+			b: duration,
+		});
+		transitions.out = {
+			...transitions.out,
+			duration: outDuration,
+			startTime: mediaTime({
+				ticks: Math.max(0, Math.round(duration - outDuration)),
+			}),
+		};
+	}
+
+	return transitions.in || transitions.out ? transitions : undefined;
+}
+
 export function splitTextElementAtTime({
 	element,
 	relativeTime,
@@ -258,8 +368,10 @@ export function splitTextElementAtTime({
 
 export function mergeTextElements({
 	items,
+	mode = "single-line",
 }: {
 	items: Array<{ trackId: string; element: TextElement }>;
+	mode?: "single-line" | "multiline";
 }): {
 	targetTrackId: string;
 	targetElementId: string;
@@ -285,9 +397,10 @@ export function mergeTextElements({
 	const duration = mediaTime({
 		ticks: Math.max(1, Math.round(endTime - startTime)),
 	});
-	const mergedEntries = sorted.flatMap((item) =>
+	const mergedEntries = sorted.flatMap((item, itemIndex) =>
 		timedWordRuns({ element: item.element }).map((entry) => ({
 			...entry,
+			lineIndex: mode === "multiline" ? itemIndex : entry.lineIndex,
 			startTime: mediaTime({
 				ticks: Math.round(item.element.startTime - startTime + entry.startTime),
 			}),
@@ -301,13 +414,31 @@ export function mergeTextElements({
 		entries: mergedEntries,
 		offsetTime: ZERO_MEDIA_TIME,
 		duration,
-		forceSingleLine: true,
+		forceSingleLine: mode === "single-line",
 	});
+	const mergedPart =
+		mode === "multiline"
+			? {
+					...part,
+					wordRuns: part.wordRuns.map((run) => stripWordTiming({ run })),
+				}
+			: part;
 	const mergedElement = {
-		...applyPartToElement({ element: target.element, part }),
+		...applyPartToElement({ element: target.element, part: mergedPart }),
 		startTime,
 		duration,
 		name: target.element.name,
+		transitions: normalizeMergedTransitions({
+			element: target.element,
+			duration,
+		}),
+		...(mode === "multiline"
+			? {
+					captionWordAnimationId: "none",
+					captionRevealMode: "row" as const,
+					captionTransitionIn: "none" as const,
+				}
+			: {}),
 	};
 
 	return {

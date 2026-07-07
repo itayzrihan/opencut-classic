@@ -31,6 +31,11 @@ interface TranscriptWordSnapshot {
 	end: number;
 }
 
+interface PresentationWordSnapshot {
+	wordId?: string;
+	text: string;
+}
+
 interface TextElementWithTrack {
 	track: TextTrack;
 	element: TextElement;
@@ -145,7 +150,7 @@ export function syncTextLayerWordsIntoCaptionSource({
 
 	const sourceTracks = findCaptionSourceTracks({ tracks, source });
 	const sourceTrackIds = new Set(sourceTracks.map((track) => track.id));
-	const nextManualWords = elements.flatMap((ref) => {
+	const syncEntries = elements.flatMap((ref) => {
 		if (sourceTrackIds.has(ref.trackId)) return [];
 		const entry = findTextElementWithTrack({
 			tracks,
@@ -153,13 +158,17 @@ export function syncTextLayerWordsIntoCaptionSource({
 			elementId: ref.elementId,
 		});
 		if (!entry) return [];
+		if (isPresentationOnlyWordRunElement({ element: entry.element })) return [];
+		return [{ ref, entry }];
+	});
+	const nextManualWords = syncEntries.flatMap(({ entry }) => {
 		return buildTextLayerTranscriptionWords(entry);
 	});
 	const replacedKeys = new Set(
-		elements.map(({ trackId, elementId }) => `${trackId}:${elementId}`),
+		syncEntries.map(({ ref }) => `${ref.trackId}:${ref.elementId}`),
 	);
 	const replacedElementIds = new Set(
-		elements.map(({ elementId }) => elementId),
+		syncEntries.map(({ ref }) => ref.elementId),
 	);
 	const generatedWordIndexesToReplace = previousTracks
 		? getGeneratedWordIndexesForPreviousCaptionElements({
@@ -281,6 +290,16 @@ function syncElementWords({
 	const source = track.captionSource;
 	if (!source) return sourceWords;
 	if (previousElement) {
+		const presentationOnlyWords = syncPresentationOnlyElementWords({
+			sourceWords,
+			source,
+			previousElement,
+			nextElement: element,
+		});
+		if (presentationOnlyWords !== sourceWords) {
+			return presentationOnlyWords;
+		}
+
 		const updatedWords = syncElementWordsByPreviousWordRuns({
 			sourceWords,
 			source,
@@ -349,6 +368,83 @@ function syncElementWords({
 	return didChange ? nextWords : sourceWords;
 }
 
+function syncPresentationOnlyElementWords({
+	sourceWords,
+	source,
+	previousElement,
+	nextElement,
+}: {
+	sourceWords: TranscriptionWord[];
+	source: NonNullable<TextTrack["captionSource"]>;
+	previousElement: TextElement;
+	nextElement: TextElement;
+}): TranscriptionWord[] {
+	if (
+		!isPresentationOnlyWordRunElement({ element: previousElement }) ||
+		!isPresentationOnlyWordRunElement({ element: nextElement })
+	) {
+		return sourceWords;
+	}
+
+	const previousEntries = getElementPresentationWordSnapshots({
+		element: previousElement,
+	});
+	const nextEntries = getElementPresentationWordSnapshots({
+		element: nextElement,
+	});
+	if (previousEntries.length === 0) return sourceWords;
+
+	const sourceIndexesByPreviousEntry = mapPresentationEntriesToSourceWords({
+		sourceWords,
+		entries: previousEntries,
+		element: previousElement,
+	});
+	const usedPreviousEntryIndexes = new Set<number>();
+	const nextWords = [...sourceWords];
+	const sourceIndexesToRemove = new Set<number>();
+	let didChange = false;
+
+	nextEntries.forEach((nextEntry, entryIndex) => {
+		const previousEntryIndex = findPreviousPresentationEntryIndex({
+			entries: previousEntries,
+			nextEntry,
+			entryIndex,
+			usedIndexes: usedPreviousEntryIndexes,
+		});
+		if (previousEntryIndex < 0) return;
+
+		const sourceIndex = sourceIndexesByPreviousEntry.get(previousEntryIndex);
+		if (sourceIndex == null) return;
+
+		const current = nextWords[sourceIndex];
+		const nextText =
+			source.settings.hidePunctuation &&
+			stripCaptionPunctuation({ text: current.text }) ===
+				stripCaptionPunctuation({ text: nextEntry.text })
+				? current.text
+				: nextEntry.text;
+		if (current.text !== nextText) {
+			nextWords[sourceIndex] = {
+				...current,
+				text: nextText,
+			};
+			didChange = true;
+		}
+	});
+
+	for (const [entryIndex, sourceIndex] of sourceIndexesByPreviousEntry) {
+		if (usedPreviousEntryIndexes.has(entryIndex)) continue;
+		sourceIndexesToRemove.add(sourceIndex);
+		didChange = true;
+	}
+
+	if (sourceIndexesToRemove.size > 0) {
+		return nextWords.filter((_, index) => !sourceIndexesToRemove.has(index));
+	}
+
+	return didChange ? nextWords : sourceWords;
+}
+
 function syncElementWordsByPreviousWordRuns({
 	sourceWords,
 	source,
@@ -364,7 +460,7 @@ function syncElementWordsByPreviousWordRuns({
 		element: previousElement,
 	});
 	const nextEntries = getElementTranscriptWordSnapshots({ element: nextElement });
-	if (previousEntries.length === 0 || nextEntries.length === 0) {
+	if (previousEntries.length === 0) {
 		return sourceWords;
 	}
 
@@ -412,6 +508,24 @@ function syncElementWordsByPreviousWordRuns({
 		}
 	});
 
+	const sourceIndexesToRemove = new Set<number>();
+	previousEntries.forEach((previousEntry, entryIndex) => {
+		if (previousEntryIndexes.has(entryIndex)) return;
+		const sourceIndex = findSourceWordIndexForTranscriptEntry({
+			sourceWords,
+			entry: previousEntry,
+			usedIndexes: usedSourceIndexes,
+		});
+		if (sourceIndex < 0) return;
+		usedSourceIndexes.add(sourceIndex);
+		sourceIndexesToRemove.add(sourceIndex);
+		didChange = true;
+	});
+
+	if (sourceIndexesToRemove.size > 0) {
+		return nextWords.filter((_, index) => !sourceIndexesToRemove.has(index));
+	}
+
 	return didChange ? nextWords : sourceWords;
 }
 
@@ -445,6 +559,47 @@ function findPreviousTranscriptEntry({
 	return null;
 }
 
+function findPreviousPresentationEntryIndex({
+	entries,
+	nextEntry,
+	entryIndex,
+	usedIndexes,
+}: {
+	entries: PresentationWordSnapshot[];
+	nextEntry: PresentationWordSnapshot;
+	entryIndex: number;
+	usedIndexes: Set<number>;
+}): number {
+	if (nextEntry.wordId) {
+		const wordIdIndex = entries.findIndex(
+			(entry, index) =>
+				!usedIndexes.has(index) && entry.wordId === nextEntry.wordId,
+		);
+		if (wordIdIndex >= 0) {
+			usedIndexes.add(wordIdIndex);
+			return wordIdIndex;
+		}
+	}
+
+	if (entries[entryIndex] && !usedIndexes.has(entryIndex)) {
+		usedIndexes.add(entryIndex);
+		return entryIndex;
+	}
+
+	const normalizedEntry = normalizeTranscriptText({ text: nextEntry.text });
+	const textIndex = entries.findIndex(
+		(entry, index) =>
+			!usedIndexes.has(index) &&
+			normalizeTranscriptText({ text: entry.text }) === normalizedEntry,
+	);
+	if (textIndex >= 0) {
+		usedIndexes.add(textIndex);
+		return textIndex;
+	}
+
+	return -1;
+}
+
 function findSourceWordIndexForTranscriptEntry({
 	sourceWords,
 	entry,
@@ -472,6 +627,81 @@ function findSourceWordIndexForTranscriptEntry({
 	}
 
 	return bestIndex;
+}
+
+function mapPresentationEntriesToSourceWords({
+	sourceWords,
+	entries,
+	element,
+}: {
+	sourceWords: TranscriptionWord[];
+	entries: PresentationWordSnapshot[];
+	element: TextElement;
+}): Map<number, number> {
+	const usedSourceIndexes = new Set<number>();
+	const result = new Map<number, number>();
+	let searchStart = 0;
+
+	entries.forEach((entry, entryIndex) => {
+		let sourceIndex = findSourceWordIndexForPresentationEntry({
+			sourceWords,
+			entry,
+			element,
+			usedIndexes: usedSourceIndexes,
+			searchStart,
+		});
+		if (sourceIndex < 0) {
+			sourceIndex = findSourceWordIndexForPresentationEntry({
+				sourceWords,
+				entry,
+				element,
+				usedIndexes: usedSourceIndexes,
+				searchStart: 0,
+			});
+		}
+		if (sourceIndex < 0) return;
+		usedSourceIndexes.add(sourceIndex);
+		result.set(entryIndex, sourceIndex);
+		searchStart = sourceIndex + 1;
+	});
+
+	return result;
+}
+
+function findSourceWordIndexForPresentationEntry({
+	sourceWords,
+	entry,
+	element,
+	usedIndexes,
+	searchStart,
+}: {
+	sourceWords: TranscriptionWord[];
+	entry: PresentationWordSnapshot;
+	element: TextElement;
+	usedIndexes: Set<number>;
+	searchStart: number;
+}): number {
+	const normalizedEntry = normalizeTranscriptText({ text: entry.text });
+	const elementStart = mediaTimeToSeconds({ time: element.startTime });
+	const elementEnd =
+		elementStart + mediaTimeToSeconds({ time: element.duration });
+	let fallbackIndex = -1;
+
+	for (let index = searchStart; index < sourceWords.length; index++) {
+		const word = sourceWords[index];
+		if (!word || usedIndexes.has(index)) continue;
+		if (word.source?.type === "text-layer") continue;
+		if (normalizeTranscriptText({ text: word.text }) !== normalizedEntry) {
+			continue;
+		}
+		fallbackIndex = fallbackIndex < 0 ? index : fallbackIndex;
+		const midpoint = (word.start + word.end) / 2;
+		if (midpoint >= elementStart - 0.001 && midpoint <= elementEnd + 0.001) {
+			return index;
+		}
+	}
+
+	return fallbackIndex;
 }
 
 function normalizeTranscriptText({ text }: { text: string }) {
@@ -509,17 +739,10 @@ function buildTextLayerTranscriptionWords({
 }: TextElementWithTrack): TranscriptionWord[] {
 	if (element.wordRuns?.length) {
 		const elementStart = mediaTimeToSeconds({ time: element.startTime });
-		const elementEnd =
-			elementStart + mediaTimeToSeconds({ time: element.duration });
-		return element.wordRuns.map((run, wordIndex) => {
-			const start =
-				run.startTime == null
-					? elementStart
-					: elementStart + mediaTimeToSeconds({ time: run.startTime });
-			const end =
-				run.endTime == null
-					? elementEnd
-					: elementStart + mediaTimeToSeconds({ time: run.endTime });
+		return element.wordRuns.flatMap((run, wordIndex) => {
+			if (!isTimedWordRun(run)) return [];
+			const start = elementStart + mediaTimeToSeconds({ time: run.startTime });
+			const end = elementStart + mediaTimeToSeconds({ time: run.endTime });
 			return {
 				text: run.text,
 				start: roundSeconds(start),
@@ -632,6 +855,15 @@ function hasElementTranscriptSemanticChange({
 		elementId: update.elementId,
 	});
 	if (!previousElement) return true;
+	if (
+		isPresentationOnlyWordRunElement({ element: previousElement }) ||
+		isPresentationOnlyWordRunElement({ element: nextElement })
+	) {
+		return !arePresentationWordSnapshotsEqual({
+			left: getElementPresentationWordSnapshots({ element: previousElement }),
+			right: getElementPresentationWordSnapshots({ element: nextElement }),
+		});
+	}
 	return !areTranscriptWordSnapshotsEqual({
 		left: getElementTranscriptWordSnapshots({ element: previousElement }),
 		right: getElementTranscriptWordSnapshots({ element: nextElement }),
@@ -661,17 +893,10 @@ function getElementTranscriptWordSnapshots({
 }): TranscriptWordSnapshot[] {
 	if (element.wordRuns?.length) {
 		const elementStart = mediaTimeToSeconds({ time: element.startTime });
-		const elementEnd =
-			elementStart + mediaTimeToSeconds({ time: element.duration });
-		return element.wordRuns.map((run) => {
-			const start =
-				run.startTime == null
-					? elementStart
-					: elementStart + mediaTimeToSeconds({ time: run.startTime });
-			const end =
-				run.endTime == null
-					? elementEnd
-					: elementStart + mediaTimeToSeconds({ time: run.endTime });
+		return element.wordRuns.flatMap((run) => {
+			if (!isTimedWordRun(run)) return [];
+			const start = elementStart + mediaTimeToSeconds({ time: run.startTime });
+			const end = elementStart + mediaTimeToSeconds({ time: run.endTime });
 			return {
 				wordId: run.id,
 				text: run.text,
@@ -697,6 +922,22 @@ function getElementTranscriptWordSnapshots({
 	});
 }
 
+function getElementPresentationWordSnapshots({
+	element,
+}: {
+	element: TextElement;
+}): PresentationWordSnapshot[] {
+	return (element.wordRuns ?? []).flatMap((run) => {
+		if (!run.text.trim()) return [];
+		return [
+			{
+				wordId: run.id,
+				text: run.text,
+			},
+		];
+	});
+}
+
 function areTranscriptWordSnapshotsEqual({
 	left,
 	right,
@@ -715,6 +956,38 @@ function areTranscriptWordSnapshotsEqual({
 	});
 }
 
+function arePresentationWordSnapshotsEqual({
+	left,
+	right,
+}: {
+	left: PresentationWordSnapshot[];
+	right: PresentationWordSnapshot[];
+}) {
+	if (left.length !== right.length) return false;
+	return left.every((word, index) => {
+		const candidate = right[index];
+		return candidate?.text === word.text && candidate.wordId === word.wordId;
+	});
+}
+
 function roundSeconds(value: number) {
 	return Math.round(value * 1000) / 1000;
+}
+
+function isTimedWordRun(
+	run: NonNullable<TextElement["wordRuns"]>[number],
+): run is NonNullable<TextElement["wordRuns"]>[number] &
+	Required<Pick<NonNullable<TextElement["wordRuns"]>[number], "startTime" | "endTime">> {
+	return run.startTime != null && run.endTime != null;
+}
+
+function isPresentationOnlyWordRunElement({
+	element,
+}: {
+	element: TextElement;
+}) {
+	return (
+		(element.wordRuns?.length ?? 0) > 0 &&
+		!element.wordRuns?.some((run) => isTimedWordRun(run))
+	);
 }

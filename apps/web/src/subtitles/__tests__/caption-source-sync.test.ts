@@ -158,6 +158,95 @@ function elementContent({ element }: { element: TextElement }) {
 }
 
 describe("syncCaptionSourceWordsFromElements", () => {
+	test("removes a deleted rendered caption word from source words", () => {
+		const settings = {
+			...DEFAULT_CAPTION_LAYOUT,
+			wordsPerRow: 3,
+			rows: 1,
+			inPaddingPercent: 0,
+			outPaddingPercent: 0,
+		};
+		const previousElement = textElement({
+			id: "caption",
+			text: "one two three",
+			start: 0,
+			end: 3,
+			wordRuns: [
+				{
+					id: "word-0",
+					text: "one",
+					lineIndex: 0,
+					startTime: mediaTimeFromSeconds({ seconds: 0 }),
+					endTime: mediaTimeFromSeconds({ seconds: 1 }),
+				},
+				{
+					id: "word-1",
+					text: "two",
+					lineIndex: 0,
+					startTime: mediaTimeFromSeconds({ seconds: 1 }),
+					endTime: mediaTimeFromSeconds({ seconds: 2 }),
+				},
+				{
+					id: "word-2",
+					text: "three",
+					lineIndex: 0,
+					startTime: mediaTimeFromSeconds({ seconds: 2 }),
+					endTime: mediaTimeFromSeconds({ seconds: 3 }),
+				},
+			],
+		});
+		const nextElement = {
+			...previousElement,
+			params: { ...previousElement.params, content: "one three" },
+			wordRuns: [
+				previousElement.wordRuns![0],
+				previousElement.wordRuns![2],
+			],
+		};
+		const sourceWords = [
+			{ text: "one", start: 0, end: 1 },
+			{ text: "two", start: 1, end: 2 },
+			{ text: "three", start: 2, end: 3 },
+		];
+		const previousTracks: SceneTracks = {
+			overlay: [
+				textTrack({
+					elements: [previousElement],
+					settings,
+					words: sourceWords,
+				}),
+			],
+			main: mainTrack(),
+			audio: [],
+		};
+		const tracks: SceneTracks = {
+			overlay: [
+				textTrack({
+					elements: [nextElement],
+					settings,
+					words: sourceWords,
+				}),
+			],
+			main: mainTrack(),
+			audio: [],
+		};
+
+		const nextTracks = syncCaptionSourceWordsFromElements({
+			tracks,
+			previousTracks,
+			updates: [{ trackId: "captions", elementId: "caption" }],
+		});
+		const captionTrack = nextTracks.overlay.find(
+			(track): track is TextTrack =>
+				track.type === "text" && !!track.captionSource,
+		);
+
+		expect(captionTrack?.captionSource?.words.map((word) => word.text)).toEqual([
+			"one",
+			"three",
+		]);
+	});
+
 	test("renders hidden punctuation without mutating source words", () => {
 		const settings = {
 			...DEFAULT_CAPTION_LAYOUT,
@@ -811,6 +900,82 @@ describe("syncCaptionSourceWordsFromElements", () => {
 		]);
 	});
 
+	test("removes a word from a presentation-only multiline caption without restoring original chunks", () => {
+		const settings = {
+			...DEFAULT_CAPTION_LAYOUT,
+			wordsPerRow: 3,
+			rows: 1,
+			inPaddingPercent: 0,
+			outPaddingPercent: 0,
+		};
+		const sourceWords = [
+			{ text: "one", start: 0, end: 1 },
+			{ text: "two", start: 1, end: 2 },
+			{ text: "three", start: 2, end: 3 },
+		];
+		const mergedWords = textElement({
+			id: "merged",
+			text: "one\ntwo\nthree",
+			start: 0,
+			end: 3,
+			wordRuns: [
+				{ id: "word-0", text: "one", lineIndex: 0 },
+				{ id: "word-1", text: "two", lineIndex: 1 },
+				{ id: "word-2", text: "three", lineIndex: 2 },
+			],
+		});
+		const previousTracks: SceneTracks = {
+			overlay: [
+				textTrack({
+					elements: [mergedWords],
+					settings,
+					words: sourceWords,
+				}),
+			],
+			main: mainTrack(),
+			audio: [],
+		};
+		const editedMergedWords = {
+			...mergedWords,
+			params: {
+				...mergedWords.params,
+				content: "one\nthree",
+			},
+			wordRuns: [mergedWords.wordRuns![0], mergedWords.wordRuns![2]],
+		};
+		const tracksBeforeSync: SceneTracks = {
+			...previousTracks,
+			overlay: [
+				textTrack({
+					elements: [editedMergedWords],
+					settings,
+					words: sourceWords,
+				}),
+			],
+		};
+
+		const nextTracks = syncCaptionSourceWordsFromElements({
+			tracks: tracksBeforeSync,
+			previousTracks,
+			updates: [{ trackId: "captions", elementId: "merged" }],
+		});
+		const captionTrack = nextTracks.overlay.find(
+			(track): track is TextTrack =>
+				track.type === "text" && !!track.captionSource,
+		);
+
+		expect(captionTrack?.elements.map((element) => element.id)).toEqual([
+			"merged",
+		]);
+		expect(
+			captionTrack?.elements.map((element) => elementContent({ element })),
+		).toEqual(["one\nthree"]);
+		expect(captionTrack?.captionSource?.words.map((word) => word.text)).toEqual([
+			"one",
+			"three",
+		]);
+	});
+
 	test("rebuild removes stale caption source tracks after a text edit", () => {
 		const settings = {
 			...DEFAULT_CAPTION_LAYOUT,
@@ -1016,6 +1181,77 @@ describe("syncCaptionSourceWordsFromElements", () => {
 		expect(manualTrack?.elements.map((element) => element.id)).toEqual([
 			"manual-title",
 		]);
+	});
+
+	test("does not replace caption source words for presentation-only multiline runs", () => {
+		const settings = {
+			...DEFAULT_CAPTION_LAYOUT,
+			wordsPerRow: 1,
+			rows: 1,
+			inPaddingPercent: 0,
+			outPaddingPercent: 0,
+		};
+		const tracks: SceneTracks = {
+			overlay: [
+				textTrack({
+					elements: [
+						textElement({ id: "hello", text: "Hello", start: 0, end: 1 }),
+					],
+					settings,
+					words: [
+						{ text: "Hello", start: 0, end: 1 },
+						{
+							text: "Manual",
+							start: 2,
+							end: 4,
+							source: {
+								type: "text-layer",
+								trackId: "manual-text",
+								elementId: "manual-title",
+								wordIndex: 0,
+								wordId: "word-0",
+							},
+						},
+					],
+				}),
+				manualTextTrack({
+					elements: [
+						textElement({
+							id: "manual-title",
+							text: "Manual\ntitle",
+							start: 2,
+							end: 4,
+							wordRuns: [
+								{ id: "word-0", text: "Manual", lineIndex: 0 },
+								{ id: "word-1", text: "title", lineIndex: 1 },
+							],
+						}),
+					],
+				}),
+			],
+			main: mainTrack(),
+			audio: [],
+		};
+
+		const syncedTracks = syncTextLayerWordsIntoCaptionSource({
+			tracks,
+			elements: [{ trackId: "manual-text", elementId: "manual-title" }],
+		});
+		const captionTrack = syncedTracks.overlay.find(
+			(track): track is TextTrack =>
+				track.type === "text" && !!track.captionSource,
+		);
+
+		expect(captionTrack?.captionSource?.words.map((word) => word.text)).toEqual([
+			"Hello",
+			"Manual",
+		]);
+		expect(captionTrack?.captionSource?.words[1].source).toMatchObject({
+			type: "text-layer",
+			trackId: "manual-text",
+			elementId: "manual-title",
+			wordIndex: 0,
+		});
 	});
 
 	test("moving a manual text layer to another track replaces its old source word ref", () => {

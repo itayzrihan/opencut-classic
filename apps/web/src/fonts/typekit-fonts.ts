@@ -1,3 +1,5 @@
+import { loadDocumentFontSamples } from "@/fonts/font-loading";
+
 export const TYPEKIT_STYLESHEET_URL = "https://use.typekit.net/rbg2gqg.css";
 
 const TYPEKIT_STYLE_ELEMENT_ID = "opencut-typekit-rbg2gqg";
@@ -136,9 +138,9 @@ export async function loadTypekitFont({
 	const escapedFamily = family.replace(/"/g, '\\"');
 	await Promise.all(
 		variants.map((variant) =>
-			document.fonts
-				.load(`${variant.style} ${variant.weight} 16px "${escapedFamily}"`)
-				.catch(() => undefined),
+			loadDocumentFontSamples({
+				font: `${variant.style} ${variant.weight} 16px "${escapedFamily}"`,
+			}).catch(() => undefined),
 		),
 	);
 	loadedFamilySignatures.set(family, signature);

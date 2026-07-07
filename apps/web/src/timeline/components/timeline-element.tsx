@@ -655,12 +655,20 @@ function TimelineElementMenuContent({
 				</ActionMenuItem>
 			)}
 			{canMergeSelectedTextElements && (
-				<ActionMenuItem
-					action="merge-text-selected"
-					icon={<HugeiconsIcon icon={TextIcon} />}
-				>
-					Connect text layers
-				</ActionMenuItem>
+				<>
+					<ActionMenuItem
+						action="merge-text-selected"
+						icon={<HugeiconsIcon icon={TextIcon} />}
+					>
+						Connect text layers
+					</ActionMenuItem>
+					<ActionMenuItem
+						action="merge-text-selected-multiline"
+						icon={<HugeiconsIcon icon={TextIcon} />}
+					>
+						Connect as multiline
+					</ActionMenuItem>
+				</>
 			)}
 			{canElementHaveAudio(element) && hasAudio && (
 				<MuteMenuItem

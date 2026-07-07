@@ -5,6 +5,11 @@ import {
 	type TextTrack,
 } from "@/timeline";
 import {
+	buildTextElementWordDeletePatch,
+	buildTextElementWordInsertPatch,
+	buildTextElementWordUpdates,
+} from "@/timeline/components/caption-word-updates";
+import {
 	addMediaTime,
 	mediaTime,
 	type MediaTime,
@@ -37,17 +42,6 @@ function contentWordsFromText({ content }: { content: string }): ContentWord[] {
 		const words = line.match(/\S+/g) ?? [];
 		return words.map((text) => ({ text, lineIndex }));
 	});
-}
-
-function contentFromWords({ words }: { words: ContentWord[] }) {
-	const rows = new Map<number, string[]>();
-	for (const word of words) {
-		rows.set(word.lineIndex, [...(rows.get(word.lineIndex) ?? []), word.text]);
-	}
-	return [...rows.entries()]
-		.sort(([left], [right]) => left - right)
-		.map(([, rowWords]) => rowWords.filter(Boolean).join(" "))
-		.join("\n");
 }
 
 function wordTiming({
@@ -187,10 +181,6 @@ export function findCaptionReviewTextElement({
 	);
 }
 
-function normalizeEditedWordText({ text }: { text: string }) {
-	return text.replace(/\s+/g, " ").trim();
-}
-
 export function buildCaptionReviewWordPatch({
 	element,
 	wordIndex,
@@ -200,45 +190,67 @@ export function buildCaptionReviewWordPatch({
 	wordIndex: number;
 	text: string;
 }): Partial<TextElement> | null {
-	const nextText = normalizeEditedWordText({ text });
-	if (element.wordRuns?.[wordIndex]) {
-		const nextWordRuns = element.wordRuns.map((run, index) =>
-			index === wordIndex
-				? {
-						...run,
-						text: nextText,
-					}
-				: run,
-		);
-		return {
-			params: {
-				content: contentFromWords({
-					words: nextWordRuns.map((run) => ({
-						text: run.text,
-						lineIndex: run.lineIndex,
-					})),
-				}),
+	return buildTextElementWordUpdates({
+		tracks: {
+			overlay: [
+				{
+					id: "__caption-review-track",
+					type: "text",
+					name: "Captions",
+					hidden: false,
+					elements: [element],
+				},
+			],
+			main: {
+				id: "__caption-review-main",
+				type: "video",
+				name: "Main",
+				elements: [],
+				muted: false,
+				hidden: false,
 			},
-			wordRuns: nextWordRuns,
-		};
-	}
-
-	const words = contentWordsFromText({ content: getTextContent({ element }) });
-	if (!words[wordIndex]) return null;
-	return {
-		params: {
-			content: contentFromWords({
-				words: words.map((word, index) =>
-					index === wordIndex
-						? {
-								...word,
-								text: nextText,
-							}
-						: word,
-				),
-			}),
+			audio: [],
 		},
-	};
+		refs: [
+			{
+				trackId: "__caption-review-track",
+				elementId: element.id,
+				wordId: element.wordRuns?.[wordIndex]?.id ?? `word-${wordIndex}`,
+			},
+		],
+		currentWord: {
+			text: element.wordRuns?.[wordIndex]?.text ?? "",
+			start: 0,
+			end: 1,
+		},
+		nextWord: {
+			text,
+			start: 0,
+			end: 1,
+		},
+	})[0]?.patch ?? null;
+}
+
+export function buildCaptionReviewWordInsertPatch({
+	element,
+	insertIndex,
+	text,
+}: {
+	element: TextElement;
+	insertIndex: number;
+	text: string;
+}): Partial<TextElement> | null {
+	return buildTextElementWordInsertPatch({ element, insertIndex, text });
+}
+
+export function buildCaptionReviewWordDeletePatch({
+	element,
+	wordIndex,
+}: {
+	element: TextElement;
+	wordIndex: number;
+}): Partial<TextElement> | null {
+	return buildTextElementWordDeletePatch({ element, wordIndex });
 }
 
 function distanceFromItem({

@@ -1,8 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { invokeAction } from "@/actions";
 import { useEditor } from "@/editor/use-editor";
 import { useKeybindingsStore } from "@/actions/keybindings-store";
 import { isTypableDOMElement } from "@/utils/browser";
+import type { Key, ShortcutKey } from "@/actions/keybinding";
+import { isKey } from "@/actions/keybinding";
 
 /**
  * a composable that hooks to the caller component's
@@ -11,6 +13,7 @@ import { isTypableDOMElement } from "@/utils/browser";
  */
 export function useKeybindingsListener() {
 	const editor = useEditor();
+	const pressedKeysRef = useRef<Set<Key>>(new Set());
 	const {
 		keybindings,
 		getKeybindingString,
@@ -33,14 +36,25 @@ export function useKeybindingsListener() {
 			const isTextInput =
 				activeElement instanceof HTMLElement &&
 				isTypableDOMElement({ element: activeElement });
-			const boundAction = binding ? keybindings.get(binding) : undefined;
+			const chordBinding = binding
+				? getActiveChordBinding({
+						binding,
+						keybindings,
+						pressedKeys: pressedKeysRef.current,
+					})
+				: null;
+			const effectiveBinding = chordBinding ?? binding;
+			const boundAction = effectiveBinding
+				? keybindings.get(effectiveBinding)
+				: undefined;
+			rememberPressedKey({ binding, pressedKeys: pressedKeysRef.current });
 
 			if (normalizedKey === "escape" && isTextInput) {
 				activeElement.blur();
 				return;
 			}
 
-			if (!binding) return;
+			if (!effectiveBinding) return;
 			if (!boundAction) return;
 
 			if (isTextInput) return;
@@ -70,11 +84,24 @@ export function useKeybindingsListener() {
 					invokeAction(boundAction, undefined, "keypress");
 			}
 		};
+		const handleKeyUp = (ev: KeyboardEvent) => {
+			const binding = getKeybindingString(ev);
+			if (!binding) return;
+			forgetPressedKey({ binding, pressedKeys: pressedKeysRef.current });
+		};
+		const clearPressedKeys = () => {
+			pressedKeysRef.current.clear();
+		};
 
 		document.addEventListener("keydown", handleKeyDown, eventOptions);
+		document.addEventListener("keyup", handleKeyUp, eventOptions);
+		window.addEventListener("blur", clearPressedKeys);
 
 		return () => {
 			document.removeEventListener("keydown", handleKeyDown, eventOptions);
+			document.removeEventListener("keyup", handleKeyUp, eventOptions);
+			window.removeEventListener("blur", clearPressedKeys);
+			clearPressedKeys();
 		};
 	}, [
 		keybindings,
@@ -84,4 +111,49 @@ export function useKeybindingsListener() {
 		isRecording,
 		editor,
 	]);
+}
+
+function getActiveChordBinding({
+	binding,
+	keybindings,
+	pressedKeys,
+}: {
+	binding: ShortcutKey;
+	keybindings: Map<ShortcutKey, unknown>;
+	pressedKeys: Set<Key>;
+}): ShortcutKey | null {
+	if (!isKey(binding)) return null;
+
+	for (const pressedKey of pressedKeys) {
+		if (pressedKey === binding) continue;
+		const forward = `${pressedKey}+${binding}` as ShortcutKey;
+		if (keybindings.has(forward)) return forward;
+		const reverse = `${binding}+${pressedKey}` as ShortcutKey;
+		if (keybindings.has(reverse)) return reverse;
+	}
+	return null;
+}
+
+function rememberPressedKey({
+	binding,
+	pressedKeys,
+}: {
+	binding: ShortcutKey | null;
+	pressedKeys: Set<Key>;
+}) {
+	if (binding && isKey(binding)) {
+		pressedKeys.add(binding);
+	}
+}
+
+function forgetPressedKey({
+	binding,
+	pressedKeys,
+}: {
+	binding: ShortcutKey | null;
+	pressedKeys: Set<Key>;
+}) {
+	if (binding && isKey(binding)) {
+		pressedKeys.delete(binding);
+	}
 }

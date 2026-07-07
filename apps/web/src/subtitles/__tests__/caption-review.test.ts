@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+	buildCaptionReviewWordDeletePatch,
+	buildCaptionReviewWordInsertPatch,
 	buildCaptionReviewWordPatch,
 	collectCaptionReviewItems,
 	findClosestCaptionReviewItem,
@@ -204,5 +206,68 @@ describe("caption review", () => {
 		expect(patch?.params?.content).toBe("Hello there");
 		expect(patch?.wordRuns?.[0]?.text).toBe("Hello");
 		expect(patch?.wordRuns?.[1]?.text).toBe("there");
+	});
+
+	test("builds a patch that removes one rendered word without retiming neighbors", () => {
+		const element = textElement({
+			id: "caption",
+			text: "Hello quiet world",
+			start: 0,
+			duration: 3,
+			wordRuns: [
+				wordRun({ id: "word-0", text: "Hello", start: 0, end: 1 }),
+				wordRun({ id: "word-1", text: "quiet", start: 1, end: 2 }),
+				wordRun({ id: "word-2", text: "world", start: 2, end: 3 }),
+			],
+		});
+
+		const patch = buildCaptionReviewWordDeletePatch({
+			element,
+			wordIndex: 1,
+		});
+
+		expect(patch?.params?.content).toBe("Hello world");
+		expect(patch?.wordRuns?.map((run) => run.text)).toEqual([
+			"Hello",
+			"world",
+		]);
+		expect(patch?.wordRuns?.[0]?.endTime).toBe(
+			mediaTimeFromSeconds({ seconds: 1 }),
+		);
+		expect(patch?.wordRuns?.[1]?.startTime).toBe(
+			mediaTimeFromSeconds({ seconds: 2 }),
+		);
+	});
+
+	test("builds a patch that inserts a rendered word without pushing neighbors", () => {
+		const element = textElement({
+			id: "caption",
+			text: "Hello world",
+			start: 0,
+			duration: 2,
+			wordRuns: [
+				wordRun({ id: "word-0", text: "Hello", start: 0, end: 1 }),
+				wordRun({ id: "word-1", text: "world", start: 1, end: 2 }),
+			],
+		});
+
+		const patch = buildCaptionReviewWordInsertPatch({
+			element,
+			insertIndex: 1,
+			text: "wide",
+		});
+
+		expect(patch?.params?.content).toBe("Hello wide world");
+		expect(patch?.wordRuns?.map((run) => run.text)).toEqual([
+			"Hello",
+			"wide",
+			"world",
+		]);
+		expect(patch?.wordRuns?.[0]?.endTime).toBe(
+			mediaTimeFromSeconds({ seconds: 1 }),
+		);
+		expect(patch?.wordRuns?.[2]?.startTime).toBe(
+			mediaTimeFromSeconds({ seconds: 1 }),
+		);
 	});
 });

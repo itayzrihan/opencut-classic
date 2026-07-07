@@ -77,10 +77,14 @@ export function isKey(value: string): value is Key {
 }
 
 export type ModifierBasedShortcutKey = `${ModifierKeys}+${Key}`;
+export type ChordShortcutKey = `${Key}+${Key}`;
 // Singular keybindings (these will be disabled when an input-ish area has been focused)
 export type SingleCharacterShortcutKey = `${Key}`;
 
-export type ShortcutKey = ModifierBasedShortcutKey | SingleCharacterShortcutKey;
+export type ShortcutKey =
+	| ModifierBasedShortcutKey
+	| ChordShortcutKey
+	| SingleCharacterShortcutKey;
 
 export type KeybindingConfig = {
 	[key in ShortcutKey]?: TActionWithOptionalArgs;
@@ -109,5 +113,6 @@ export function isShortcutKey(value: string): value is ShortcutKey {
 	const key = parts.pop();
 	if (!key || !isKey(key)) return false;
 
-	return isModifierKeys(parts.join("+"));
+	if (isModifierKeys(parts.join("+"))) return true;
+	return parts.length === 1 && isKey(parts[0]);
 }

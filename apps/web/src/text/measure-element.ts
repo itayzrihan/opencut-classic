@@ -5,6 +5,7 @@ import type { TextRowOverride, TextWordRun, TextWordStyle } from "@/timeline";
 import type { TextCaptionRevealMode, TextWordTransitionIn } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveColorAtTime, resolveNumberAtTime } from "@/animation/values";
+import { mediaTime } from "@/wasm";
 import { getTextVisualRect, type TextLayoutMeasurementContext } from "./layout";
 import {
 	buildTextFontString,
@@ -333,8 +334,9 @@ function measureWordRunsLayout({
 		return measuredLayout;
 	}
 
+	const wordRuns = getRenderWordRuns({ element });
 	const lineGroups = new Map<number, TextWordRun[]>();
-	for (const run of element.wordRuns) {
+	for (const run of wordRuns) {
 		const line = run.lineIndex ?? 0;
 		lineGroups.set(line, [...(lineGroups.get(line) ?? []), run]);
 	}
@@ -544,6 +546,44 @@ function measureWordRunsLayout({
 			})),
 		})),
 	};
+}
+
+function getRenderWordRuns({ element }: { element: TextElement }): TextWordRun[] {
+	const runs = element.wordRuns ?? [];
+	if (runs.length === 0) return runs;
+
+	const fallbackWordDuration =
+		runs.length > 0 ? element.duration / runs.length : 0;
+	return runs.map((run, index) => {
+		if (
+			run.startTime != null &&
+			run.endTime != null &&
+			run.endTime > run.startTime
+		) {
+			return run;
+		}
+
+		const fallbackStart = mediaTime({
+			ticks: Math.round(index * fallbackWordDuration),
+		});
+		const fallbackEnd = mediaTime({
+			ticks: Math.max(
+				Math.round((index + 1) * fallbackWordDuration),
+				fallbackStart + 1,
+			),
+		});
+		const startTime = run.startTime ?? fallbackStart;
+		const endTime =
+			run.endTime != null && run.endTime > startTime
+				? run.endTime
+				: fallbackEnd;
+
+		return {
+			...run,
+			startTime,
+			endTime,
+		};
+	});
 }
 
 function resolveWordStyle({

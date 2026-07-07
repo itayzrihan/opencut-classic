@@ -5,6 +5,7 @@
 
 node_modules
 .next
+.local/
 .cursorignore
 .turbo
 *.log

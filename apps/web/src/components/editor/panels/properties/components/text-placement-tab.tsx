@@ -1,9 +1,24 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Section, SectionContent, SectionField } from "@/components/section";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { useEditor, useEditorProject } from "@/editor/use-editor";
 import { getCaptionPlacementGrid } from "@/subtitles/caption-layout";
+import {
+	removeTextLineArrangementPreset,
+	saveTextLineArrangementPreset,
+	useTextLineArrangementPresets,
+	type TextLineArrangementPreset,
+} from "@/text/line-arrangement-presets";
 import {
 	getTextMeasurementContext,
 	measureTextElement,
@@ -46,6 +61,9 @@ export function TextPlacementTab({
 	textScope?: TextOverrideScope;
 }) {
 	const editor = useEditor();
+	const presets = useTextLineArrangementPresets();
+	const [presetName, setPresetName] = useState("");
+	const [selectedPresetId, setSelectedPresetId] = useState("");
 	const canvasSize = useEditorProject(
 		(e) => e.project.getActive().settings.canvasSize,
 	);
@@ -75,6 +93,17 @@ export function TextPlacementTab({
 	const selectedCell = placement && !hasMixedPlacement
 		? getNearestGridCell({ center: placement.center, canvasSize, grid })
 		: null;
+	const lineArrangement = useMemo(
+		() =>
+			isBulk
+				? null
+				: getLineArrangement({
+						element,
+						canvasSize,
+					}),
+		[element, canvasSize, isBulk],
+	);
+	const canUseLineArrangement = (lineArrangement?.lines.length ?? 0) > 1;
 
 	const applyCenter = (targetCenter: Point) => {
 		if (placementTargets.length === 0) return;
@@ -108,6 +137,67 @@ export function TextPlacementTab({
 					},
 				}),
 			})),
+		});
+	};
+	const applyLineAxis = ({
+		lineIndex,
+		linePositionIndex,
+		axis,
+		value,
+	}: {
+		lineIndex: number;
+		linePositionIndex: number;
+		axis: "x" | "y";
+		value: string;
+	}) => {
+		if (!lineArrangement) return;
+		const parsed = Number(value);
+		if (!Number.isFinite(parsed)) return;
+		const currentLine = lineArrangement.lines[linePositionIndex];
+		if (!currentLine) return;
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch: buildLinePositionPatch({
+						element,
+						lineIndex,
+						currentLine,
+						targetLine: {
+							x: axis === "x" ? parsed : currentLine.x,
+							y: axis === "y" ? parsed : currentLine.y,
+						},
+					}),
+				},
+			],
+		});
+	};
+	const saveArrangement = () => {
+		if (!canUseLineArrangement || !presetName.trim()) return;
+		saveTextLineArrangementPreset({
+			name: presetName,
+			lines: lineArrangement?.lines ?? [],
+		});
+		setPresetName("");
+	};
+	const applyPreset = (presetId: string) => {
+		const preset = presets.find((candidate) => candidate.id === presetId);
+		if (!preset || !canUseLineArrangement || !lineArrangement) return;
+		setSelectedPresetId(presetId);
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch: buildLineArrangementPatch({
+						element,
+						lineIndexes: lineArrangement.lineIndexes,
+						currentLines: lineArrangement.lines,
+						preset,
+					}),
+				},
+			],
 		});
 	};
 
@@ -210,6 +300,109 @@ export function TextPlacementTab({
 							/>
 						</div>
 					</SectionField>
+					{canUseLineArrangement && (
+						<SectionField label="Line positions">
+							<div className="flex flex-col gap-2">
+								{lineArrangement?.lineIndexes.map((lineIndex, index) => {
+									const line = lineArrangement.lines[index] ?? { x: 0, y: 0 };
+									return (
+										<div
+											key={lineIndex}
+											className="grid grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2"
+										>
+											<span className="text-muted-foreground text-xs">
+												Line {index + 1}
+											</span>
+											<Input
+												type="number"
+												step={1}
+												size="sm"
+												value={formatPlacementValue(line.x)}
+												aria-label={`Line ${index + 1} X position`}
+												onChange={(event) =>
+													applyLineAxis({
+														lineIndex,
+														linePositionIndex: index,
+														axis: "x",
+														value: event.target.value,
+													})
+												}
+											/>
+											<Input
+												type="number"
+												step={1}
+												size="sm"
+												value={formatPlacementValue(line.y)}
+												aria-label={`Line ${index + 1} Y position`}
+												onChange={(event) =>
+													applyLineAxis({
+														lineIndex,
+														linePositionIndex: index,
+														axis: "y",
+														value: event.target.value,
+													})
+												}
+											/>
+										</div>
+									);
+								})}
+							</div>
+						</SectionField>
+					)}
+					{canUseLineArrangement && (
+						<SectionField label="Line position presets">
+							<div className="flex flex-col gap-2">
+								<div className="flex gap-2">
+									<Select
+										value={selectedPresetId}
+										onValueChange={applyPreset}
+										disabled={presets.length === 0}
+									>
+										<SelectTrigger className="min-w-0 flex-1">
+											<SelectValue placeholder="Apply preset" />
+										</SelectTrigger>
+										<SelectContent>
+											{presets.map((preset) => (
+												<SelectItem key={preset.id} value={preset.id}>
+													{preset.lines.length} lines - {preset.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+									<Button
+										type="button"
+										variant="secondary"
+										size="sm"
+										disabled={!selectedPresetId}
+										onClick={() => {
+											removeTextLineArrangementPreset({
+												id: selectedPresetId,
+											});
+											setSelectedPresetId("");
+										}}
+									>
+										Delete
+									</Button>
+								</div>
+								<div className="flex gap-2">
+									<Input
+										size="sm"
+										value={presetName}
+										placeholder={`${lineArrangement?.lines.length ?? 0}-line preset name`}
+										onChange={(event) => setPresetName(event.target.value)}
+									/>
+									<Button
+										type="button"
+										size="sm"
+										disabled={!presetName.trim()}
+										onClick={saveArrangement}
+									>
+										Save
+									</Button>
+								</div>
+							</div>
+						</SectionField>
+					)}
 				</div>
 			</SectionContent>
 		</Section>
@@ -336,6 +529,165 @@ function buildPlacementPatch({
 			},
 		},
 	});
+}
+
+function getLineArrangement({
+	element,
+	canvasSize,
+}: {
+	element: TextElement;
+	canvasSize: { width: number; height: number };
+}): { lineIndexes: number[]; lines: TextLineArrangementPreset["lines"] } {
+	const measurementElement =
+		(element.wordRuns?.length ?? 0) > 0
+			? element
+			: {
+					...element,
+					wordRuns: getWordRuns({ element }),
+				};
+	const measured = measureTextElement({
+		element: measurementElement,
+		canvasHeight: canvasSize.height,
+		localTime: 0,
+		ctx: getTextMeasurementContext(),
+	});
+	const lineIndexes = [
+		...new Set(
+			getWordRuns({ element: measurementElement }).map(
+				(word) => word.lineIndex ?? 0,
+			),
+		),
+	].sort((left, right) => left - right);
+
+	return {
+		lineIndexes,
+		lines: lineIndexes.map((lineIndex) => {
+			const center =
+				getScopedWordsCenter({
+					element: measurementElement,
+					measured,
+					scope: { type: "row", lineIndex },
+				}) ?? { x: 0, y: 0 };
+			return center;
+		}),
+	};
+}
+
+function buildLineArrangementPatch({
+	element,
+	lineIndexes,
+	currentLines,
+	preset,
+}: {
+	element: TextElement;
+	lineIndexes: number[];
+	currentLines: TextLineArrangementPreset["lines"];
+	preset: TextLineArrangementPreset;
+}): Partial<TextElement> {
+	const spacing = getOverflowLineSpacing({
+		preset,
+		currentLines,
+	});
+	let patch: Partial<TextElement> = {};
+	let draft = element;
+
+	lineIndexes.forEach((lineIndex, index) => {
+		const currentLine = currentLines[index] ?? { x: 0, y: 0 };
+		const presetLine =
+			preset.lines[index] ??
+			getOverflowPresetLine({
+				preset,
+				index,
+				spacing,
+			});
+		const settings = getScopedSettings({
+			element: draft,
+			scope: { type: "row", lineIndex },
+		});
+		const ownStyle = settings.style ?? {};
+		patch = buildScopedTextPatch({
+			element: draft,
+			scope: { type: "row", lineIndex },
+			patch: {
+				style: {
+					offsetX: (ownStyle.offsetX ?? 0) + presetLine.x - currentLine.x,
+					offsetY: (ownStyle.offsetY ?? 0) + presetLine.y - currentLine.y,
+				},
+			},
+		});
+		draft = { ...draft, ...patch };
+	});
+
+	return {
+		wordRuns: draft.wordRuns,
+		textRowOverrides: draft.textRowOverrides,
+	};
+}
+
+function buildLinePositionPatch({
+	element,
+	lineIndex,
+	currentLine,
+	targetLine,
+}: {
+	element: TextElement;
+	lineIndex: number;
+	currentLine: Point;
+	targetLine: Point;
+}): Partial<TextElement> {
+	const settings = getScopedSettings({
+		element,
+		scope: { type: "row", lineIndex },
+	});
+	const ownStyle = settings.style ?? {};
+	return buildScopedTextPatch({
+		element,
+		scope: { type: "row", lineIndex },
+		patch: {
+			style: {
+				offsetX: (ownStyle.offsetX ?? 0) + targetLine.x - currentLine.x,
+				offsetY: (ownStyle.offsetY ?? 0) + targetLine.y - currentLine.y,
+			},
+		},
+	});
+}
+
+function getOverflowLineSpacing({
+	preset,
+	currentLines,
+}: {
+	preset: TextLineArrangementPreset;
+	currentLines: TextLineArrangementPreset["lines"];
+}) {
+	if (preset.lines.length >= 2) {
+		const last = preset.lines[preset.lines.length - 1];
+		const previous = preset.lines[preset.lines.length - 2];
+		const presetSpacing = Math.abs(last.y - previous.y);
+		if (presetSpacing > 0) return presetSpacing;
+	}
+	if (currentLines.length >= 2) {
+		const last = currentLines[currentLines.length - 1];
+		const previous = currentLines[currentLines.length - 2];
+		const currentSpacing = Math.abs(last.y - previous.y);
+		if (currentSpacing > 0) return currentSpacing;
+	}
+	return 48;
+}
+
+function getOverflowPresetLine({
+	preset,
+	index,
+	spacing,
+}: {
+	preset: TextLineArrangementPreset;
+	index: number;
+	spacing: number;
+}) {
+	const anchor = preset.lines[preset.lines.length - 1] ?? { x: 0, y: 0 };
+	return {
+		x: 0,
+		y: anchor.y + spacing * (index - preset.lines.length + 1),
+	};
 }
 
 function getScopedWordsCenter({

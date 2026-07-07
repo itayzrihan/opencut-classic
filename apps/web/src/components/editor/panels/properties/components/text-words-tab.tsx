@@ -20,6 +20,10 @@ import {
 	CAPTION_ACCENT_COLORS,
 	CAPTION_WORD_ANIMATIONS,
 } from "@/text/caption-presets";
+import {
+	buildTextLineBreakPatch,
+	type TextLineBreakAction,
+} from "@/text/text-layer-utils";
 import type { ElementWithTrackForParams } from "./element-params-tab";
 import {
 	buildScopedTextPatch,
@@ -61,6 +65,9 @@ export function TextWordsTab({
 	const isBulkWordScope = isBulk && scope.type === "words";
 	const effectiveScope =
 		isBulk && !isBulkWordScope ? ({ type: "layer" } as const) : scope;
+	const wordRuns = getWordRuns({ element });
+	const lineRows = buildLineRows({ wordRuns });
+	const canEditLineBreaks = !isBulk && wordRuns.length > 1;
 	const settings = getScopedSettings({ element, scope: effectiveScope });
 	const values = {
 		wordAnimationId:
@@ -170,11 +177,81 @@ export function TextWordsTab({
 			],
 		});
 	};
+	const updateLineBreak = ({
+		wordId,
+		action,
+	}: {
+		wordId: string;
+		action: TextLineBreakAction;
+	}) => {
+		const patch = buildTextLineBreakPatch({ element, wordId, action });
+		if (!patch) return;
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					patch,
+				},
+			],
+		});
+	};
 
 	return (
 		<Section sectionKey={`${element.id}:words`}>
 			<SectionContent className="pt-4">
 				<SectionFields>
+					{canEditLineBreaks && (
+						<SectionField label="Line breaks">
+							<div className="flex flex-col gap-2">
+								{lineRows.map((row, rowIndex) => (
+									<div
+										key={row.lineIndex}
+										className="border-border bg-input/30 rounded-sm border px-2 py-2"
+									>
+										<div className="text-muted-foreground mb-1.5 text-xs">
+											Line {rowIndex + 1}
+										</div>
+										<div className="flex flex-wrap gap-1.5">
+											{row.words.map((word) => {
+												const isFirstWord = word.index === 0;
+												const isFirstWordInRow =
+													word.index === row.words[0]?.index;
+												const action: TextLineBreakAction =
+													isFirstWordInRow && rowIndex > 0
+														? "join-previous"
+														: "start-line";
+												return (
+													<button
+														key={word.id}
+														type="button"
+														disabled={isFirstWord}
+														title={
+															action === "join-previous"
+																? "Join with previous line"
+																: "Start line here"
+														}
+														className="border-border bg-background hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-background focus-visible:ring-ring max-w-full rounded-full border px-2.5 py-1 text-xs outline-none focus-visible:ring-2 disabled:cursor-default disabled:opacity-70"
+														onClick={() =>
+															updateLineBreak({
+																wordId: word.id,
+																action,
+															})
+														}
+													>
+														<span className="block max-w-28 truncate">
+															{word.text}
+														</span>
+													</button>
+												);
+											})}
+										</div>
+									</div>
+								))}
+							</div>
+						</SectionField>
+					)}
+
 					<SectionField label="Word animation">
 						<Select
 							value={values.wordAnimationId}
@@ -332,4 +409,21 @@ function resolveTextScopeForEntry({
 
 	const wordIds = entry.textWordIds ?? scope.wordIds;
 	return wordIds.length > 0 ? { type: "words", wordIds } : null;
+}
+
+function buildLineRows({ wordRuns }: { wordRuns: ReturnType<typeof getWordRuns> }) {
+	const rows = new Map<
+		number,
+		Array<{ id: string; text: string; index: number }>
+	>();
+	wordRuns.forEach((word, index) => {
+		const lineIndex = word.lineIndex ?? 0;
+		rows.set(lineIndex, [
+			...(rows.get(lineIndex) ?? []),
+			{ id: word.id, text: word.text, index },
+		]);
+	});
+	return [...rows.entries()]
+		.sort(([left], [right]) => left - right)
+		.map(([lineIndex, words]) => ({ lineIndex, words }));
 }

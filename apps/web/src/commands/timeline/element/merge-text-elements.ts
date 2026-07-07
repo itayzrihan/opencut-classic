@@ -15,14 +15,18 @@ import {
 export class MergeTextElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
 	private readonly elements: { trackId: string; elementId: string }[];
+	private readonly mode: "single-line" | "multiline";
 
 	constructor({
 		elements,
+		mode = "single-line",
 	}: {
 		elements: { trackId: string; elementId: string }[];
+		mode?: "single-line" | "multiline";
 	}) {
 		super();
 		this.elements = elements;
+		this.mode = mode;
 	}
 
 	execute(): CommandResult | undefined {
@@ -47,7 +51,7 @@ export class MergeTextElementsCommand extends Command {
 		});
 		if (textItems.length !== this.elements.length) return undefined;
 
-		const mergeResult = mergeTextElements({ items: textItems });
+		const mergeResult = mergeTextElements({ items: textItems, mode: this.mode });
 		if (!mergeResult) return undefined;
 
 		const removeKeys = new Set(
@@ -83,7 +87,16 @@ export class MergeTextElementsCommand extends Command {
 		};
 		updatedTracks = removeTextLayerWordsFromCaptionSource({
 			tracks: updatedTracks,
-			elements: mergeResult.removeElements,
+			elements:
+				this.mode === "multiline"
+					? [
+							{
+								trackId: mergeResult.targetTrackId,
+								elementId: mergeResult.targetElementId,
+							},
+							...mergeResult.removeElements,
+						]
+					: mergeResult.removeElements,
 		});
 		updatedTracks = syncTextLayerWordsIntoCaptionSource({
 			tracks: updatedTracks,

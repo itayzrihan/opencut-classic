@@ -6,6 +6,7 @@ import type {
 	TextWordRun,
 } from "@/timeline/types";
 import {
+	mediaTime,
 	mediaTimeFromSeconds,
 	mediaTimeToSeconds,
 } from "@/wasm/media-time";
@@ -41,6 +42,37 @@ function normalizeEditedWordText({ text }: { text: string }) {
 	return text.replace(/\s+/g, " ").trim();
 }
 
+function uniqueWordRunId({
+	wordRuns,
+	insertIndex,
+}: {
+	wordRuns: TextWordRun[];
+	insertIndex: number;
+}) {
+	const usedIds = new Set(wordRuns.map((run) => run.id));
+	const baseId = `word-${insertIndex}`;
+	if (!usedIds.has(baseId)) return baseId;
+	let suffix = 1;
+	while (usedIds.has(`${baseId}-${suffix}`)) {
+		suffix += 1;
+	}
+	return `${baseId}-${suffix}`;
+}
+
+function wordRunsContentPatch({ wordRuns }: { wordRuns: TextWordRun[] }) {
+	return {
+		params: {
+			content: contentFromWords({
+				words: wordRuns.map((run) => ({
+					text: run.text,
+					lineIndex: run.lineIndex,
+				})),
+			}),
+		},
+		wordRuns,
+	};
+}
+
 function buildTextElementWordTextPatch({
 	element,
 	wordIndex,
@@ -60,17 +92,7 @@ function buildTextElementWordTextPatch({
 					}
 				: run,
 		);
-		return {
-			params: {
-				content: contentFromWords({
-					words: nextWordRuns.map((run) => ({
-						text: run.text,
-						lineIndex: run.lineIndex,
-					})),
-				}),
-			},
-			wordRuns: nextWordRuns,
-		};
+		return wordRunsContentPatch({ wordRuns: nextWordRuns });
 	}
 
 	const words = contentWordsFromText({ content: getTextContent({ element }) });
@@ -86,6 +108,131 @@ function buildTextElementWordTextPatch({
 							}
 						: word,
 				),
+			}),
+		},
+	};
+}
+
+function insertedWordRunTiming({
+	wordRuns,
+	insertIndex,
+}: {
+	wordRuns: TextWordRun[];
+	insertIndex: number;
+}) {
+	const previous = wordRuns[insertIndex - 1];
+	const next = wordRuns[insertIndex];
+	const previousEnd = previous?.endTime ?? previous?.startTime;
+	const nextStart = next?.startTime ?? next?.endTime;
+	const minDuration = mediaTimeFromSeconds({ seconds: 0.01 });
+
+	if (previousEnd != null && nextStart != null) {
+		const start =
+			nextStart > previousEnd
+				? previousEnd + Math.round((nextStart - previousEnd) / 2)
+				: Math.round((previousEnd + nextStart) / 2);
+		return {
+			startTime: mediaTime({ ticks: start }),
+			endTime: mediaTime({ ticks: start + minDuration }),
+		};
+	}
+
+	if (previousEnd != null) {
+		return {
+			startTime: previousEnd,
+			endTime: mediaTime({ ticks: previousEnd + minDuration }),
+		};
+	}
+
+	if (nextStart != null) {
+		return {
+			startTime: nextStart,
+			endTime: mediaTime({ ticks: nextStart + minDuration }),
+		};
+	}
+
+	return {
+		startTime: mediaTimeFromSeconds({ seconds: 0 }),
+		endTime: minDuration,
+	};
+}
+
+export function buildTextElementWordInsertPatch({
+	element,
+	insertIndex,
+	text,
+}: {
+	element: TextElement;
+	insertIndex: number;
+	text: string;
+}): Partial<TextElement> | null {
+	const nextText = normalizeEditedWordText({ text });
+	if (!nextText) return null;
+
+	const wordRuns = getTextLayerWordRuns({ element });
+	const safeInsertIndex = Math.max(0, Math.min(insertIndex, wordRuns.length));
+	if (wordRuns.length > 0) {
+		const previous = wordRuns[safeInsertIndex - 1];
+		const next = wordRuns[safeInsertIndex];
+		const timing = insertedWordRunTiming({
+			wordRuns,
+			insertIndex: safeInsertIndex,
+		});
+		const inserted: TextWordRun = {
+			id: uniqueWordRunId({ wordRuns, insertIndex: safeInsertIndex }),
+			text: nextText,
+			lineIndex: previous?.lineIndex ?? next?.lineIndex ?? 0,
+			...timing,
+		};
+		return wordRunsContentPatch({
+			wordRuns: [
+				...wordRuns.slice(0, safeInsertIndex),
+				inserted,
+				...wordRuns.slice(safeInsertIndex),
+			],
+		});
+	}
+
+	const words = contentWordsFromText({ content: getTextContent({ element }) });
+	const fallbackInsertIndex = Math.max(0, Math.min(insertIndex, words.length));
+	return {
+		params: {
+			content: contentFromWords({
+				words: [
+					...words.slice(0, fallbackInsertIndex),
+					{
+						text: nextText,
+						lineIndex:
+							words[fallbackInsertIndex - 1]?.lineIndex ??
+							words[fallbackInsertIndex]?.lineIndex ??
+							0,
+					},
+					...words.slice(fallbackInsertIndex),
+				],
+			}),
+		},
+	};
+}
+
+export function buildTextElementWordDeletePatch({
+	element,
+	wordIndex,
+}: {
+	element: TextElement;
+	wordIndex: number;
+}): Partial<TextElement> | null {
+	if (element.wordRuns?.[wordIndex]) {
+		return wordRunsContentPatch({
+			wordRuns: element.wordRuns.filter((_, index) => index !== wordIndex),
+		});
+	}
+
+	const words = contentWordsFromText({ content: getTextContent({ element }) });
+	if (!words[wordIndex]) return null;
+	return {
+		params: {
+			content: contentFromWords({
+				words: words.filter((_, index) => index !== wordIndex),
 			}),
 		},
 	};

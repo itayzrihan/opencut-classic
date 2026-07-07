@@ -11,7 +11,11 @@ import {
 	getCaptionWordVisibilityIndex,
 	getVisibleCaptionWordIndexes,
 } from "@/timeline/components/caption-word-visibility";
-import { buildTextElementWordUpdates } from "@/timeline/components/caption-word-updates";
+import {
+	buildTextElementWordDeletePatch,
+	buildTextElementWordUpdates,
+} from "@/timeline/components/caption-word-updates";
+import { getWordElementRefs } from "@/timeline/components/caption-word-timing-track";
 import {
 	mediaTimeFromSeconds,
 	mediaTimeToSeconds,
@@ -234,5 +238,43 @@ describe("caption word timing edits", () => {
 			}),
 		).toBe(1.5);
 		expect(updates[0].patch.params?.content).toBeUndefined();
+	});
+
+	test("maps presentation-only merged caption words so deletes target the combined layer", () => {
+		const mergedWords = textElement({
+			id: "merged",
+			text: "one\ntwo\nthree",
+			start: 0,
+			end: 3,
+			wordRuns: [
+				{ id: "word-0", text: "one", lineIndex: 0 },
+				{ id: "word-1", text: "two", lineIndex: 1 },
+				{ id: "word-2", text: "three", lineIndex: 2 },
+			],
+		});
+		const refs = getWordElementRefs({
+			words: [
+				{ text: "one", start: 0, end: 1 },
+				{ text: "two", start: 1, end: 2 },
+				{ text: "three", start: 2, end: 3 },
+			],
+			sourceTracks: [textTrack({ elements: [mergedWords] })],
+			includePresentationOnly: true,
+		});
+		const targetRef = refs.get(1)?.[0];
+		const patch = buildTextElementWordDeletePatch({
+			element: mergedWords,
+			wordIndex: mergedWords.wordRuns?.findIndex(
+				(run) => run.id === targetRef?.wordId,
+			) ?? -1,
+		});
+
+		expect(targetRef).toEqual({
+			trackId: "captions",
+			elementId: "merged",
+			wordId: "word-1",
+		});
+		expect(patch?.params?.content).toBe("one\nthree");
+		expect(patch?.wordRuns?.map((run) => run.text)).toEqual(["one", "three"]);
 	});
 });

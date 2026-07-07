@@ -90,6 +90,10 @@ export const ACTIONS = {
 		description: "Merge selected text elements",
 		category: "editing",
 	},
+	"merge-text-selected-multiline": {
+		description: "Merge selected text elements into multiline text",
+		category: "editing",
+	},
 	"paste-copied": {
 		description: "Paste elements at playhead",
 		category: "editing",
@@ -108,6 +112,10 @@ export const ACTIONS = {
 	},
 	"select-all": {
 		description: "Select all elements",
+		category: "selection",
+	},
+	"select-all-text": {
+		description: "Select all text layers",
 		category: "selection",
 	},
 	"cancel-interaction": {
@@ -174,6 +182,7 @@ const ACTION_DEFAULT_SHORTCUTS = [
 	["paste-copied", ["ctrl+v"]],
 	["toggle-snapping", ["n"]],
 	["select-all", ["ctrl+a"]],
+	["select-all-text", ["a+t"]],
 	["cancel-interaction", ["escape"]],
 	["duplicate-selected", ["ctrl+d"]],
 	["undo", ["ctrl+z"]],

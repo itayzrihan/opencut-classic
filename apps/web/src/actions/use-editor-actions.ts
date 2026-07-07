@@ -16,7 +16,7 @@ import {
 	ZERO_MEDIA_TIME,
 } from "@/wasm";
 import { useKeyframeSelection } from "@/timeline/hooks/element/use-keyframe-selection";
-import { getElementsAtTime, hasMediaId } from "@/timeline";
+import { getDisplayTracks, getElementsAtTime, hasMediaId } from "@/timeline";
 import { cancelInteraction } from "@/editor/cancel-interaction";
 import { invokeAction } from "@/actions";
 import { canToggleSourceAudio } from "@/timeline/audio-separation";
@@ -388,6 +388,24 @@ export function useEditorActions() {
 	);
 
 	useActionHandler(
+		"select-all-text",
+		() => {
+			const scene = editor.scenes.getActiveScene();
+			const textElements = getDisplayTracks({ tracks: scene.tracks }).flatMap(
+				(track) => {
+					if (track.type !== "text") return [];
+					return track.elements.map((element) => ({
+						trackId: track.id,
+						elementId: element.id,
+					}));
+				},
+			);
+			setElementSelection({ elements: textElements });
+		},
+		undefined,
+	);
+
+	useActionHandler(
 		"cancel-interaction",
 		() => {
 			if (!cancelInteraction()) {
@@ -454,6 +472,17 @@ export function useEditorActions() {
 		() => {
 			editor.timeline.mergeTextElements({
 				elements: selectedElements,
+			});
+		},
+		undefined,
+	);
+
+	useActionHandler(
+		"merge-text-selected-multiline",
+		() => {
+			editor.timeline.mergeTextElements({
+				elements: selectedElements,
+				mode: "multiline",
 			});
 		},
 		undefined,

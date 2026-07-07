@@ -98,6 +98,45 @@ describe("keybinding persistence", () => {
 		expect(decoded.keybindings.get("b")).toBe("toggle-bookmark");
 		expect(warnSpy).not.toHaveBeenCalled();
 	});
+
+	test("adds the text selection chord to existing customized keybindings", () => {
+		const migrated = migratePersistedKeybindingsState({
+			state: {
+				keybindings: {
+					"ctrl+a": "select-all",
+					space: "toggle-play",
+				},
+				isCustomized: true,
+			},
+			fromVersion: 7,
+		});
+
+		const decoded = decodePersistedKeybindingsState({ state: migrated });
+		expect(decoded).not.toBeNull();
+		if (!decoded) throw new Error("Expected migrated keybindings to decode");
+
+		expect(decoded.keybindings.get("a+t")).toBe("select-all-text");
+		expect(warnSpy).not.toHaveBeenCalled();
+	});
+
+	test("does not overwrite a customized chord when adding new defaults", () => {
+		const migrated = migratePersistedKeybindingsState({
+			state: {
+				keybindings: {
+					"a+t": "toggle-bookmark",
+				},
+				isCustomized: true,
+			},
+			fromVersion: 7,
+		});
+
+		const decoded = decodePersistedKeybindingsState({ state: migrated });
+		expect(decoded).not.toBeNull();
+		if (!decoded) throw new Error("Expected migrated keybindings to decode");
+
+		expect(decoded.keybindings.get("a+t")).toBe("toggle-bookmark");
+		expect(warnSpy).not.toHaveBeenCalled();
+	});
 });
 
 describe("parseImportedKeybindings", () => {

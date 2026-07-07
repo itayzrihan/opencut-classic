@@ -198,6 +198,46 @@ describe("text word animation reveal precedence", () => {
 
 		expect(word.drawText).toBe("Hel");
 	});
+
+	test("synthesizes render timing for presentation-only multiline word runs", () => {
+		const measured = measureTextElement({
+			element: createTextElement({
+				duration: mediaTime({ ticks: TICKS_PER_SECOND * 2 }),
+				captionRevealMode: "spoken-word",
+				captionWordAnimationId: "none",
+				wordRuns: [
+					{ id: "word-0", text: "one", lineIndex: 0 },
+					{ id: "word-1", text: "two", lineIndex: 1 },
+				],
+				params: { content: "one\ntwo" },
+			}),
+			canvasHeight: 1080,
+			localTime: HALF_SECOND,
+			ctx: getTextMeasurementContext(),
+		});
+
+		expect(measured.wordLines?.[0]?.words[0]?.opacity).toBe(1);
+		expect(measured.wordLines?.[1]?.words[0]?.opacity).toBe(0);
+	});
+
+	test("applies word animation presets to presentation-only multiline word runs", () => {
+		const word = measureWord({
+			element: createTextElement({
+				duration: mediaTime({ ticks: TICKS_PER_SECOND * 2 }),
+				captionRevealMode: "determined-by-preset",
+				captionWordAnimationId: "kinetic-slam-1",
+				wordRuns: [
+					{ id: "word-0", text: "one", lineIndex: 0 },
+					{ id: "word-1", text: "two", lineIndex: 1 },
+				],
+				params: { content: "one\ntwo" },
+			}),
+		});
+
+		expect(word.opacity).toBe(1);
+		expect(word.scale).toBeGreaterThan(1);
+		expect(word.offsetY).toBeLessThan(0);
+	});
 });
 
 describe("text stroke and shadow effects", () => {

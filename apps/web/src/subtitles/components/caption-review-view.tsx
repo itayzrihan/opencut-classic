@@ -10,6 +10,8 @@ import {
 	useEditorTimelineScenes,
 } from "@/editor/use-editor";
 import {
+	buildCaptionReviewWordDeletePatch,
+	buildCaptionReviewWordInsertPatch,
 	buildCaptionReviewWordPatch,
 	collectCaptionReviewItems,
 	findCaptionReviewTextElement,
@@ -19,7 +21,7 @@ import {
 import { requestTimelineScrollToTime } from "@/timeline/focus-event";
 import { mediaTimeToSeconds, type MediaTime } from "@/wasm";
 import { cn } from "@/utils/ui";
-import { AlignLeft, AlignRight } from "lucide-react";
+import { AlignLeft, AlignRight, Plus, X } from "lucide-react";
 
 type CaptionReviewDirection = "ltr" | "rtl";
 
@@ -139,6 +141,24 @@ export function CaptionReviewView() {
 		requestTimelineScrollToTime({ time: item.startTime });
 	};
 
+	const updateItemElement = ({
+		item,
+		patch,
+	}: {
+		item: CaptionReviewItem;
+		patch: Partial<NonNullable<ReturnType<typeof findCaptionReviewTextElement>>>;
+	}) => {
+		editor.timeline.updateElements({
+			updates: [
+				{
+					trackId: item.trackId,
+					elementId: item.elementId,
+					patch,
+				},
+			],
+		});
+	};
+
 	const commitDraft = () => {
 		if (!editingKey) return;
 		if (endingEditKeyRef.current === editingKey) return;
@@ -161,15 +181,7 @@ export function CaptionReviewView() {
 					})
 				: null;
 			if (patch) {
-				editor.timeline.updateElements({
-					updates: [
-						{
-							trackId: item.trackId,
-							elementId: item.elementId,
-							patch,
-						},
-					],
-				});
+				updateItemElement({ item, patch });
 			}
 		}
 		setEditingKey(null);
@@ -185,6 +197,45 @@ export function CaptionReviewView() {
 		focusTimelineItem(item);
 		setEditingKey(itemKey(item));
 		setDraft(item.text);
+	};
+
+	const removeWord = (item: CaptionReviewItem) => {
+		commitDraft();
+		const element = activeScene
+			? findCaptionReviewTextElement({
+					tracks: activeScene.tracks,
+					item,
+				})
+			: null;
+		const patch = element
+			? buildCaptionReviewWordDeletePatch({
+					element,
+					wordIndex: item.wordIndex,
+				})
+			: null;
+		if (!patch) return;
+		updateItemElement({ item, patch });
+	};
+
+	const insertWordBefore = (item: CaptionReviewItem) => {
+		commitDraft();
+		const text = window.prompt("Add transcript word");
+		if (text === null) return;
+		const element = activeScene
+			? findCaptionReviewTextElement({
+					tracks: activeScene.tracks,
+					item,
+				})
+			: null;
+		const patch = element
+			? buildCaptionReviewWordInsertPatch({
+					element,
+					insertIndex: item.wordIndex,
+					text,
+				})
+			: null;
+		if (!patch) return;
+		updateItemElement({ item, patch });
 	};
 
 	const cancelEditing = () => {
@@ -243,16 +294,32 @@ export function CaptionReviewView() {
 						No text captions
 					</div>
 				) : (
-					items.map((item) => {
+					items.flatMap((item, index) => {
 						const key = itemKey(item);
 						const isEditing = editingKey === key;
 						const isClosest = closestItem
 							? itemKey(closestItem) === key
 							: false;
 						const isSelected = selectedElementKeys.has(elementKey(item));
+						const insertControl =
+							index === 0 ? null : (
+								<button
+									key={`${key}:insert-before`}
+									type="button"
+									className="group/insert inline-flex h-8 w-3 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									onClick={() => insertWordBefore(item)}
+									aria-label="Add word here"
+									title="Add word here"
+								>
+									<span className="bg-primary text-primary-foreground flex size-5 scale-90 items-center justify-center rounded-full opacity-0 shadow-sm transition group-hover/insert:opacity-100 group-focus-visible/insert:opacity-100">
+										<Plus className="size-3" />
+									</span>
+								</button>
+							);
 
 						if (isEditing) {
-							return (
+							return [
+								insertControl,
 								<div
 									key={key}
 									className="inline-flex min-w-20 max-w-full rounded-full border border-primary/60 bg-background p-0.5"
@@ -281,34 +348,49 @@ export function CaptionReviewView() {
 										)}
 										aria-label="Edit caption word"
 									/>
-								</div>
-							);
+								</div>,
+							].filter(Boolean);
 						}
 
-						return (
-							<button
+						return [
+							insertControl,
+							<div
 								key={key}
-								type="button"
 								className={cn(
-									"inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-sm leading-none transition-colors",
-									"hover:border-primary/50 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+									"inline-flex max-w-full items-center overflow-hidden rounded-full border text-sm leading-none transition-colors",
+									"hover:border-primary/50 hover:bg-accent",
 									textDirection === "rtl" ? "text-right" : "text-left",
 									isClosest
 										? "border-primary/70 bg-primary/10 text-foreground ring-1 ring-primary/30"
 										: "border-border bg-background",
 									isSelected && "ring-1 ring-primary",
 								)}
-								onClick={() => startEditing(item)}
 								title={formatTime(item.startTime)}
 							>
-								<span className="text-muted-foreground shrink-0 text-[0.62rem] tabular-nums">
-									{formatTime(item.startTime)}
-								</span>
-								<span className="min-w-0 max-w-40 truncate">
-									{displayText(item.text)}
-								</span>
-							</button>
-						);
+								<button
+									type="button"
+									className="inline-flex min-w-0 max-w-full items-center gap-1.5 px-2.5 py-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									onClick={() => startEditing(item)}
+									aria-label={`Edit ${displayText(item.text)}`}
+								>
+									<span className="text-muted-foreground shrink-0 text-[0.62rem] tabular-nums">
+										{formatTime(item.startTime)}
+									</span>
+									<span className="min-w-0 max-w-40 truncate">
+										{displayText(item.text)}
+									</span>
+								</button>
+								<button
+									type="button"
+									className="text-muted-foreground hover:bg-destructive/15 hover:text-destructive flex h-7 w-7 shrink-0 items-center justify-center border-s focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									onClick={() => removeWord(item)}
+									aria-label={`Remove ${displayText(item.text)}`}
+									title="Remove word"
+								>
+									<X className="size-3.5" />
+								</button>
+							</div>,
+						].filter(Boolean);
 					})
 				)}
 			</div>

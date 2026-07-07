@@ -1,4 +1,5 @@
 import type { ProjectFont, ProjectFontAsset } from "@/fonts/types";
+import { loadDocumentFontSamples } from "@/fonts/font-loading";
 
 const SUPPORTED_FONT_EXTENSIONS = new Map([
 	["ttf", "font/ttf"],
@@ -79,7 +80,9 @@ export async function loadProjectFont({
 	await face.load();
 	document.fonts.add(face);
 	loadedFonts.set(font.family, source);
-	await document.fonts.load(`16px "${font.family.replace(/"/g, '\\"')}"`);
+	await loadDocumentFontSamples({
+		font: `16px "${font.family.replace(/"/g, '\\"')}"`,
+	});
 }
 
 export async function loadProjectFonts({

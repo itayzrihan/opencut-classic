@@ -228,14 +228,16 @@ export class TimelineManager {
 
 	mergeTextElements({
 		elements,
+		mode,
 	}: {
 		elements: { trackId: string; elementId: string }[];
+		mode?: "single-line" | "multiline";
 	}): void {
 		if (elements.length < 2) {
 			return;
 		}
 
-		const command = new MergeTextElementsCommand({ elements });
+		const command = new MergeTextElementsCommand({ elements, mode });
 		this.editor.command.execute({ command });
 	}
 

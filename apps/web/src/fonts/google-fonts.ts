@@ -1,4 +1,5 @@
 import type { FontAtlas } from "@/fonts/types";
+import { loadDocumentFontSamples } from "@/fonts/font-loading";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
 import { loadTypekitFont, loadTypekitFonts } from "@/fonts/typekit-fonts";
 
@@ -162,9 +163,9 @@ export async function loadFullFont({
 	});
 	await Promise.all(
 		resolvedVariants.map((variant) =>
-			document.fonts.load(
-				`${variant.style} ${variant.weight} 16px "${family.replace(/"/g, '\\"')}"`,
-			),
+			loadDocumentFontSamples({
+				font: `${variant.style} ${variant.weight} 16px "${family.replace(/"/g, '\\"')}"`,
+			}),
 		),
 	);
 	fullLoaded.add(family);
