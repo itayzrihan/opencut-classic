@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { stageRepositoryAssetPaths } from "@/git/repository-assets";
 import type {
 	GeneratedBackgroundPreset,
 	GeneratedEffectPreset,
@@ -299,9 +300,11 @@ async function handleAudioImport({
 		);
 	}
 
-	const { libraryRoot, repositoryRoot } = await getSharedLibraryPaths();
+	const { libraryRoot, manifestPath, repositoryRoot } =
+		await getSharedLibraryPaths();
 	const manifest = await readManifest();
 	const imported: SharedAudioAsset[] = [];
+	const stagedPaths = [manifestPath];
 
 	for (const [index, file] of files.entries()) {
 		const input = metadata[index];
@@ -326,6 +329,7 @@ async function handleAudioImport({
 		const storedPath = path.join(folderPath, storedFileName);
 		await mkdir(folderPath, { recursive: true });
 		await writeFile(storedPath, Buffer.from(await file.arrayBuffer()));
+		stagedPaths.push(storedPath);
 
 		const sourceUrl = `/shared-library/audio/${folder}/${storedFileName}`;
 		const asset: SharedAudioAsset = {
@@ -366,6 +370,7 @@ async function handleAudioImport({
 	}
 
 	await writeManifest({ manifest });
+	await stageRepositoryAssetPaths({ paths: stagedPaths });
 	return NextResponse.json({ assets: imported, manifest: await readManifest() });
 }
 
@@ -383,9 +388,11 @@ async function handleStickerImport({
 		);
 	}
 
-	const { libraryRoot, repositoryRoot } = await getSharedLibraryPaths();
+	const { libraryRoot, manifestPath, repositoryRoot } =
+		await getSharedLibraryPaths();
 	const manifest = await readManifest();
 	const imported: SharedStickerAsset[] = [];
+	const stagedPaths = [manifestPath];
 
 	for (const [index, file] of files.entries()) {
 		const input = metadata[index];
@@ -409,6 +416,7 @@ async function handleStickerImport({
 		const storedPath = path.join(folderPath, storedFileName);
 		await mkdir(folderPath, { recursive: true });
 		await writeFile(storedPath, Buffer.from(await file.arrayBuffer()));
+		stagedPaths.push(storedPath);
 
 		const sourceUrl = `/shared-library/stickers/${storedFileName}`;
 		const asset: SharedStickerAsset = {
@@ -445,11 +453,13 @@ async function handleStickerImport({
 	}
 
 	await writeManifest({ manifest });
+	await stageRepositoryAssetPaths({ paths: stagedPaths });
 	return NextResponse.json({ assets: imported, manifest: await readManifest() });
 }
 
 async function handlePatch({ patch }: { patch: ManifestPatch }): Promise<NextResponse> {
 	const manifest = await readManifest();
+	const { manifestPath } = await getSharedLibraryPaths();
 	switch (patch.action) {
 		case "createCategory":
 			manifest.categories = upsertById({
@@ -501,6 +511,7 @@ async function handlePatch({ patch }: { patch: ManifestPatch }): Promise<NextRes
 	}
 
 	await writeManifest({ manifest });
+	await stageRepositoryAssetPaths({ paths: [manifestPath] });
 	return NextResponse.json({ manifest: await readManifest() });
 }
 

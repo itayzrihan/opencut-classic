@@ -284,6 +284,93 @@ export class SharedLibraryService {
 		return readManifestFromApiResult({ value: data }) ?? emptyManifest();
 	}
 
+	private async importRepositoryAudioAsset({
+		asset,
+		file,
+	}: {
+		asset: SharedAudioAsset;
+		file: File;
+	}): Promise<{ asset: SharedAudioAsset; file: File } | null> {
+		try {
+			const repositoryFile = await cloneStoredFile({
+				file,
+				name: asset.fileName ?? file.name,
+				type: asset.mimeType || file.type || "audio/mpeg",
+				lastModified: new Date(asset.updatedAt).getTime(),
+			});
+			const formData = new FormData();
+			formData.set("action", "importAudio");
+			formData.set(
+				"metadata",
+				JSON.stringify([
+					{
+						...asset,
+						fileName: repositoryFile.name,
+						mimeType: repositoryFile.type || asset.mimeType,
+						size: repositoryFile.size,
+						storageKind: "repo",
+					},
+				]),
+			);
+			formData.append("files", repositoryFile, repositoryFile.name);
+
+			const response = await fetch(SHARED_LIBRARY_API, {
+				method: "POST",
+				body: formData,
+			});
+			const data = await parseRepositoryResponse({ response });
+			const [imported] = readAudioAssetsFromApiResult({ value: data });
+			return imported ? { asset: imported, file: repositoryFile } : null;
+		} catch (error) {
+			console.warn("Could not import archive audio into repository:", error);
+			return null;
+		}
+	}
+
+	private async importRepositoryStickerAsset({
+		asset,
+		file,
+	}: {
+		asset: SharedStickerAsset;
+		file: File;
+	}): Promise<{ asset: SharedStickerAsset; file: File; dataUrl: string } | null> {
+		try {
+			const repositoryFile = await cloneStoredFile({
+				file,
+				name: asset.fileName ?? file.name,
+				type: asset.mimeType || file.type || "image/png",
+				lastModified: new Date(asset.updatedAt).getTime(),
+			});
+			const dataUrl = await readFileAsDataUrl({ file: repositoryFile });
+			const formData = new FormData();
+			formData.set("action", "importStickers");
+			formData.set(
+				"metadata",
+				JSON.stringify([
+					{
+						...asset,
+						fileName: repositoryFile.name,
+						mimeType: repositoryFile.type || asset.mimeType,
+						size: repositoryFile.size,
+						storageKind: "repo",
+					},
+				]),
+			);
+			formData.append("files", repositoryFile, repositoryFile.name);
+
+			const response = await fetch(SHARED_LIBRARY_API, {
+				method: "POST",
+				body: formData,
+			});
+			const data = await parseRepositoryResponse({ response });
+			const [imported] = readStickerAssetsFromApiResult({ value: data });
+			return imported ? { asset: imported, file: repositoryFile, dataUrl } : null;
+		} catch (error) {
+			console.warn("Could not import archive sticker into repository:", error);
+			return null;
+		}
+	}
+
 	private async findAudioAsset({ id }: { id: string }) {
 		const assets = await this.listAudioAssets();
 		return assets.find((asset) => asset.id === id) ?? null;
@@ -428,6 +515,22 @@ export class SharedLibraryService {
 		};
 
 		if (file) {
+			const repositoryImport = await this.importRepositoryAudioAsset({
+				asset: normalized,
+				file,
+			});
+			if (repositoryImport) {
+				await this.audioFiles.set({
+					key: repositoryImport.asset.id,
+					value: repositoryImport.file,
+				});
+				await this.audioMetadata.set({
+					key: repositoryImport.asset.id,
+					value: repositoryImport.asset,
+				});
+				return { status: "imported", assetId: repositoryImport.asset.id };
+			}
+
 			await checkQuota({ file });
 			const copiedFile = await cloneStoredFile({
 				file,
@@ -584,6 +687,26 @@ export class SharedLibraryService {
 		};
 
 		if (file) {
+			const repositoryImport = await this.importRepositoryStickerAsset({
+				asset: normalized,
+				file,
+			});
+			if (repositoryImport) {
+				await this.stickerFiles.set({
+					key: repositoryImport.asset.id,
+					value: repositoryImport.file,
+				});
+				this.stickerDataUrlCache.set(
+					repositoryImport.asset.id,
+					repositoryImport.asset.sourceUrl ?? repositoryImport.dataUrl,
+				);
+				await this.stickerMetadata.set({
+					key: repositoryImport.asset.id,
+					value: repositoryImport.asset,
+				});
+				return { status: "imported", assetId: repositoryImport.asset.id };
+			}
+
 			await checkQuota({ file });
 			const copiedFile = await cloneStoredFile({
 				file,

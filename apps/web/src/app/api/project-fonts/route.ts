@@ -1,6 +1,7 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { stageRepositoryAssetPaths } from "@/git/repository-assets";
 
 export const runtime = "nodejs";
 
@@ -97,6 +98,7 @@ export async function POST(request: Request) {
 
 		await mkdir(projectFontsDir, { recursive: true });
 		await writeFile(storedPath, Buffer.from(await file.arrayBuffer()));
+		await stageRepositoryAssetPaths({ paths: [storedPath] });
 
 		const sourceUrl = `/project-fonts/${projectId}/${storedFileName}`;
 		const repositoryPath = path.posix.join(
