@@ -50,7 +50,12 @@ const TRANSFORM_PARAM_KEYS = [
 ] as const;
 
 const BLENDING_PARAM_KEYS = ["opacity", "blendMode"] as const;
-const AUDIO_PARAM_KEYS = ["volume", "muted"] as const;
+const AUDIO_PARAM_KEYS = [
+	"volume",
+	"muted",
+	"fadeInDuration",
+	"fadeOutDuration",
+] as const;
 const TEXT_PARAM_KEYS = [
 	"content",
 	"fontFamily",

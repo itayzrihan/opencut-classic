@@ -1,6 +1,7 @@
 import { hasKeyframesForPath } from "@/animation/keyframe-query";
 import { resolveNumberAtTime } from "@/animation/values";
 import type { ElementAnimations } from "@/animation/types";
+import { TICKS_PER_SECOND } from "@/wasm";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "./audio-constants";
 import type { TimelineElement } from "./types";
 const DEFAULT_STEP_SECONDS = 1 / 60;
@@ -49,7 +50,44 @@ export function hasAnimatedVolume({
 	});
 }
 
-import { TICKS_PER_SECOND } from "@/wasm";
+export function getElementFadeInDuration({
+	element,
+}: {
+	element: AudioCapableElement;
+}): number {
+	return getAudioFadeDurationValue({
+		duration: element.params.fadeInDuration,
+	});
+}
+
+export function getElementFadeOutDuration({
+	element,
+}: {
+	element: AudioCapableElement;
+}): number {
+	return getAudioFadeDurationValue({
+		duration: element.params.fadeOutDuration,
+	});
+}
+
+export function hasAudioFades({
+	element,
+}: {
+	element: AudioCapableElement;
+}): boolean {
+	return (
+		getElementFadeInDuration({ element }) > 0 ||
+		getElementFadeOutDuration({ element }) > 0
+	);
+}
+
+export function hasVariableAudioGain({
+	element,
+}: {
+	element: AudioCapableElement;
+}): boolean {
+	return hasAnimatedVolume({ element }) || hasAudioFades({ element });
+}
 
 export function resolveEffectiveAudioGain({
 	element,
@@ -71,7 +109,15 @@ export function resolveEffectiveAudioGain({
 		localTime: Math.round(localTime * TICKS_PER_SECOND),
 	});
 
-	return dBToLinear(resolvedDb);
+	return (
+		dBToLinear(resolvedDb) *
+		resolveAudioFadeMultiplier({
+			durationSeconds: element.duration / TICKS_PER_SECOND,
+			fadeInDuration: getElementFadeInDuration({ element }),
+			fadeOutDuration: getElementFadeOutDuration({ element }),
+			localTime,
+		})
+	);
 }
 
 export function buildWaveformGainSamples({
@@ -99,6 +145,8 @@ export function buildCompactWaveformGainSamples({
 		animations: element.animations,
 		count,
 		duration: element.duration,
+		fadeInDuration: element.params.fadeInDuration,
+		fadeOutDuration: element.params.fadeOutDuration,
 		muted: isElementMuted({ element }),
 		volume: getElementVolume({ element }),
 	});
@@ -108,28 +156,43 @@ export function buildCompactWaveformGainSamplesFromState({
 	animations,
 	count,
 	duration,
+	fadeInDuration,
+	fadeOutDuration,
 	muted,
 	volume,
 }: {
 	animations?: ElementAnimations;
 	count: number;
 	duration: number;
+	fadeInDuration?: unknown;
+	fadeOutDuration?: unknown;
 	muted: boolean;
 	volume: unknown;
 }): number[] | undefined {
 	const volumeDb = getAudioVolumeValue({ volume });
+	const safeFadeInDuration = getAudioFadeDurationValue({
+		duration: fadeInDuration,
+	});
+	const safeFadeOutDuration = getAudioFadeDurationValue({
+		duration: fadeOutDuration,
+	});
+	const hasFades = safeFadeInDuration > 0 || safeFadeOutDuration > 0;
 
 	if (
 		hasKeyframesForPath({
 			animations,
 			propertyPath: "volume",
-		})
+		}) ||
+		hasFades
 	) {
 		const durationSeconds = duration / TICKS_PER_SECOND;
 		return Array.from({ length: count }, (_, i) => {
 			const localTime = ((i + 0.5) / count) * durationSeconds;
 			return resolveEffectiveAudioGainFromState({
 				animations,
+				durationSeconds,
+				fadeInDuration: safeFadeInDuration,
+				fadeOutDuration: safeFadeOutDuration,
 				localTime,
 				muted,
 				volume: volumeDb,
@@ -147,11 +210,17 @@ export function buildCompactWaveformGainSamplesFromState({
 
 function resolveEffectiveAudioGainFromState({
 	animations,
+	durationSeconds,
+	fadeInDuration,
+	fadeOutDuration,
 	localTime,
 	muted,
 	volume,
 }: {
 	animations?: ElementAnimations;
+	durationSeconds: number;
+	fadeInDuration: number;
+	fadeOutDuration: number;
 	localTime: number;
 	muted: boolean;
 	volume: number;
@@ -167,11 +236,62 @@ function resolveEffectiveAudioGainFromState({
 		localTime: Math.round(localTime * TICKS_PER_SECOND),
 	});
 
-	return dBToLinear(resolvedDb);
+	return (
+		dBToLinear(resolvedDb) *
+		resolveAudioFadeMultiplier({
+			durationSeconds,
+			fadeInDuration,
+			fadeOutDuration,
+			localTime,
+		})
+	);
 }
 
 function getAudioVolumeValue({ volume }: { volume: unknown }): number {
 	return typeof volume === "number" ? volume : 0;
+}
+
+function getAudioFadeDurationValue({
+	duration,
+}: {
+	duration: unknown;
+}): number {
+	return typeof duration === "number" && Number.isFinite(duration)
+		? Math.max(0, duration)
+		: 0;
+}
+
+function resolveAudioFadeMultiplier({
+	durationSeconds,
+	fadeInDuration,
+	fadeOutDuration,
+	localTime,
+}: {
+	durationSeconds: number;
+	fadeInDuration: number;
+	fadeOutDuration: number;
+	localTime: number;
+}): number {
+	if (durationSeconds <= 0) {
+		return 0;
+	}
+
+	let multiplier = 1;
+	if (fadeInDuration > 0) {
+		multiplier = Math.min(
+			multiplier,
+			Math.max(0, Math.min(1, localTime / fadeInDuration)),
+		);
+	}
+
+	if (fadeOutDuration > 0) {
+		multiplier = Math.min(
+			multiplier,
+			Math.max(0, Math.min(1, (durationSeconds - localTime) / fadeOutDuration)),
+		);
+	}
+
+	return multiplier;
 }
 
 export function buildAudioGainAutomation({

@@ -169,6 +169,24 @@ const audioElementParams: ElementParamDefinition[] = [
 		default: false,
 		keyframable: false,
 	},
+	{
+		key: "fadeInDuration",
+		label: "Fade In Duration",
+		type: "number",
+		default: DEFAULTS.element.audioFadeDuration,
+		min: 0,
+		step: 0.01,
+		keyframable: false,
+	},
+	{
+		key: "fadeOutDuration",
+		label: "Fade Out Duration",
+		type: "number",
+		default: DEFAULTS.element.audioFadeDuration,
+		min: 0,
+		step: 0.01,
+		keyframable: false,
+	},
 ];
 
 const textElementParams: ElementParamDefinition[] = [

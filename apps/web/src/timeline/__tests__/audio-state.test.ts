@@ -4,17 +4,27 @@ import {
 	buildCompactWaveformGainSamples,
 	buildCompactWaveformGainSamplesFromState,
 	dBToLinear,
+	hasVariableAudioGain,
+	resolveEffectiveAudioGain,
 } from "@/timeline/audio-state";
-import { mediaTime, TICKS_PER_SECOND, ZERO_MEDIA_TIME } from "@/wasm/media-time";
+import {
+	mediaTime,
+	TICKS_PER_SECOND,
+	ZERO_MEDIA_TIME,
+} from "@/wasm/media-time";
 
 function audioElement({
 	volume = 0,
 	muted = false,
 	hasAnimatedVolume = false,
+	fadeInDuration = 0,
+	fadeOutDuration = 0,
 }: {
 	volume?: number;
 	muted?: boolean;
 	hasAnimatedVolume?: boolean;
+	fadeInDuration?: number;
+	fadeOutDuration?: number;
 } = {}): AudioElement {
 	return {
 		id: "audio-1",
@@ -27,6 +37,8 @@ function audioElement({
 		trimStart: ZERO_MEDIA_TIME,
 		trimEnd: ZERO_MEDIA_TIME,
 		params: {
+			fadeInDuration,
+			fadeOutDuration,
 			volume,
 			muted,
 		},
@@ -99,9 +111,50 @@ describe("compact waveform gain samples", () => {
 				animations: element.animations,
 				count: 4,
 				duration: element.duration,
+				fadeInDuration: element.params.fadeInDuration,
+				fadeOutDuration: element.params.fadeOutDuration,
 				muted: element.params.muted === true,
 				volume: element.params.volume,
 			}),
 		).toEqual(buildCompactWaveformGainSamples({ element, count: 4 }));
+	});
+
+	test("includes fade durations in compact waveform gain samples", () => {
+		const samples = buildCompactWaveformGainSamples({
+			element: audioElement({ fadeInDuration: 0.5, fadeOutDuration: 0.5 }),
+			count: 4,
+		});
+
+		expect(samples).toHaveLength(4);
+		expect(samples?.[0]).toBeLessThan(samples?.[1] ?? 0);
+		expect(samples?.[3]).toBeLessThan(samples?.[2] ?? 0);
+	});
+});
+
+describe("audio fades", () => {
+	test("resolve gain ramps in and out across fade durations", () => {
+		const element = audioElement({
+			fadeInDuration: 0.5,
+			fadeOutDuration: 0.25,
+		});
+
+		expect(resolveEffectiveAudioGain({ element, localTime: 0 })).toBe(0);
+		expect(resolveEffectiveAudioGain({ element, localTime: 0.25 })).toBeCloseTo(
+			0.5,
+		);
+		expect(resolveEffectiveAudioGain({ element, localTime: 0.5 })).toBeCloseTo(
+			1,
+		);
+		expect(
+			resolveEffectiveAudioGain({ element, localTime: 0.875 }),
+		).toBeCloseTo(0.5);
+		expect(resolveEffectiveAudioGain({ element, localTime: 1 })).toBe(0);
+	});
+
+	test("marks fade-only clips as variable-gain audio", () => {
+		expect(
+			hasVariableAudioGain({ element: audioElement({ fadeInDuration: 0.25 }) }),
+		).toBe(true);
+		expect(hasVariableAudioGain({ element: audioElement() })).toBe(false);
 	});
 });
