@@ -17,12 +17,14 @@ const RGB_SPLIT_SHADER_ID: &str = "rgb-split";
 const CHROMATIC_SHIFT_SHADER_ID: &str = "chromatic-shift";
 const SCANLINES_SHADER_ID: &str = "scanlines";
 const NOISE_SHADER_ID: &str = "noise";
+const SHATTER_SHADER_ID: &str = "shatter";
 const TINT_SHADER_SOURCE: &str = include_str!("shaders/tint.wgsl");
 const VIGNETTE_SHADER_SOURCE: &str = include_str!("shaders/vignette.wgsl");
 const PIXELATE_SHADER_SOURCE: &str = include_str!("shaders/pixelate.wgsl");
 const RGB_SPLIT_SHADER_SOURCE: &str = include_str!("shaders/rgb_split.wgsl");
 const SCANLINES_SHADER_SOURCE: &str = include_str!("shaders/scanlines.wgsl");
 const NOISE_SHADER_SOURCE: &str = include_str!("shaders/noise.wgsl");
+const SHATTER_SHADER_SOURCE: &str = include_str!("shaders/shatter.wgsl");
 
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
@@ -192,6 +194,16 @@ impl EffectPipeline {
                     &vertex_shader_module,
                     NOISE_SHADER_ID,
                     NOISE_SHADER_SOURCE,
+                ),
+            ),
+            (
+                SHATTER_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    SHATTER_SHADER_ID,
+                    SHATTER_SHADER_SOURCE,
                 ),
             ),
         ]);
@@ -459,6 +471,20 @@ fn pack_effect_uniforms(
                     read_number_uniform(pass, "u_amount")?,
                     read_number_uniform(pass, "u_time")?,
                     read_number_uniform(pass, "u_seed")?,
+                ],
+                color: [0.0, 0.0, 0.0, 0.0],
+            })
+        }
+        SHATTER_SHADER_ID => {
+            ensure_supported_uniforms(pass, &["u_progress", "u_seed"])?;
+            Ok(EffectUniformBuffer {
+                resolution: [width as f32, height as f32],
+                direction: [0.0, 0.0],
+                scalars: [
+                    read_number_uniform(pass, "u_progress")?,
+                    read_number_uniform(pass, "u_seed")?,
+                    0.0,
+                    0.0,
                 ],
                 color: [0.0, 0.0, 0.0, 0.0],
             })

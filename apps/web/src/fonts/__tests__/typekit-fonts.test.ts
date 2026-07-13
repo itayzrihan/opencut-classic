@@ -44,4 +44,21 @@ describe("Typekit font parsing", () => {
 			},
 		]);
 	});
+
+	test("keeps the preferred WOFF2 source for explicit FontFace loading", () => {
+		const [font] = parseTypekitFontsFromCss({
+			css: `
+				@font-face {
+					font-family: "liebling";
+					font-style: normal;
+					font-weight: 400;
+					src: url("https://example.com/font.woff") format("woff"),
+						url("https://example.com/font.woff2") format("woff2");
+				}
+			`,
+		});
+		expect(font?.variants[0]?.sourceUrl).toBe(
+			"https://example.com/font.woff2",
+		);
+	});
 });

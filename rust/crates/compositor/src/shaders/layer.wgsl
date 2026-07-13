@@ -11,7 +11,8 @@ struct LayerUniforms {
     opacity: f32,
     flip_x: f32,
     flip_y: f32,
-    _padding: vec2f,
+    perspective_x_radians: f32,
+    perspective_y_radians: f32,
 }
 
 @group(0) @binding(0) var source_texture: texture_2d<f32>;
@@ -30,7 +31,29 @@ fn rotate_inverse(point: vec2f, angle: f32) -> vec2f {
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let pixel = input.tex_coord * uniforms.resolution;
-    let local = rotate_inverse(pixel - uniforms.center, uniforms.rotation_radians);
+    let projected = rotate_inverse(pixel - uniforms.center, uniforms.rotation_radians);
+
+    // Invert the projective transform of a plane rotated in 3D. Keeping this
+    // in the compositor makes perspective work for every textured layer type.
+    let sx = sin(uniforms.perspective_x_radians);
+    let cx = cos(uniforms.perspective_x_radians);
+    let sy = sin(uniforms.perspective_y_radians);
+    let cy = cos(uniforms.perspective_y_radians);
+    let distance = max(uniforms.size.x, uniforms.size.y) * 1.5;
+    let a = -cx * sy;
+    let b = sx;
+    let aa = projected.x * a - distance * cy;
+    let ab = projected.x * b;
+    let ba = projected.y * a - distance * sx * sy;
+    let bb = projected.y * b - distance * cx;
+    let determinant = aa * bb - ab * ba;
+    if (abs(determinant) < 0.0001) {
+        return vec4f(0.0);
+    }
+    let local = vec2f(
+        ((-projected.x * distance) * bb - ab * (-projected.y * distance)) / determinant,
+        (aa * (-projected.y * distance) - (-projected.x * distance) * ba) / determinant,
+    );
 
     let uv = vec2f(
         local.x / uniforms.size.x + 0.5,

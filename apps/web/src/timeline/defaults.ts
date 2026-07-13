@@ -8,6 +8,8 @@ const defaultTransform: Transform = {
 	scaleY: 1,
 	position: { x: 0, y: 0 },
 	rotate: 0,
+	perspectiveX: 0,
+	perspectiveY: 0,
 };
 
 const defaultOpacity = 1;
@@ -55,6 +57,10 @@ const defaultTextElement: Omit<TextElement, "id"> = {
 		fontSize: 15,
 		fontFamily: "Arial",
 		color: "#ffffff",
+		textFillMode: "solid",
+		gradientStartColor: "#ffffff",
+		gradientEndColor: "#7c3aed",
+		gradientAngle: 0,
 		textAlign: "center",
 		fontWeight: "normal",
 		fontStyle: "normal",
@@ -81,6 +87,8 @@ const defaultTextElement: Omit<TextElement, "id"> = {
 		"transform.scaleX": defaultTransform.scaleX,
 		"transform.scaleY": defaultTransform.scaleY,
 		"transform.rotate": defaultTransform.rotate,
+		"transform.perspectiveX": defaultTransform.perspectiveX,
+		"transform.perspectiveY": defaultTransform.perspectiveY,
 		opacity: defaultOpacity,
 		blendMode: defaultBlendMode,
 	},

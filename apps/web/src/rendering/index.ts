@@ -8,6 +8,8 @@ export interface Transform {
 		y: number;
 	};
 	rotate: number;
+	perspectiveX: number;
+	perspectiveY: number;
 }
 
 export type BlendMode =
@@ -42,6 +44,8 @@ export function buildTransformFromParams({
 			y: readNumberParam({ params, key: "transform.positionY", fallback: 0 }),
 		},
 		rotate: readNumberParam({ params, key: "transform.rotate", fallback: 0 }),
+		perspectiveX: readNumberParam({ params, key: "transform.perspectiveX", fallback: 0 }),
+		perspectiveY: readNumberParam({ params, key: "transform.perspectiveY", fallback: 0 }),
 	};
 }
 

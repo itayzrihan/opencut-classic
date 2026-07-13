@@ -47,6 +47,8 @@ const TRANSFORM_PARAM_KEYS = [
 	"transform.scaleX",
 	"transform.scaleY",
 	"transform.rotate",
+	"transform.perspectiveX",
+	"transform.perspectiveY",
 ] as const;
 
 const BLENDING_PARAM_KEYS = ["opacity", "blendMode"] as const;
@@ -61,6 +63,10 @@ const TEXT_PARAM_KEYS = [
 	"fontFamily",
 	"fontSize",
 	"color",
+	"textFillMode",
+	"gradientStartColor",
+	"gradientEndColor",
+	"gradientAngle",
 	"textAlign",
 	"fontWeight",
 	"fontStyle",

@@ -317,7 +317,8 @@ function ElementParamField({
 	const isScopedText =
 		element.type === "text" &&
 		textScope !== undefined &&
-		textScope.type !== "layer";
+		textScope.type !== "layer" &&
+		param.key !== "blendMode";
 	const editor = useEditor();
 	const isBulk = !!elementsWithTracks?.length;
 	const keyframesEnabled =

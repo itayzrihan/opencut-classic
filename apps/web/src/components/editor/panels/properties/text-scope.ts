@@ -25,6 +25,10 @@ export type TextScopedSettings = {
 	wordAnimationId?: string;
 	accentColor?: string;
 	wordDirection?: TextWordDirection;
+	glowerEnabled?: boolean;
+	glowerDirection?: TextWordDirection;
+	lightningStormEnabled?: boolean;
+	glitchyEnabled?: boolean;
 	style?: TextWordStyle;
 };
 
@@ -182,6 +186,18 @@ export function buildScopedTextPatch({
 		...(patch.wordDirection !== undefined
 			? { captionWordDirection: patch.wordDirection }
 			: {}),
+		...(patch.glowerEnabled !== undefined
+			? { captionGlowerEnabled: patch.glowerEnabled }
+			: {}),
+		...(patch.glowerDirection !== undefined
+			? { captionGlowerDirection: patch.glowerDirection }
+			: {}),
+		...(patch.lightningStormEnabled !== undefined
+			? { captionLightningStormEnabled: patch.lightningStormEnabled }
+			: {}),
+		...(patch.glitchyEnabled !== undefined
+			? { captionGlitchyEnabled: patch.glitchyEnabled }
+			: {}),
 	};
 }
 
@@ -283,6 +299,22 @@ export function getScopedSettings({
 			scopedWord?.wordDirection ??
 			scopedRow?.wordDirection ??
 			element.captionWordDirection,
+		glowerEnabled:
+			scopedWord?.glowerEnabled ??
+			scopedRow?.glowerEnabled ??
+			element.captionGlowerEnabled,
+		glowerDirection:
+			scopedWord?.glowerDirection ??
+			scopedRow?.glowerDirection ??
+			element.captionGlowerDirection,
+		lightningStormEnabled:
+			scopedWord?.lightningStormEnabled ??
+			scopedRow?.lightningStormEnabled ??
+			element.captionLightningStormEnabled,
+		glitchyEnabled:
+			scopedWord?.glitchyEnabled ??
+			scopedRow?.glitchyEnabled ??
+			element.captionGlitchyEnabled,
 		style:
 			scope.type === "word" || scope.type === "words"
 				? scopedWord?.style
@@ -316,7 +348,11 @@ export function hasScopedTextOverride({
 			word?.transitionIn ||
 			word?.wordAnimationId ||
 			word?.accentColor ||
-			word?.wordDirection
+			word?.wordDirection ||
+			word?.glowerEnabled !== undefined ||
+			word?.glowerDirection
+			|| word?.lightningStormEnabled !== undefined
+			|| word?.glitchyEnabled !== undefined
 		);
 	}
 	if (scope.type === "words") {
@@ -330,7 +366,11 @@ export function hasScopedTextOverride({
 					word.transitionIn ||
 					word.wordAnimationId ||
 					word.accentColor ||
-					word.wordDirection
+					word.wordDirection ||
+					word.glowerEnabled !== undefined ||
+					word.glowerDirection
+					|| word.lightningStormEnabled !== undefined
+					|| word.glitchyEnabled !== undefined
 				),
 		);
 	}

@@ -31,6 +31,8 @@ export type QuadTransformDescriptor = {
 	width: number;
 	height: number;
 	rotationDegrees: number;
+	perspectiveXDegrees: number;
+	perspectiveYDegrees: number;
 	flipX: boolean;
 	flipY: boolean;
 };

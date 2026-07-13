@@ -14,6 +14,7 @@ import {
 	useEditor,
 	useEditorMediaAsset,
 	useEditorSelection,
+	useEditorMedia,
 } from "@/editor/use-editor";
 import { useAssetsPanelStore } from "@/components/editor/panels/assets/assets-panel-store";
 import { AudioWaveform, WAVEFORM_GAIN_SAMPLE_COUNT } from "./audio-waveform";
@@ -41,6 +42,9 @@ import {
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuSeparator,
+	ContextMenuSub,
+	ContextMenuSubContent,
+	ContextMenuSubTrigger,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { SelectionBoxBounds } from "@/selection/types";
@@ -595,6 +599,11 @@ function TimelineElementMenuContent({
 	isExpanded: boolean;
 }) {
 	const editor = useEditor();
+	const clipMediaAssets = useEditorMedia((currentEditor) =>
+		currentEditor.media
+			.getAssets()
+			.filter((asset) => asset.type === "image" || asset.type === "video"),
+	);
 	const selectedElements = useEditorSelection((e) =>
 		e.selection.getSelectedElements(),
 	);
@@ -676,6 +685,39 @@ function TimelineElementMenuContent({
 					isCurrentElementSelected={isCurrentElementSelected}
 					isMuted={isMuted}
 				/>
+			)}
+			{element.type === "text" && (
+				<ContextMenuSub>
+					<ContextMenuSubTrigger>Clip media into text</ContextMenuSubTrigger>
+					<ContextMenuSubContent className="max-h-72 w-56 overflow-y-auto">
+						{element.clipMediaId && (
+							<ContextMenuItem
+								onClick={() =>
+									editor.timeline.updateElements({
+										updates: [{ trackId, elementId: element.id, patch: { clipMediaId: undefined } }],
+									})
+								}
+							>
+								Remove clipped media
+							</ContextMenuItem>
+						)}
+						{clipMediaAssets.map((asset) => (
+							<ContextMenuItem
+								key={asset.id}
+								onClick={() =>
+									editor.timeline.updateElements({
+										updates: [{ trackId, elementId: element.id, patch: { clipMediaId: asset.id } }],
+									})
+								}
+							>
+								{asset.name}
+							</ContextMenuItem>
+						))}
+						{clipMediaAssets.length === 0 && (
+							<ContextMenuItem disabled>Import image or video first</ContextMenuItem>
+						)}
+					</ContextMenuSubContent>
+				</ContextMenuSub>
 			)}
 			{canToggleCurrentSourceAudio && (
 				<ContextMenuItem

@@ -7,10 +7,11 @@ export async function loadDocumentFontSamples({
 	font,
 }: {
 	font: string;
-}): Promise<void> {
-	await Promise.all(
+}): Promise<boolean> {
+	const loadedFaces = await Promise.all(
 		FONT_LOAD_SAMPLE_TEXTS.map((sampleText) =>
 			document.fonts.load(font, sampleText),
 		),
 	);
+	return loadedFaces.some((faces) => faces.length > 0);
 }

@@ -12,7 +12,15 @@ import { calculateTotalDuration } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
 import { mergeElementOverlay } from "@/timeline/element-overlay";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
-import { lastFrameMediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
+import {
+	lastFrameMediaTime,
+	mediaTime,
+	mediaTimeFromSeconds,
+	mediaTimeToSeconds,
+	type MediaTime,
+	ZERO_MEDIA_TIME,
+} from "@/wasm";
+import { decodeAudioToFloat32 } from "@/media/audio";
 import {
 	canElementBeHidden,
 	canElementHaveAudio,
@@ -72,6 +80,7 @@ import type {
 	PlannedTrackCreation,
 } from "@/timeline/group-move";
 import { withNormalizedTrackOrder } from "@/timeline";
+import { removeTimeRangeFromTracks } from "@/timeline/remove-time-range";
 
 export class TimelineManager {
 	private listeners = new Set<() => void>();
@@ -295,6 +304,96 @@ export class TimelineManager {
 	}): void {
 		const command = new DeleteElementsCommand({ elements });
 		this.editor.command.execute({ command });
+	}
+
+	closeGap({
+		startTime,
+		endTime,
+	}: {
+		startTime: MediaTime;
+		endTime: MediaTime;
+	}): void {
+		const before = this.editor.scenes.getActiveScene().tracks;
+		const after = removeTimeRangeFromTracks({
+			tracks: before,
+			startTime,
+			endTime,
+		});
+		this.editor.command.execute({
+			command: new TracksSnapshotCommand({ before, after }),
+		});
+	}
+
+	async removeAllSilence(): Promise<void> {
+		const before = this.editor.scenes.getActiveScene().tracks;
+		const selectedVideos = this.getElementsWithTracks({
+			elements: this.editor.selection.getSelectedElements(),
+		}).filter(({ element }) => element.type === "video");
+		if (selectedVideos.length === 0) return;
+
+		const ranges: Array<{ startTime: MediaTime; endTime: MediaTime }> = [];
+		for (const { element } of selectedVideos) {
+			if (element.type !== "video") continue;
+			const asset = this.editor.media
+				.getAssets()
+				.find((item) => item.id === element.mediaId);
+			if (!asset?.file) continue;
+			const { samples, sampleRate } = await decodeAudioToFloat32({
+				audioBlob: asset.file,
+			});
+			const windowSize = Math.max(1, Math.round(sampleRate * 0.05));
+			const sourceStart = mediaTimeToSeconds({ time: element.trimStart });
+			const sourceEnd =
+				sourceStart + mediaTimeToSeconds({ time: element.duration });
+			let silenceStart: number | null = null;
+			for (
+				let index = Math.floor(sourceStart * sampleRate);
+				index < Math.min(samples.length, Math.ceil(sourceEnd * sampleRate));
+				index += windowSize
+			) {
+				let sum = 0;
+				const limit = Math.min(samples.length, index + windowSize);
+				for (let sample = index; sample < limit; sample += 1)
+					sum += samples[sample] * samples[sample];
+				const rms = Math.sqrt(sum / Math.max(1, limit - index));
+				const time = index / sampleRate;
+				if (rms < 0.012 && silenceStart === null) silenceStart = time;
+				if (
+					(rms >= 0.012 || limit >= sourceEnd * sampleRate) &&
+					silenceStart !== null
+				) {
+					const silenceEnd = time;
+					if (silenceEnd - silenceStart >= 0.45) {
+						const padding = 0.08;
+						ranges.push({
+							startTime: mediaTime({
+								ticks:
+									element.startTime +
+									mediaTimeFromSeconds({
+										seconds: silenceStart - sourceStart + padding,
+									}),
+							}),
+							endTime: mediaTime({
+								ticks:
+									element.startTime +
+									mediaTimeFromSeconds({
+										seconds: silenceEnd - sourceStart - padding,
+									}),
+							}),
+						});
+					}
+					silenceStart = null;
+				}
+			}
+		}
+		let after = before;
+		for (const range of ranges.sort((a, b) => b.startTime - a.startTime)) {
+			after = removeTimeRangeFromTracks({ tracks: after, ...range });
+		}
+		if (after === before || ranges.length === 0) return;
+		this.editor.command.execute({
+			command: new TracksSnapshotCommand({ before, after }),
+		});
 	}
 
 	toggleSourceAudioSeparation({

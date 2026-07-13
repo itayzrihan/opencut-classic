@@ -664,7 +664,7 @@ function collectTextNode({
 	items.push({
 		type: "layer",
 		textureId,
-		transform: fullCanvasTransform(renderer),
+		transform: fullCanvasTransform(renderer, node.resolved.transform),
 		opacity: node.resolved.opacity,
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
@@ -698,18 +698,25 @@ function computeVisualTransform({
 		width: absWidth,
 		height: absHeight,
 		rotationDegrees: resolved.transform.rotate,
+		perspectiveXDegrees: resolved.transform.perspectiveX,
+		perspectiveYDegrees: resolved.transform.perspectiveY,
 		flipX: scaledWidth < 0,
 		flipY: scaledHeight < 0,
 	};
 }
 
-function fullCanvasTransform(renderer: RendererSize): QuadTransformDescriptor {
+function fullCanvasTransform(
+	renderer: RendererSize,
+	perspective?: { perspectiveX: number; perspectiveY: number },
+): QuadTransformDescriptor {
 	return {
 		centerX: renderer.width / 2,
 		centerY: renderer.height / 2,
 		width: renderer.width,
 		height: renderer.height,
 		rotationDegrees: 0,
+		perspectiveXDegrees: perspective?.perspectiveX ?? 0,
+		perspectiveYDegrees: perspective?.perspectiveY ?? 0,
 		flipX: false,
 		flipY: false,
 	};

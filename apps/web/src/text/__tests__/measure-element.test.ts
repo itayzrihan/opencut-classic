@@ -127,6 +127,73 @@ describe("text word direction", () => {
 	});
 });
 
+describe("Glower overlay", () => {
+	test("keeps the row's Hebrew direction across embedded English and uses word colors", () => {
+		const element = createTextElement({
+			captionRevealMode: "row",
+			captionGlowerEnabled: true,
+			captionGlowerDirection: "auto",
+			wordRuns: [
+				timedRun({ id: "hebrew", text: "היי", style: { color: "#ff0000" } }),
+				timedRun({ id: "english", text: "OpenCut", style: { color: "#00ff00" } }),
+			],
+			params: { content: "היי OpenCut" },
+		});
+		const measured = measureTextElement({
+			element,
+			canvasHeight: 1080,
+			localTime: HALF_SECOND,
+			ctx: getTextMeasurementContext(),
+		});
+		const words = measured.wordLines?.[0]?.words ?? [];
+		expect(words.map((word) => word.glowerDirection)).toEqual(["rtl", "rtl"]);
+		expect(words.map((word) => word.glowerProgress)).toEqual([0.5, 0.5]);
+		expect(new Set(words.map((word) => word.color))).toEqual(
+			new Set(["#ff0000", "#00ff00"]),
+		);
+	});
+
+	test("allows a row to override the automatic glow direction", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionRevealMode: "row",
+				captionGlowerEnabled: true,
+				textRowOverrides: [
+					{ id: "row-0", lineIndex: 0, glowerDirection: "ltr" },
+				],
+				wordRuns: [timedRun({ id: "hebrew", text: "היי" })],
+				params: { content: "היי" },
+			}),
+		});
+		expect(word.glowerDirection).toBe("ltr");
+	});
+
+	test("resolves Lightning Storm, Glitchy, and gradient fill independently", () => {
+		const word = measureWord({
+			element: createTextElement({
+				captionRevealMode: "row",
+				captionLightningStormEnabled: true,
+				captionGlitchyEnabled: true,
+				wordRuns: [timedRun({ id: "storm", text: "Storm" })],
+				params: {
+					content: "Storm",
+					textFillMode: "gradient",
+					gradientStartColor: "#ff0000",
+					gradientEndColor: "#0000ff",
+					gradientAngle: 45,
+				},
+			}),
+		});
+		expect(word.lightningProgress).toBe(0.5);
+		expect(word.glitchyProgress).toBe(0.5);
+		expect(word.gradient).toEqual({
+			startColor: "#ff0000",
+			endColor: "#0000ff",
+			angle: 45,
+		});
+	});
+});
+
 describe("text word animation reveal precedence", () => {
 	test("exposes none as the neutral word animation fallback", () => {
 		expect(CAPTION_WORD_ANIMATIONS[0]?.id).toBe("none");

@@ -48,6 +48,10 @@ pub struct QuadTransformDescriptor {
     pub width: f32,
     pub height: f32,
     pub rotation_degrees: f32,
+    #[serde(default)]
+    pub perspective_x_degrees: f32,
+    #[serde(default)]
+    pub perspective_y_degrees: f32,
     pub flip_x: bool,
     pub flip_y: bool,
 }

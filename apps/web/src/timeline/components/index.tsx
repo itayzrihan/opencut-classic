@@ -33,7 +33,7 @@ import {
 	type ReactNode,
 } from "react";
 import { useContainerSize } from "@/hooks/use-container-size";
-import { mediaTimeFromSeconds, type MediaTime } from "@/wasm";
+import { mediaTime, mediaTimeFromSeconds, type MediaTime } from "@/wasm";
 import type { ElementDragView, DropTarget } from "@/timeline";
 import { TimelineTrackContent } from "./timeline-track";
 import { TimelinePlayhead } from "./timeline-playhead";
@@ -58,6 +58,7 @@ import {
 	getDisplayTracks,
 } from "@/timeline";
 import { timelineTimeToPixels } from "@/timeline/pixel-utils";
+import { getTimelinePixelsPerSecond } from "@/timeline/pixel-utils";
 import { getTrackHeight, getTotalTracksHeight } from "./track-layout";
 import { SELECTED_TRACK_ROW_CLASS } from "./theme";
 import {
@@ -1350,6 +1351,7 @@ type TimelineTrackRowProps = {
 	isHovered: boolean;
 	timeline: TrackLabelTimelineActions & {
 		removeTrack: ({ trackId }: { trackId: string }) => void;
+		closeGap: ({ startTime, endTime }: { startTime: MediaTime; endTime: MediaTime }) => void;
 	};
 	selectedElementIds: ReadonlySet<string>;
 	expandedElementIds: ReadonlySet<string>;
@@ -1377,11 +1379,31 @@ function TimelineTrackRowComponent({
 	targetElementId,
 }: TimelineTrackRowProps) {
 	const { track } = layout;
+	const [contextTime, setContextTime] = useState<MediaTime | null>(null);
+	const clickedGap = useMemo(() => {
+		if (track.id !== mainTrackId || contextTime === null) return null;
+		const elements = [...track.elements].sort((a, b) => a.startTime - b.startTime);
+		const previous = elements.filter((element) => element.startTime + element.duration <= contextTime).at(-1);
+		const next = elements.find((element) => element.startTime >= contextTime);
+		if (!previous || !next) return null;
+		const startTime = mediaTime({ ticks: previous.startTime + previous.duration });
+		const endTime = next.startTime;
+		return endTime > startTime && contextTime >= startTime && contextTime <= endTime
+			? { startTime, endTime }
+			: null;
+	}, [contextTime, mainTrackId, track]);
 
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>
 				<div
+					onContextMenu={(event) => {
+						const rect = event.currentTarget.getBoundingClientRect();
+						const seconds =
+							(event.clientX - rect.left + scrollLeft) /
+							getTimelinePixelsPerSecond({ zoomLevel });
+						setContextTime(mediaTimeFromSeconds({ seconds }));
+					}}
 					className={cn(
 						"absolute right-0 left-0 transition-colors",
 						isSelected && SELECTED_TRACK_ROW_CLASS,
@@ -1411,6 +1433,13 @@ function TimelineTrackRowComponent({
 				</div>
 			</ContextMenuTrigger>
 			<ContextMenuContent className="w-40">
+				{clickedGap && (
+					<ContextMenuItem
+						onClick={() => timeline.closeGap(clickedGap)}
+					>
+						Close gap on all layers
+					</ContextMenuItem>
+				)}
 				<ContextMenuItem
 					icon={<HugeiconsIcon icon={TaskAdd02Icon} />}
 					onClick={(event: React.MouseEvent) => {

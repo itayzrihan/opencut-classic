@@ -45,5 +45,17 @@ export function resolveTransformAtTime({
 			localTime: safeLocalTime,
 			fallbackValue: baseTransform.rotate,
 		}),
+		perspectiveX: resolveAnimationPathValueAtTime({
+			animations,
+			propertyPath: "transform.perspectiveX",
+			localTime: safeLocalTime,
+			fallbackValue: baseTransform.perspectiveX,
+		}),
+		perspectiveY: resolveAnimationPathValueAtTime({
+			animations,
+			propertyPath: "transform.perspectiveY",
+			localTime: safeLocalTime,
+			fallbackValue: baseTransform.perspectiveY,
+		}),
 	};
 }

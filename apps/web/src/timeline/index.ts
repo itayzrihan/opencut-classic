@@ -3,6 +3,7 @@ import type { SceneTracks } from "./types";
 import { getDisplayTracks } from "./track-order";
 
 export * from "./types";
+export * from "./remove-time-range";
 export * from "./drag";
 export * from "./track-capabilities";
 export * from "./track-element-update";

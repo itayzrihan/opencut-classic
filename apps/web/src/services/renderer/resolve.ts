@@ -1,5 +1,8 @@
 import { mediaTimeToSeconds, roundMediaTime } from "@/wasm";
-import { getElementLocalTime } from "@/animation";
+import {
+	getElementLocalTime,
+	resolveAnimationPathValueAtTime,
+} from "@/animation";
 import { resolveEffectParamsAtTime } from "@/animation/effect-param-channel";
 import {
 	buildGaussianBlurPasses,
@@ -91,7 +94,7 @@ async function resolveNode({
 	} else if (node instanceof GraphicNode) {
 		node.resolved = await resolveGraphicNode({ node, context });
 	} else if (node instanceof TextNode) {
-		node.resolved = resolveTextNode({ node, context });
+		node.resolved = await resolveTextNode({ node, context });
 	} else if (node instanceof BlurBackgroundNode) {
 		node.resolved = await resolveBlurBackgroundNode({ node, context });
 	} else if (node instanceof EffectLayerNode) {
@@ -179,17 +182,33 @@ function resolveVisualState({
 		Math.abs(sourceHeight * containScale * transform.scaleY),
 	);
 
+	const effectPasses = resolveEffectPassGroups({
+		effects: params.effects,
+		animations: params.animations,
+		localTime,
+		width: effectWidth,
+		height: effectHeight,
+	});
+	const shatterProgress = resolveAnimationPathValueAtTime({
+		animations: params.animations,
+		propertyPath: "transition.shatter",
+		localTime,
+		fallbackValue: 0,
+	});
+	if (shatterProgress > 0.0001) {
+		effectPasses.push([
+			{
+				shader: "shatter",
+				uniforms: { u_progress: shatterProgress, u_seed: 17 },
+			},
+		]);
+	}
+
 	return {
 		localTime,
 		transform,
 		opacity,
-		effectPasses: resolveEffectPassGroups({
-			effects: params.effects,
-			animations: params.animations,
-			localTime,
-			width: effectWidth,
-			height: effectHeight,
-		}),
+		effectPasses,
 	};
 }
 
@@ -338,13 +357,13 @@ async function resolveGraphicNode({
 	};
 }
 
-function resolveTextNode({
+async function resolveTextNode({
 	node,
 	context,
 }: {
 	node: TextNode;
 	context: ResolveContext;
-}): ResolvedTextNodeState | null {
+}): Promise<ResolvedTextNodeState | null> {
 	if (
 		context.time < node.params.startTime ||
 		context.time >= node.params.startTime + node.params.duration
@@ -358,6 +377,19 @@ function resolveTextNode({
 		elementDuration: node.params.duration,
 	});
 	const background = buildTextBackgroundFromElement({ element: node.params });
+	let clipMediaSource: CanvasImageSource | undefined;
+	const clipMedia = node.params.clipMediaAsset;
+	if (clipMedia?.url && clipMedia.type === "image") {
+		clipMediaSource = (await loadImageSource({ url: clipMedia.url })).source;
+	} else if (clipMedia?.file && clipMedia.type === "video") {
+		const mediaDuration = Math.max(0.001, clipMedia.duration ?? node.params.duration);
+		const frame = await videoCache.getFrameAt({
+			mediaId: clipMedia.id,
+			file: clipMedia.file,
+			time: localTime % mediaDuration,
+		});
+		clipMediaSource = frame?.canvas;
+	}
 
 	return {
 		transform: resolveTransformAtTime({
@@ -398,6 +430,7 @@ function resolveTextNode({
 			localTime,
 			ctx: getTextMeasurementContext(),
 		}),
+		clipMediaSource,
 	};
 }
 

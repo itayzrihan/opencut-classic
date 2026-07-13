@@ -416,6 +416,37 @@ function measureWordRunsLayout({
 						? element.params.color
 						: undefined,
 			});
+			const start = run.startTime ?? 0;
+			const end = run.endTime ?? start;
+			const glowerEnabled =
+				run.glowerEnabled ??
+				rowOverride?.glowerEnabled ??
+				element.captionGlowerEnabled ??
+				false;
+			const lightningEnabled =
+				run.lightningStormEnabled ??
+				rowOverride?.lightningStormEnabled ??
+				element.captionLightningStormEnabled ??
+				false;
+			const glitchyEnabled =
+				run.glitchyEnabled ??
+				rowOverride?.glitchyEnabled ??
+				element.captionGlitchyEnabled ??
+				false;
+			const persistentProgress = (enabled: boolean) =>
+				enabled
+					? Math.max(0, Math.min(1, (localTime - start) / Math.max(0.001, end - start)))
+					: 0;
+			const glowerProgress = Math.max(
+				persistentProgress(glowerEnabled),
+				persistentProgress(lightningEnabled),
+				persistentProgress(glitchyEnabled),
+			);
+			const glowerDirectionSetting =
+				run.glowerDirection ??
+				rowOverride?.glowerDirection ??
+				element.captionGlowerDirection ??
+				"auto";
 			const measuredWord = measureStyledWord({
 				ctx,
 				text: run.text,
@@ -426,6 +457,15 @@ function measureWordRunsLayout({
 				run,
 				direction,
 				style,
+				glowerProgress,
+				glowerDirection:
+					glowerDirectionSetting === "auto"
+						? lineDirection
+						: glowerDirectionSetting,
+				lightningProgress: persistentProgress(lightningEnabled),
+				glitchyProgress: persistentProgress(glitchyEnabled),
+				lightningActive: lightningEnabled && localTime >= start && localTime < end,
+				glitchyActive: glitchyEnabled && localTime >= start && localTime < end,
 				drawText: resolveDrawText({
 					run,
 					style,
@@ -517,6 +557,29 @@ function measureWordRunsLayout({
 				direction: word.direction,
 				textDecoration:
 					word.style.textDecoration ?? text.textDecoration ?? "none",
+				glowerProgress: word.glowerProgress,
+				glowerDirection: word.glowerDirection,
+				lightningProgress: word.lightningProgress,
+				glitchyProgress: word.glitchyProgress,
+				lightningActive: word.lightningActive,
+				glitchyActive: word.glitchyActive,
+				gradient:
+					element.params.textFillMode === "gradient"
+						? {
+								startColor:
+									typeof element.params.gradientStartColor === "string"
+										? element.params.gradientStartColor
+										: "#ffffff",
+								endColor:
+									typeof element.params.gradientEndColor === "string"
+										? element.params.gradientEndColor
+										: "#7c3aed",
+								angle:
+									typeof element.params.gradientAngle === "number"
+										? element.params.gradientAngle
+										: 0,
+							}
+						: undefined,
 			};
 		});
 		wordLines.push({ y, width, words });

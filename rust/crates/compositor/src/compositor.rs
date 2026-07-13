@@ -57,7 +57,8 @@ struct LayerUniformBuffer {
     opacity: f32,
     flip_x: f32,
     flip_y: f32,
-    _padding: [f32; 2], // WebGL requires uniform buffer sizes to be multiples of 16 bytes (40 → 48)
+    perspective_x_radians: f32,
+    perspective_y_radians: f32,
 }
 
 #[repr(C)]
@@ -602,7 +603,8 @@ impl Compositor {
                         opacity: layer.opacity,
                         flip_x: if layer.transform.flip_x { 1.0 } else { 0.0 },
                         flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
-                        _padding: [0.0; 2],
+                        perspective_x_radians: layer.transform.perspective_x_degrees.to_radians(),
+                        perspective_y_radians: layer.transform.perspective_y_degrees.to_radians(),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });

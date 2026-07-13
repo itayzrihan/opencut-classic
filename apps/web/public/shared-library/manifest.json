@@ -2,6 +2,62 @@
   "version": 1,
   "audioAssets": [
     {
+      "id": "b999c076-afb6-4323-9c2c-274595a0c14d",
+      "name": "Eternxlkz - SLAY ENOUGH! (Official Audio)",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 2334230,
+      "duration": 97.19873,
+      "sourceUrl": "/shared-library/audio/music/b999c076-afb6-4323-9c2c-274595a0c14d.mp3",
+      "repositoryPath": "public/shared-library/audio/music/b999c076-afb6-4323-9c2c-274595a0c14d.mp3",
+      "storageKind": "repo",
+      "fileName": "b999c076-afb6-4323-9c2c-274595a0c14d.mp3",
+      "createdAt": "2026-07-13T04:40:04.826Z",
+      "updatedAt": "2026-07-13T04:40:04.863Z"
+    },
+    {
+      "id": "e6fdbc36-d7dd-45fa-8d2a-12b21eafa078",
+      "name": "Me And The Devil (Instrumental)",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 2799330,
+      "duration": 182.601723,
+      "sourceUrl": "/shared-library/audio/music/e6fdbc36-d7dd-45fa-8d2a-12b21eafa078.mp3",
+      "repositoryPath": "public/shared-library/audio/music/e6fdbc36-d7dd-45fa-8d2a-12b21eafa078.mp3",
+      "storageKind": "repo",
+      "fileName": "e6fdbc36-d7dd-45fa-8d2a-12b21eafa078.mp3",
+      "createdAt": "2026-07-13T04:36:28.788Z",
+      "updatedAt": "2026-07-13T04:36:28.823Z"
+    },
+    {
+      "id": "632e9ad2-be14-4fe7-b977-e0247d243b98",
+      "name": "A Good Man with a Broken Heart",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 2850827,
+      "duration": 118.710567,
+      "sourceUrl": "/shared-library/audio/music/632e9ad2-be14-4fe7-b977-e0247d243b98.mp3",
+      "repositoryPath": "public/shared-library/audio/music/632e9ad2-be14-4fe7-b977-e0247d243b98.mp3",
+      "storageKind": "repo",
+      "fileName": "632e9ad2-be14-4fe7-b977-e0247d243b98.mp3",
+      "createdAt": "2026-07-13T02:57:34.435Z",
+      "updatedAt": "2026-07-13T02:57:34.468Z"
+    },
+    {
+      "id": "cfd5006e-76dc-47b8-a32f-3e0930639f7a",
+      "name": "Skins (Ultra Slowed  Reverb)",
+      "folder": "music",
+      "mimeType": "audio/mpeg",
+      "size": 7369802,
+      "duration": 307.001179,
+      "sourceUrl": "/shared-library/audio/music/cfd5006e-76dc-47b8-a32f-3e0930639f7a.mp3",
+      "repositoryPath": "public/shared-library/audio/music/cfd5006e-76dc-47b8-a32f-3e0930639f7a.mp3",
+      "storageKind": "repo",
+      "fileName": "cfd5006e-76dc-47b8-a32f-3e0930639f7a.mp3",
+      "createdAt": "2026-07-13T02:52:43.723Z",
+      "updatedAt": "2026-07-13T02:52:43.770Z"
+    },
+    {
       "id": "1feab1d1-0580-41a4-8ed9-4a177eaf675e",
       "name": "gta-v-death-sound-effect-102",
       "folder": "sfx",
@@ -556,5 +612,5 @@
       "updatedAt": "2026-07-05T12:41:32.336Z"
     }
   ],
-  "updatedAt": "2026-07-06T03:07:39.072Z"
+  "updatedAt": "2026-07-13T04:40:04.864Z"
 }

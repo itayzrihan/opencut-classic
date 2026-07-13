@@ -93,17 +93,21 @@ export function TimelineToolbar({
 }
 
 function ToolbarLeftSection() {
+	const timeline = useEditorTimelineScenes((editor) => editor.timeline);
 	const graphEditor = useGraphEditorController();
 	const aiRangeSelection = useTimelineStore((s) => s.aiRangeSelection);
 	const armRangeSelection = useTimelineStore((s) => s.armRangeSelection);
-	const selectedElement = useEditorTimelineSelection((editor) => {
-		const selectedElements = editor.selection.getSelectedElements();
-		return selectedElements.length === 1
-			? (editor.timeline.getElementsWithTracks({
-					elements: selectedElements,
-				})[0] ?? null)
-			: null;
+	const selectedElements = useEditorTimelineSelection((editor) =>
+		editor.selection.getSelectedElements(),
+	);
+	const selectedTimelineElements = timeline.getElementsWithTracks({
+		elements: selectedElements,
 	});
+	const selectedElement =
+		selectedTimelineElements.length === 1 ? selectedTimelineElements[0] : null;
+	const hasSelectedVideo = selectedTimelineElements.some(
+		({ element }) => element.type === "video",
+	);
 	const selectedMediaId =
 		selectedElement && hasMediaId(selectedElement.element)
 			? selectedElement.element.mediaId
@@ -142,6 +146,19 @@ function ToolbarLeftSection() {
 					icon={<HugeiconsIcon icon={ScissorIcon} />}
 					tooltip="Split element"
 					onClick={({ event }) => handleAction({ action: "split", event })}
+				/>
+				<ToolbarButton
+					icon={<HugeiconsIcon icon={SnowIcon} />}
+					tooltip={
+						hasSelectedVideo
+							? "Remove all silence from selected video clips"
+							: "Select one or more video clips to remove silence"
+					}
+					disabled={!hasSelectedVideo}
+					onClick={({ event }) => {
+						event.stopPropagation();
+						void timeline.removeAllSilence();
+					}}
 				/>
 
 				<ToolbarButton

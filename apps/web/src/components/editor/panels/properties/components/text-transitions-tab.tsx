@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
 	Select,
 	SelectContent,
@@ -34,6 +35,7 @@ import {
 import {
 	REVEAL_MODES,
 	TRANSITION_IN_OPTIONS,
+	WORD_DIRECTIONS,
 	toRevealMode,
 	toTransitionIn,
 } from "../text-word-controls";
@@ -68,6 +70,26 @@ export function TextTransitionsTab({
 	const isScopedWordTransition =
 		scope.type !== "layer" &&
 		((elementsWithTracks?.length ?? 0) <= 1 || scope.type === "words");
+	const scopedSettings = getScopedSettings({ element, scope });
+	const glowerEnabled = scopedSettings.glowerEnabled ?? false;
+	const updateGlower = (patch: TextScopedSettings) => {
+		editor.timeline.updateElements({
+			updates: targets.flatMap((target) => {
+				if (target.element.type !== "text") return [];
+				const targetScope = resolveTextScopeForEntry({ scope, target });
+				if (!targetScope) return [];
+				return [{
+					trackId: target.track.id,
+					elementId: target.element.id,
+					patch: buildScopedTextPatch({
+						element: target.element,
+						scope: targetScope,
+						patch,
+					}),
+				}];
+			}),
+		});
+	};
 	const targets = useMemo(
 		() =>
 			elementsWithTracks?.length
@@ -160,6 +182,54 @@ export function TextTransitionsTab({
 			<Section sectionKey={`${element.id}:transitions:${scope.type}`}>
 				<SectionContent className="pt-4">
 					<SectionFields>
+						<SectionField label="Glower">
+							<Switch
+								checked={glowerEnabled}
+								onCheckedChange={(checked) =>
+									updateGlower({ glowerEnabled: checked })
+								}
+							/>
+						</SectionField>
+						<SectionField label="Lightning Storm">
+							<Switch
+								checked={scopedSettings.lightningStormEnabled ?? false}
+								onCheckedChange={(checked) =>
+									updateGlower({ lightningStormEnabled: checked })
+								}
+							/>
+						</SectionField>
+						<SectionField label="Glitchy">
+							<Switch
+								checked={scopedSettings.glitchyEnabled ?? false}
+								onCheckedChange={(checked) =>
+									updateGlower({ glitchyEnabled: checked })
+								}
+							/>
+						</SectionField>
+						{glowerEnabled && (
+							<SectionField label="Glow direction">
+								<Select
+									value={scopedSettings.glowerDirection ?? "auto"}
+									onValueChange={(value) =>
+										updateGlower({
+											glowerDirection:
+												value === "rtl" || value === "ltr"
+													? value
+													: "auto",
+										})
+									}
+								>
+									<SelectTrigger><SelectValue /></SelectTrigger>
+									<SelectContent>
+										{WORD_DIRECTIONS.map((direction) => (
+											<SelectItem key={direction.value} value={direction.value}>
+												{direction.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SectionField>
+						)}
 						<SectionField label="Reveal">
 							<Select
 								value={revealMode}
@@ -210,6 +280,52 @@ export function TextTransitionsTab({
 		<Section sectionKey={`${element.id}:transitions`}>
 			<SectionContent className="pt-4">
 				<SectionFields>
+					<SectionField label="Glower">
+						<Switch
+							checked={glowerEnabled}
+							onCheckedChange={(checked) =>
+								updateGlower({ glowerEnabled: checked })
+							}
+						/>
+					</SectionField>
+					<SectionField label="Lightning Storm">
+						<Switch
+							checked={scopedSettings.lightningStormEnabled ?? false}
+							onCheckedChange={(checked) =>
+								updateGlower({ lightningStormEnabled: checked })
+							}
+						/>
+					</SectionField>
+					<SectionField label="Glitchy">
+						<Switch
+							checked={scopedSettings.glitchyEnabled ?? false}
+							onCheckedChange={(checked) =>
+								updateGlower({ glitchyEnabled: checked })
+							}
+						/>
+					</SectionField>
+					{glowerEnabled && (
+						<SectionField label="Glow direction">
+							<Select
+								value={scopedSettings.glowerDirection ?? "auto"}
+								onValueChange={(value) =>
+									updateGlower({
+										glowerDirection:
+											value === "rtl" || value === "ltr" ? value : "auto",
+									})
+								}
+							>
+								<SelectTrigger><SelectValue /></SelectTrigger>
+								<SelectContent>
+									{WORD_DIRECTIONS.map((direction) => (
+										<SelectItem key={direction.value} value={direction.value}>
+											{direction.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</SectionField>
+					)}
 					<SectionField label="In transition">
 						<Select value={inTransitionId} onValueChange={setInTransitionId}>
 							<SelectTrigger>

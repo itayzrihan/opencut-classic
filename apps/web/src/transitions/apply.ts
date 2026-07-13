@@ -60,6 +60,7 @@ function transitionValue({
 	if (offset == null) return base;
 	if (
 		property === "opacity" ||
+		property === "transition.shatter" ||
 		property === "transform.scaleX" ||
 		property === "transform.scaleY"
 	) {
@@ -80,6 +81,7 @@ function transitionRecipeValue({
 	const base = readBaseValue({ element, property });
 	if (
 		property === "opacity" ||
+		property === "transition.shatter" ||
 		property === "transform.scaleX" ||
 		property === "transform.scaleY"
 	) {

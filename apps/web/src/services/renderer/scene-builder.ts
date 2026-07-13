@@ -110,6 +110,9 @@ function buildTrackNodes({
 			}
 
 			if (element.type === "text") {
+				const clipMediaAsset = element.clipMediaId
+					? mediaMap.get(element.clipMediaId)
+					: undefined;
 				nodes.push(
 					new TextNode({
 						...element,
@@ -121,6 +124,7 @@ function buildTrackNodes({
 						canvasHeight: canvasSize.height,
 						textBaseline: "middle",
 						effects: element.effects ?? [],
+						clipMediaAsset,
 					}),
 				);
 			}

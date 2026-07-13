@@ -8,6 +8,7 @@ const DEFAULT_TYPEKIT_WEIGHTS = [400, 700];
 export interface TypekitFontVariant {
 	style: string;
 	weight: number;
+	sourceUrl?: string;
 }
 
 export interface TypekitFontMeta {
@@ -47,6 +48,7 @@ export function parseTypekitFontsFromCss({
 		const weight = parseCssFontWeight({
 			value: matchCssTokenProperty({ block, property: "font-weight" }),
 		});
+		const sourceUrl = matchPreferredFontSource({ block });
 		const entry = fontsByFamily.get(family) ?? {
 			styles: new Set<string>(),
 			variants: new Map<string, TypekitFontVariant>(),
@@ -55,7 +57,11 @@ export function parseTypekitFontsFromCss({
 		entry.styles.add(style);
 		if (weight !== null) {
 			entry.weights.add(weight);
-			entry.variants.set(`${style}:${weight}`, { style, weight });
+			entry.variants.set(`${style}:${weight}`, {
+				style,
+				weight,
+				...(sourceUrl ? { sourceUrl } : {}),
+			});
 		}
 		fontsByFamily.set(family, entry);
 	}
@@ -126,25 +132,48 @@ export async function loadTypekitFont({
 	if (!meta) return false;
 	if (typeof document === "undefined") return true;
 
-	const variants =
+	const variants: TypekitFontVariant[] =
 		meta.variants.length > 0
 			? meta.variants
 			: DEFAULT_TYPEKIT_WEIGHTS.map((weight) => ({ style: "normal", weight }));
 	const signature = variants
-		.map((variant) => `${variant.style}:${variant.weight}`)
+		.map((variant) => `${variant.style}:${variant.weight}:${variant.sourceUrl ?? "stylesheet"}`)
 		.join("|");
 	if (loadedFamilySignatures.get(family) === signature) return true;
 
 	const escapedFamily = family.replace(/"/g, '\\"');
-	await Promise.all(
-		variants.map((variant) =>
-			loadDocumentFontSamples({
+	const results = await Promise.all(
+		variants.map(async (variant) => {
+			if (variant.sourceUrl && typeof FontFace !== "undefined") {
+				try {
+					const face = new FontFace(
+						family,
+						`url("${variant.sourceUrl.replace(/"/g, "%22")}")`,
+						{ style: variant.style, weight: String(variant.weight) },
+					);
+					const loadedFace = await face.load();
+					document.fonts.add(loadedFace);
+					return true;
+				} catch {
+					// Fall through to the stylesheet-backed loader.
+				}
+			}
+			const loaded = await loadDocumentFontSamples({
 				font: `${variant.style} ${variant.weight} 16px "${escapedFamily}"`,
-			}).catch(() => undefined),
-		),
+			}).catch(() => false);
+			return loaded;
+		}),
 	);
+	if (!results.some(Boolean)) return false;
 	loadedFamilySignatures.set(family, signature);
 	return true;
+}
+
+function matchPreferredFontSource({ block }: { block: string }): string | undefined {
+	const sources = [...block.matchAll(/url\(["']?([^"')]+)["']?\)\s*format\(["']([^"']+)["']\)/gi)];
+	const preferred =
+		sources.find((match) => match[2]?.toLowerCase() === "woff2") ?? sources[0];
+	return preferred?.[1];
 }
 
 function injectTypekitCss({ css }: { css: string }): void {

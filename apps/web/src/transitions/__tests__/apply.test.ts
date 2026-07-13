@@ -104,6 +104,7 @@ describe("transitions", () => {
 		expect(new Set(presetIds).size).toBe(presetIds.length);
 		expect(presetIds).toContain("fade");
 		expect(presetIds).toContain("glitch");
+		expect(presetIds).toContain("shatter");
 		expect(presetIds).toContain("dolly-zoom-in");
 		expect(presetIds).toContain("whip-pan-left");
 		expect(presetIds).toContain("lower-third-reveal-left");

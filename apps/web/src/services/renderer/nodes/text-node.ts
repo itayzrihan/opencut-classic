@@ -4,6 +4,7 @@ import type { EffectPass } from "@/effects/types";
 import type { BlendMode, Transform } from "@/rendering";
 import { drawMeasuredTextLayout } from "@/text/primitives";
 import type { MeasuredTextElement } from "@/text/measure-element";
+import type { MediaAsset } from "@/media/types";
 
 export type TextNodeParams = TextElement & {
 	transform: Transform;
@@ -12,6 +13,7 @@ export type TextNodeParams = TextElement & {
 	canvasCenter: { x: number; y: number };
 	canvasHeight: number;
 	textBaseline?: CanvasTextBaseline;
+	clipMediaAsset?: MediaAsset;
 };
 
 export interface ResolvedTextNodeState {
@@ -21,6 +23,7 @@ export interface ResolvedTextNodeState {
 	backgroundColor: string;
 	effectPasses: EffectPass[][];
 	measuredText: MeasuredTextElement;
+	clipMediaSource?: CanvasImageSource;
 }
 
 export class TextNode extends BaseNode<TextNodeParams, ResolvedTextNodeState> {}
@@ -48,9 +51,24 @@ export function renderTextToContext({
 		ctx.rotate((resolved.transform.rotate * Math.PI) / 180);
 	}
 
+	const measuredText = resolved.clipMediaSource
+		? {
+				...resolved.measuredText,
+				resolvedBackground: null,
+				wordLines: resolved.measuredText.wordLines?.map((line) => ({
+					...line,
+					words: line.words.map((word) => ({
+						...word,
+						background: word.background
+							? { ...word.background, enabled: false }
+							: undefined,
+					})),
+				})),
+			}
+		: resolved.measuredText;
 	drawMeasuredTextLayout({
 		ctx,
-		layout: resolved.measuredText,
+		layout: measuredText,
 		textColor: resolved.textColor,
 		background: resolved.measuredText.resolvedBackground,
 		backgroundColor: resolved.backgroundColor,
@@ -58,4 +76,37 @@ export function renderTextToContext({
 	});
 
 	ctx.restore();
+	if (resolved.clipMediaSource) {
+		ctx.save();
+		ctx.globalCompositeOperation = "source-in";
+		const source = resolved.clipMediaSource;
+		const dimensions = sourceDimensions(source);
+		const scale = Math.max(
+			ctx.canvas.width / Math.max(1, dimensions.width),
+			ctx.canvas.height / Math.max(1, dimensions.height),
+		);
+		const width = dimensions.width * scale;
+		const height = dimensions.height * scale;
+		ctx.drawImage(source, (ctx.canvas.width - width) / 2, (ctx.canvas.height - height) / 2, width, height);
+		ctx.restore();
+	}
+}
+
+function sourceDimensions(source: CanvasImageSource) {
+	if (source instanceof HTMLImageElement) {
+		return { width: source.naturalWidth, height: source.naturalHeight };
+	}
+	if (source instanceof HTMLVideoElement) {
+		return { width: source.videoWidth, height: source.videoHeight };
+	}
+	const sized = source as {
+		width?: number;
+		height?: number;
+		displayWidth?: number;
+		displayHeight?: number;
+	};
+	return {
+		width: sized.width ?? sized.displayWidth ?? 1,
+		height: sized.height ?? sized.displayHeight ?? 1,
+	};
 }

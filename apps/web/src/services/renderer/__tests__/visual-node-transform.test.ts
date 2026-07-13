@@ -63,6 +63,8 @@ describe("visual node transform animation", () => {
 				scaleY: 1,
 				position: { x: 0, y: 0 },
 				rotate: 0,
+				perspectiveX: 0,
+				perspectiveY: 0,
 			},
 			animations: {
 				"transform.scaleX": scalarChannel({
@@ -73,6 +75,21 @@ describe("visual node transform animation", () => {
 				"transform.scaleY": scalarChannel({
 					from: 1,
 					to: 3,
+					durationSeconds: 4,
+				}),
+				"transform.perspectiveX": scalarChannel({
+					from: 0,
+					to: 40,
+					durationSeconds: 4,
+				}),
+				"transform.perspectiveY": scalarChannel({
+					from: 0,
+					to: -20,
+					durationSeconds: 4,
+				}),
+				"transition.shatter": scalarChannel({
+					from: 0,
+					to: 1,
 					durationSeconds: 4,
 				}),
 			},
@@ -90,5 +107,11 @@ describe("visual node transform animation", () => {
 
 		expect(node.resolved?.transform.scaleX).toBe(1.5);
 		expect(node.resolved?.transform.scaleY).toBe(2);
+		expect(node.resolved?.transform.perspectiveX).toBe(20);
+		expect(node.resolved?.transform.perspectiveY).toBe(-10);
+		expect(node.resolved?.effectPasses.at(-1)?.[0]).toEqual({
+			shader: "shatter",
+			uniforms: { u_progress: 0.5, u_seed: 17 },
+		});
 	});
 });

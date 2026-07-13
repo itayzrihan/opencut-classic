@@ -12,6 +12,7 @@ export const CONTROLLED_TRANSITION_PROPERTIES: TransitionProperty[] = [
 	"transform.scaleX",
 	"transform.scaleY",
 	"transform.rotate",
+	"transition.shatter",
 	"background.paddingX",
 	"background.paddingY",
 	"background.offsetX",
@@ -1016,6 +1017,20 @@ export const TRANSITION_PRESETS: TransitionPreset[] = [
 				{ at: 0.34, value: 8 },
 				{ at: 1, value: 0 },
 			],
+		},
+	}),
+	premiumPreset({
+		id: "shatter",
+		label: "Shatter · ניפוץ",
+		keywords: ["explode", "broken glass", "fragments", "text"],
+		recipe: {
+			"transition.shatter": keys(
+				[0, 1],
+				[0.18, 0.72],
+				[0.5, 0.2],
+				[1, 0],
+			),
+			opacity: keys([0, 0], [0.22, 0.72], [0.55, 1], [1, 1]),
 		},
 	}),
 	preset({

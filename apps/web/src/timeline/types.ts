@@ -177,6 +177,11 @@ export interface TextElement extends BaseTimelineElement {
 	captionTransitionIn?: TextWordTransitionIn;
 	captionAccentColor?: string;
 	captionWordDirection?: TextWordDirection;
+	captionGlowerEnabled?: boolean;
+	captionGlowerDirection?: TextWordDirection;
+	captionLightningStormEnabled?: boolean;
+	captionGlitchyEnabled?: boolean;
+	clipMediaId?: string;
 }
 
 export type TextCaptionRevealMode =
@@ -244,6 +249,10 @@ export interface TextWordOverrideSettings {
 	wordAnimationId?: string;
 	accentColor?: string;
 	wordDirection?: TextWordDirection;
+	glowerEnabled?: boolean;
+	glowerDirection?: TextWordDirection;
+	lightningStormEnabled?: boolean;
+	glitchyEnabled?: boolean;
 }
 
 export interface TextRowOverride extends TextWordOverrideSettings {

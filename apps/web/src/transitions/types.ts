@@ -11,6 +11,7 @@ export type TransitionProperty =
 	| "transform.scaleX"
 	| "transform.scaleY"
 	| "transform.rotate"
+	| "transition.shatter"
 	| "background.paddingX"
 	| "background.paddingY"
 	| "background.offsetX"
