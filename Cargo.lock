@@ -486,6 +486,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "background-removal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3822,6 +3829,7 @@ dependencies = [
 name = "opencut-wasm"
 version = "0.2.10"
 dependencies = [
+ "background-removal",
  "bridge",
  "compositor",
  "console_error_panic_hook",

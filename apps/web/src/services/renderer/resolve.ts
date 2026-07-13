@@ -49,6 +49,9 @@ import { ImageNode, loadImageSource } from "./nodes/image-node";
 import { StickerNode, loadStickerSource } from "./nodes/sticker-node";
 import { TextNode, type ResolvedTextNodeState } from "./nodes/text-node";
 import { VideoNode } from "./nodes/video-node";
+import type { ResolvedVideoNodeState } from "./nodes/video-node";
+import { resolveBackgroundRemovalSettings } from "@/background-removal";
+import { backgroundRemovalService } from "@/services/background-removal";
 import type {
 	ResolvedVisualNodeState,
 	ResolvedVisualSourceNodeState,
@@ -218,7 +221,7 @@ async function resolveVideoNode({
 }: {
 	node: VideoNode;
 	context: ResolveContext;
-}): Promise<ResolvedVisualSourceNodeState | null> {
+}): Promise<ResolvedVideoNodeState | null> {
 	const clipTime = context.time - node.params.timeOffset;
 	if (clipTime < 0 || clipTime >= node.params.duration) {
 		return null;
@@ -251,11 +254,50 @@ async function resolveVideoNode({
 		return null;
 	}
 
+	let backgroundRemoval: ResolvedVideoNodeState["backgroundRemoval"];
+	if (node.params.backgroundRemoval?.enabled) {
+		const settings = resolveBackgroundRemovalSettings({
+			settings: node.params.backgroundRemoval,
+		});
+		try {
+			const sourceTime = mediaTimeToSeconds({
+				time: roundMediaTime({ time: sourceTimeTicks }),
+			});
+			const mask = await backgroundRemovalService.segmentFrame({
+				source: frame.canvas,
+				mediaId: node.params.mediaId,
+				sourceTime,
+				settings,
+				isPreview: node.params.isPreview,
+			});
+			const resolutionScale = Math.max(
+				0.5,
+				Math.min(context.renderer.width / 1920, context.renderer.height / 1080),
+			);
+			const backgroundEffectPasses =
+				settings.mode === "blur"
+					? [
+							buildGaussianBlurPasses({
+								sigmaX: settings.blurSigma * resolutionScale,
+								sigmaY: settings.blurSigma * resolutionScale,
+							}),
+						]
+					: settings.mode === "grayscale"
+						? [[{ shader: "grayscale", uniforms: {} }]]
+						: [];
+			backgroundRemoval = { mask, settings, backgroundEffectPasses };
+		} catch {
+			// Keep the original frame visible; the properties panel exposes the
+			// worker error and an explicit retry action.
+		}
+	}
+
 	return {
 		...visualState,
 		source: frame.canvas,
 		sourceWidth: frame.canvas.width,
 		sourceHeight: frame.canvas.height,
+		backgroundRemoval,
 	};
 }
 
@@ -382,7 +424,10 @@ async function resolveTextNode({
 	if (clipMedia?.url && clipMedia.type === "image") {
 		clipMediaSource = (await loadImageSource({ url: clipMedia.url })).source;
 	} else if (clipMedia?.file && clipMedia.type === "video") {
-		const mediaDuration = Math.max(0.001, clipMedia.duration ?? node.params.duration);
+		const mediaDuration = Math.max(
+			0.001,
+			clipMedia.duration ?? node.params.duration,
+		);
 		const frame = await videoCache.getFrameAt({
 			mediaId: clipMedia.id,
 			file: clipMedia.file,

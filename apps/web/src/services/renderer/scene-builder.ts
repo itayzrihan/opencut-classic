@@ -84,6 +84,8 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							backgroundRemoval: element.backgroundRemoval,
+							isPreview: isPreview ?? false,
 						}),
 					);
 				}

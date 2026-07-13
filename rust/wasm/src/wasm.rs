@@ -1,4 +1,6 @@
 #[cfg(target_arch = "wasm32")]
+mod background_removal;
+#[cfg(target_arch = "wasm32")]
 mod compositor;
 #[cfg(target_arch = "wasm32")]
 mod effects;
@@ -9,6 +11,8 @@ mod masks;
 #[cfg(target_arch = "wasm32")]
 mod perf;
 
+#[cfg(target_arch = "wasm32")]
+pub use background_removal::*;
 #[cfg(target_arch = "wasm32")]
 pub use compositor::*;
 #[cfg(target_arch = "wasm32")]

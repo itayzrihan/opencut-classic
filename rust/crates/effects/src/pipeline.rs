@@ -9,6 +9,8 @@ use crate::{EffectPass, UniformValue};
 
 const GAUSSIAN_BLUR_SHADER_ID: &str = "gaussian-blur";
 const GAUSSIAN_BLUR_SHADER_SOURCE: &str = include_str!("shaders/gaussian_blur.wgsl");
+const GRAYSCALE_SHADER_ID: &str = "grayscale";
+const GRAYSCALE_SHADER_SOURCE: &str = include_str!("shaders/grayscale.wgsl");
 const TINT_SHADER_ID: &str = "tint";
 const COLOR_WASH_SHADER_ID: &str = "color-wash";
 const VIGNETTE_SHADER_ID: &str = "vignette";
@@ -61,7 +63,7 @@ pub enum EffectsError {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct EffectUniformBuffer {
     resolution: [f32; 2],
     direction: [f32; 2],
@@ -114,6 +116,16 @@ impl EffectPipeline {
                     &vertex_shader_module,
                     GAUSSIAN_BLUR_SHADER_ID,
                     GAUSSIAN_BLUR_SHADER_SOURCE,
+                ),
+            ),
+            (
+                GRAYSCALE_SHADER_ID.to_string(),
+                create_effect_pipeline(
+                    context,
+                    &pipeline_layout,
+                    &vertex_shader_module,
+                    GRAYSCALE_SHADER_ID,
+                    GRAYSCALE_SHADER_SOURCE,
                 ),
             ),
             (
@@ -396,6 +408,15 @@ fn pack_effect_uniforms(
     let shader = pass.shader.as_str();
 
     match shader {
+        GRAYSCALE_SHADER_ID => {
+            ensure_supported_uniforms(pass, &[])?;
+            Ok(EffectUniformBuffer {
+                resolution: [width as f32, height as f32],
+                direction: [0.0, 0.0],
+                scalars: [0.0; 4],
+                color: [0.0; 4],
+            })
+        }
         GAUSSIAN_BLUR_SHADER_ID => {
             ensure_supported_uniforms(pass, &["u_sigma", "u_step", "u_direction"])?;
             Ok(EffectUniformBuffer {
@@ -597,10 +618,7 @@ mod tests {
                 TINT_SHADER_ID,
                 &[
                     ("u_intensity", UniformValue::Number(0.5)),
-                    (
-                        "u_color",
-                        UniformValue::Vector(vec![0.2, 0.3, 0.4, 1.0]),
-                    ),
+                    ("u_color", UniformValue::Vector(vec![0.2, 0.3, 0.4, 1.0])),
                 ],
             ),
             1920,

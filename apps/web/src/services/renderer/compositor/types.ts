@@ -18,6 +18,7 @@ export type FrameItemDescriptor =
 			opacity: number;
 			blendMode: BlendMode;
 			effectPassGroups: EffectPass[][];
+			sourceMask?: SourceMaskDescriptor | null;
 			mask: LayerMaskDescriptor | null;
 	  }
 	| {
@@ -40,6 +41,11 @@ export type QuadTransformDescriptor = {
 export type LayerMaskDescriptor = {
 	textureId: string;
 	feather: number;
+	inverted: boolean;
+};
+
+export type SourceMaskDescriptor = {
+	textureId: string;
 	inverted: boolean;
 };
 

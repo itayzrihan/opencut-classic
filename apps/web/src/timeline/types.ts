@@ -12,6 +12,7 @@ import type {
 	TextFontWeight,
 } from "@/text/primitives";
 import type { BlendMode } from "@/rendering";
+import type { BackgroundRemovalSettings } from "@/background-removal/types";
 
 export type ElementRef = {
 	trackId: string;
@@ -156,6 +157,7 @@ export interface VideoElement extends BaseTimelineElement {
 	retime?: RetimeConfig;
 	effects?: Effect[];
 	masks?: Mask[];
+	backgroundRemoval?: BackgroundRemovalSettings;
 }
 
 export interface ImageElement extends BaseTimelineElement {

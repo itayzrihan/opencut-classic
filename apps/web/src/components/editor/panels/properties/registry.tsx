@@ -40,6 +40,7 @@ import { TextTransitionsTab } from "./components/text-transitions-tab";
 import { TextWordsTab } from "./components/text-words-tab";
 import { TextPlacementTab } from "./components/text-placement-tab";
 import type { TextOverrideScope } from "./text-scope";
+import { BackgroundRemovalTab } from "./components/background-removal-tab";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -183,6 +184,21 @@ function buildSpeedTab({
 		label: "Speed",
 		icon: <HugeiconsIcon icon={DashboardSpeed02Icon} size={16} />,
 		content: ({ trackId }) => <SpeedTab element={element} trackId={trackId} />,
+	};
+}
+
+function buildBackgroundRemovalTab({
+	element,
+}: {
+	element: VideoElement;
+}): PropertiesTabDef {
+	return {
+		id: "background-removal",
+		label: "Background",
+		icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} />,
+		content: ({ trackId }) => (
+			<BackgroundRemovalTab element={element} trackId={trackId} />
+		),
 	};
 }
 
@@ -356,6 +372,7 @@ function getVideoConfig({
 		defaultTab: "transform",
 		tabs: [
 			buildTransformTab({ element }),
+			buildBackgroundRemovalTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),
 			buildBlendingTab({ element }),

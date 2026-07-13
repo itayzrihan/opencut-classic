@@ -1,4 +1,5 @@
 import type { EditorCore } from "@/core";
+import type { BackgroundRemovalSettings } from "@/background-removal";
 import type { ElementBounds } from "@/preview/element-bounds";
 import type { ParamValues } from "@/params";
 import type {
@@ -73,6 +74,7 @@ import {
 	UpsertEffectParamKeyframeCommand,
 	RemoveEffectParamKeyframeCommand,
 	ToggleSourceAudioSeparationCommand,
+	SetBackgroundRemovalCommand,
 } from "@/commands/timeline";
 import type { InsertElementParams } from "@/commands/timeline/element/insert-element";
 import type {
@@ -978,6 +980,27 @@ export class TimelineManager {
 		const command = new DuplicateElementsCommand({ elements });
 		this.editor.command.execute({ command });
 		return command.getDuplicatedElements();
+	}
+
+	setBackgroundRemoval({
+		trackId,
+		elementId,
+		settings,
+		duplicate = false,
+	}: {
+		trackId: string;
+		elementId: string;
+		settings: BackgroundRemovalSettings;
+		duplicate?: boolean;
+	}): { trackId: string; elementId: string } | null {
+		const command = new SetBackgroundRemovalCommand({
+			trackId,
+			elementId,
+			settings,
+			duplicate,
+		});
+		this.editor.command.execute({ command });
+		return command.getTarget();
 	}
 
 	toggleElementsVisibility({

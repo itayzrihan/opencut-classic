@@ -13,11 +13,16 @@ struct LayerUniforms {
     flip_y: f32,
     perspective_x_radians: f32,
     perspective_y_radians: f32,
+    source_mask_enabled: f32,
+    source_mask_inverted: f32,
+    _padding: vec2f,
 }
 
 @group(0) @binding(0) var source_texture: texture_2d<f32>;
 @group(0) @binding(1) var source_sampler: sampler;
 @group(1) @binding(0) var<uniform> uniforms: LayerUniforms;
+@group(2) @binding(0) var source_mask_texture: texture_2d<f32>;
+@group(2) @binding(1) var source_mask_sampler: sampler;
 
 fn rotate_inverse(point: vec2f, angle: f32) -> vec2f {
     let c = cos(angle);
@@ -69,5 +74,19 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
         select(uv.y, 1.0 - uv.y, uniforms.flip_y > 0.5),
     );
     let color = textureSampleLevel(source_texture, source_sampler, sample_uv, 0.0);
-    return vec4f(color.rgb, color.a * uniforms.opacity);
+    var source_mask_alpha = 1.0;
+    if (uniforms.source_mask_enabled > 0.5) {
+        let sampled_mask = textureSampleLevel(
+            source_mask_texture,
+            source_mask_sampler,
+            sample_uv,
+            0.0,
+        ).a;
+        source_mask_alpha = select(
+            sampled_mask,
+            1.0 - sampled_mask,
+            uniforms.source_mask_inverted > 0.5,
+        );
+    }
+    return vec4f(color.rgb, color.a * uniforms.opacity * source_mask_alpha);
 }

@@ -118,7 +118,7 @@ async function collectNode({
 		items.push({
 			type: "layer",
 			textureId,
-			transform: fullCanvasTransform(renderer),
+			transform: fullCanvasTransform({ renderer }),
 			opacity: 1,
 			blendMode: "normal",
 			effectPassGroups: [],
@@ -224,7 +224,7 @@ async function collectNode({
 		items.push({
 			type: "layer",
 			textureId,
-			transform: fullCanvasTransform(renderer),
+			transform: fullCanvasTransform({ renderer }),
 			opacity: 1,
 			blendMode: "normal",
 			effectPassGroups: [passes],
@@ -335,7 +335,7 @@ function collectOverlayMovementFlash({
 	items.push({
 		type: "layer",
 		textureId,
-		transform: fullCanvasTransform(renderer),
+		transform: fullCanvasTransform({ renderer }),
 		opacity: movement.flashAlpha,
 		blendMode: "screen",
 		effectPassGroups: [],
@@ -396,7 +396,7 @@ function collectOverlayMovementVisuals({
 	items.push({
 		type: "layer",
 		textureId,
-		transform: fullCanvasTransform(renderer),
+		transform: fullCanvasTransform({ renderer }),
 		opacity: 1,
 		blendMode: movement.overlayBlendMode,
 		effectPassGroups: [],
@@ -437,7 +437,7 @@ function collectEffectVisualOverlay({
 	items.push({
 		type: "layer",
 		textureId,
-		transform: fullCanvasTransform(renderer),
+		transform: fullCanvasTransform({ renderer }),
 		opacity: visualOverlay.opacity,
 		blendMode: visualOverlay.blendMode,
 		effectPassGroups: [],
@@ -473,7 +473,7 @@ function collectAiEffectOverlay({
 	items.push({
 		type: "layer",
 		textureId,
-		transform: fullCanvasTransform(renderer),
+		transform: fullCanvasTransform({ renderer }),
 		opacity: 1,
 		blendMode: "normal",
 		effectPassGroups: [],
@@ -595,6 +595,20 @@ async function collectVisualSourceNode({
 		width: sourceWidth,
 		height: sourceHeight,
 	});
+	const backgroundRemoval =
+		node instanceof VideoNode ? node.resolved.backgroundRemoval : undefined;
+	const sourceMaskTextureId = backgroundRemoval
+		? `${path}:background-removal-mask`
+		: null;
+	if (backgroundRemoval && sourceMaskTextureId) {
+		textures.set(sourceMaskTextureId, {
+			kind: "external",
+			id: sourceMaskTextureId,
+			source: backgroundRemoval.mask.canvas,
+			width: backgroundRemoval.mask.width,
+			height: backgroundRemoval.mask.height,
+		});
+	}
 
 	const transform = computeVisualTransform({
 		renderer,
@@ -610,6 +624,26 @@ async function collectVisualSourceNode({
 		textures,
 	});
 
+	if (
+		backgroundRemoval &&
+		sourceMaskTextureId &&
+		backgroundRemoval.settings.mode !== "remove"
+	) {
+		items.push({
+			type: "layer",
+			textureId,
+			transform,
+			opacity: node.resolved.opacity,
+			blendMode: node.params.blendMode ?? "normal",
+			effectPassGroups: [
+				...backgroundRemoval.backgroundEffectPasses,
+				...node.resolved.effectPasses,
+			],
+			sourceMask: { textureId: sourceMaskTextureId, inverted: true },
+			mask,
+		});
+	}
+
 	items.push({
 		type: "layer",
 		textureId,
@@ -617,6 +651,10 @@ async function collectVisualSourceNode({
 		opacity: node.resolved.opacity,
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
+		sourceMask:
+			backgroundRemoval && sourceMaskTextureId
+				? { textureId: sourceMaskTextureId, inverted: false }
+				: null,
 		mask,
 	});
 	if (strokeLayer) {
@@ -664,7 +702,10 @@ function collectTextNode({
 	items.push({
 		type: "layer",
 		textureId,
-		transform: fullCanvasTransform(renderer, node.resolved.transform),
+		transform: fullCanvasTransform({
+			renderer,
+			perspective: node.resolved.transform,
+		}),
 		opacity: node.resolved.opacity,
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
@@ -705,10 +746,13 @@ function computeVisualTransform({
 	};
 }
 
-function fullCanvasTransform(
-	renderer: RendererSize,
-	perspective?: { perspectiveX: number; perspectiveY: number },
-): QuadTransformDescriptor {
+function fullCanvasTransform({
+	renderer,
+	perspective,
+}: {
+	renderer: RendererSize;
+	perspective?: { perspectiveX: number; perspectiveY: number };
+}): QuadTransformDescriptor {
 	return {
 		centerX: renderer.width / 2,
 		centerY: renderer.height / 2,
@@ -868,7 +912,7 @@ function buildMaskArtifacts({
 		strokeLayer = {
 			type: "layer",
 			textureId: strokeTextureId,
-			transform: fullCanvasTransform(renderer),
+			transform: fullCanvasTransform({ renderer }),
 			opacity: 1,
 			blendMode: "normal",
 			effectPassGroups: [],

@@ -37,7 +37,17 @@ pub struct LayerDescriptor {
     pub blend_mode: BlendMode,
     #[serde(default)]
     pub effect_pass_groups: Vec<Vec<EffectPassDescriptor>>,
+    #[serde(default)]
+    pub source_mask: Option<SourceMaskDescriptor>,
     pub mask: Option<LayerMaskDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceMaskDescriptor {
+    pub texture_id: String,
+    #[serde(default)]
+    pub inverted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

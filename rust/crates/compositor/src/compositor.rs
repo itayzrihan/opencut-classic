@@ -59,6 +59,9 @@ struct LayerUniformBuffer {
     flip_y: f32,
     perspective_x_radians: f32,
     perspective_y_radians: f32,
+    source_mask_enabled: f32,
+    source_mask_inverted: f32,
+    _padding: [f32; 2],
 }
 
 #[repr(C)]
@@ -144,6 +147,7 @@ impl Compositor {
                 bind_group_layouts: &[
                     Some(context.texture_sampler_bind_group_layout()),
                     Some(&layer_uniform_bind_group_layout),
+                    Some(context.texture_sampler_bind_group_layout()),
                 ],
                 immediate_size: 0,
             });
@@ -429,7 +433,7 @@ impl Compositor {
             frame.width,
             frame.height,
             layer,
-        );
+        )?;
 
         if !layer.effect_pass_groups.is_empty() {
             current = self.apply_effect_groups(
@@ -571,8 +575,20 @@ impl Compositor {
         width: u32,
         height: u32,
         layer: &LayerDescriptor,
-    ) {
+    ) -> Result<(), CompositorError> {
         let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
+        let source_mask_texture = match &layer.source_mask {
+            Some(mask) => self
+                .textures
+                .get(&mask.texture_id)
+                .ok_or_else(|| CompositorError::MissingTexture {
+                    texture_id: mask.texture_id.clone(),
+                })?
+                .texture(),
+            None => source,
+        };
+        let source_mask_view =
+            source_mask_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let source_bind_group = context
             .device()
@@ -605,6 +621,21 @@ impl Compositor {
                         flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
                         perspective_x_radians: layer.transform.perspective_x_degrees.to_radians(),
                         perspective_y_radians: layer.transform.perspective_y_degrees.to_radians(),
+                        source_mask_enabled: if layer.source_mask.is_some() {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        source_mask_inverted: if layer
+                            .source_mask
+                            .as_ref()
+                            .is_some_and(|mask| mask.inverted)
+                        {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        _padding: [0.0; 2],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
@@ -618,6 +649,23 @@ impl Compositor {
                     resource: uniform_buffer.as_entire_binding(),
                 }],
             });
+        let source_mask_bind_group =
+            context
+                .device()
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("compositor-layer-source-mask-bind-group"),
+                    layout: context.texture_sampler_bind_group_layout(),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&source_mask_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(context.linear_sampler()),
+                        },
+                    ],
+                });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -640,8 +688,10 @@ impl Compositor {
             render_pass.set_vertex_buffer(0, context.fullscreen_quad().slice(..));
             render_pass.set_bind_group(0, &source_bind_group, &[]);
             render_pass.set_bind_group(1, &uniform_bind_group, &[]);
+            render_pass.set_bind_group(2, &source_mask_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
+        Ok(())
     }
 
     fn apply_mask(
